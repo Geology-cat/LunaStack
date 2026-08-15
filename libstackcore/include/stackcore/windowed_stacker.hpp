@@ -16,6 +16,7 @@ enum class StackMode {
 struct WindowedStackStats {
     std::size_t uncovered_pixels = 0;  // どのAPからも寄与を受けなかった画素
     std::size_t weak_pixels = 0;       // 重みが小さすぎて代替で埋めた画素
+    std::size_t fallback_blended_pixels = 0;  // AP外周で代替画像と滑らかに混ぜた画素
     double min_weight = 0.0;
     double max_weight = 0.0;
     double max_value = 0.0;
@@ -28,10 +29,13 @@ struct WindowedStackStats {
 //
 //   S(x,y) = Σ_AP Σ_frame w(r) * I_frame(切り出し)
 //   W(x,y) = Σ_AP Σ_frame w(r)
-//   出力 = S / W
+//   L(x,y) = S / W
+//   fallback があれば 出力 = clamp(W, 0, 1) * L + (1 - clamp(W, 0, 1)) * fallback
+//   fallback がなければ 出力 = L（未被覆は0）
 //
 // 窓はHann窓（AP中心で1、縁で0）。50%オーバーラップ格子との組で
-// 重みの合計がほぼ一様になり、継ぎ目を構造的に防ぐ。
+// 重みの合計がほぼ一様になる。自動配置でAPが疎になる外周は、窓の
+// 累積重みを混合率として参照画像へ滑らかにつなぎ、矩形の継ぎ目を防ぐ。
 //
 // 数値の持ち方（実装計画書 §6.7 の測定にもとづく）:
 //   * AP内でフレームを足し込む局所バッファは **float64**。
@@ -73,6 +77,8 @@ public:
 
     // fallback は、どのAPからも寄与を受けなかった画素を埋める画像
     // （グローバルアライメントのみで作った参照画像を渡す想定）。
+    // APの累積Hann重みが1未満の画素では、重みを混合率として局所スタックから
+    // fallback へ滑らかにつなぐ。fallback が空なら従来どおり S/W を返す。
     // 空なら0で埋める。
     // Drizzleで出力が拡大されている場合は、fallback をLanczos3で拡大して使う。
     void finish(FrameBuffer& out, WindowedStackStats& stats,

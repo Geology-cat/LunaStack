@@ -15,6 +15,11 @@ namespace {
 // 割り算で小さな重みを分母にすると、わずかな寄与がノイズごと増幅される。
 constexpr float kMinWeight = 1e-3f;
 
+// 周期版Hann窓を50%ずつ重ねた完全な格子では、窓の重み和は1になる。
+// 自動AP配置で格子が疎になった外周では1未満になるため、この値を
+// 局所スタックと参照画像を混ぜるときの「完全被覆」として使う。
+constexpr float kFullHannSupport = 1.0f;
+
 }  // namespace
 
 WindowedStacker::WindowedStacker(int width, int height, int channels, int ap_size, double scale,
@@ -401,9 +406,19 @@ void WindowedStacker::finish(FrameBuffer& out, WindowedStackStats& stats,
             }
 
             const float inv_w = 1.0f / w;
+            const float local_alpha =
+                fill != nullptr ? std::clamp(w / kFullHannSupport, 0.0f, 1.0f) : 1.0f;
+            if (fill != nullptr && local_alpha < 1.0f) {
+                ++stats.fallback_blended_pixels;
+            }
             for (int c = 0; c < channels_; ++c) {
-                double v = static_cast<double>(sum_[static_cast<std::size_t>(c) * pixels + i]) *
-                           inv_w;
+                const double local =
+                    static_cast<double>(sum_[static_cast<std::size_t>(c) * pixels + i]) * inv_w;
+                double v = local;
+                if (fill != nullptr && local_alpha < 1.0f) {
+                    v = local * local_alpha +
+                        static_cast<double>(fill->row(c, y)[x]) * (1.0f - local_alpha);
+                }
                 if (v > stats.max_value) stats.max_value = v;
                 if (v > 1.0) {
                     ++stats.clipped;

@@ -639,6 +639,20 @@ MT_TEST(sidecar_壊れたファイルや別の入力を拒否する) {
     std::remove(path.c_str());
 }
 
+MT_TEST(sidecar_旧窓合成の参照画像を持つv1は再解析を要求する) {
+    const std::string path = "/tmp/lunastack_test_sidecar_v1.lstk";
+    std::FILE* f = std::fopen(path.c_str(), "wb");
+    const char magic[12] = {'L', 'U', 'N', 'A', 'S', 'T', 'K', 'S', 'I', 'D', 'E', '1'};
+    const std::uint32_t old_version = 1;
+    std::fwrite(magic, 1, sizeof(magic), f);
+    std::fwrite(&old_version, 1, sizeof(old_version), f);
+    std::fclose(f);
+
+    stackcore::AnalysisData d;
+    MT_CHECK_THROWS(stackcore::load_sidecar(path, d));
+    std::remove(path.c_str());
+}
+
 MT_TEST(map_同じ入力なら結果はビット単位で同じ) {
     // 決定論性の要件。M2ではAP順とフレーム順の両方を固定する必要がある。
     const int size = 96;

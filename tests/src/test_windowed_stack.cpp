@@ -256,6 +256,62 @@ MT_TEST(wstack_APが掛からない領域は代替画像で埋まる) {
     MT_CHECK_NEAR(out.row(0, 48)[48], 0.5f, 1e-5);   // AP中心はスタック結果
 }
 
+MT_TEST(wstack_疎なAPは代替画像へHann窓で滑らかにつながる) {
+    // 自動配置では、背景や模様の乏しい場所にAPを置かない。
+    // APが疎な外周で S/W だけを返すと、Hann重みがごく小さくても局所スタックが
+    // 100%表示され、重み0の代替画像との境界がAPサイズの矩形として現れる。
+    const int n = 96, ap = 32;
+    WindowedStacker st(n, n, 1, ap);
+    const FrameBuffer local = constant_frame(n, n, 1, 0.8f);
+    const FrameBuffer fallback = constant_frame(n, n, 1, 0.2f);
+
+    st.begin_ap(48, 48);
+    st.add_frame(local, 0.0, 0.0, 1.0);
+    st.end_ap();
+
+    FrameBuffer out;
+    WindowedStackStats stats;
+    st.finish(out, stats, &fallback);
+
+    // AP左端は重み0なので代替画像。1画素内側はHann重み約0.0096なので、
+    // いきなり局所値0.8へ跳ばず、代替値0.2から滑らかに立ち上がること。
+    const double w = 0.5 * (1.0 - std::cos(2.0 * M_PI / ap));
+    const double expected = 0.2 * (1.0 - w) + 0.8 * w;
+    MT_CHECK_NEAR(out.row(0, 48)[32], 0.2f, 1e-6);
+    MT_CHECK_NEAR(out.row(0, 48)[33], expected, 1e-5);
+    MT_CHECK(std::fabs(out.row(0, 48)[33] - out.row(0, 48)[32]) < 0.02f);
+    MT_CHECK_NEAR(out.row(0, 48)[48], 0.8f, 1e-5);
+    MT_CHECK(stats.fallback_blended_pixels > 0);
+}
+
+MT_TEST(wstack_疎なAPは3倍Drizzleでも代替画像へ滑らかにつながる) {
+    const int n = 96, ap = 32;
+    const double scale = 3.0;
+    WindowedStacker st(n, n, 1, ap, scale, 1.0);
+    const FrameBuffer local = constant_frame(n, n, 1, 0.8f);
+    const FrameBuffer fallback = constant_frame(n, n, 1, 0.2f);
+
+    st.begin_ap(48, 48);
+    st.add_frame(local, 0.0, 0.0, 1.0);
+    st.end_ap();
+
+    FrameBuffer out;
+    WindowedStackStats stats;
+    st.finish(out, stats, &fallback);
+
+    const int ap_out = static_cast<int>(ap * scale);
+    const int left = static_cast<int>((48 - ap / 2) * scale);
+    const int center_y = static_cast<int>(48 * scale);
+    const double w = 0.5 * (1.0 - std::cos(2.0 * M_PI / ap_out));
+    const double expected = 0.2 * (1.0 - w) + 0.8 * w;
+    MT_CHECK_NEAR(out.row(0, center_y)[left], 0.2f, 1e-6);
+    MT_CHECK_NEAR(out.row(0, center_y)[left + 1], expected, 1e-5);
+    MT_CHECK(std::fabs(out.row(0, center_y)[left + 1] -
+                       out.row(0, center_y)[left]) < 0.01f);
+    MT_CHECK_NEAR(out.row(0, center_y)[left + ap_out / 2], 0.8f, 1e-5);
+    MT_CHECK(stats.fallback_blended_pixels > 0);
+}
+
 MT_TEST(wstack_代替画像がなければ未被覆領域は0になる) {
     const int n = 96, ap = 32;
     WindowedStacker st(n, n, 1, ap);
@@ -269,6 +325,8 @@ MT_TEST(wstack_代替画像がなければ未被覆領域は0になる) {
     WindowedStackStats stats;
     st.finish(out, stats, nullptr);
     MT_CHECK_NEAR(out.row(0, 0)[0], 0.0f, 1e-9);
+    MT_CHECK_NEAR(out.row(0, 48)[33], 0.5f, 1e-5);
+    MT_CHECK_EQ(static_cast<int>(stats.fallback_blended_pixels), 0);
 }
 
 MT_TEST(wstack_輝度正規化の係数が掛かる) {

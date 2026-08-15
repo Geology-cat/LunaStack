@@ -999,6 +999,10 @@ int command_mapstack(const Options& opts) {
     if (st.weak_pixels > 0) {
         std::printf("  重み不足画素  : %zu (参照画像で補填)\n", st.weak_pixels);
     }
+    if (st.fallback_blended_pixels > 0) {
+        std::printf("  AP外周の混合  : %zu (参照画像へ滑らかに接続)\n",
+                    st.fallback_blended_pixels);
+    }
     std::printf("  平均後の最大値: %.4f\n", st.max_value);
     if (st.clipped > 0) {
         std::printf("  ※ %zu 画素が1.0を超えて切り詰められました\n", st.clipped);

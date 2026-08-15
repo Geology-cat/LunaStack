@@ -10,7 +10,10 @@ namespace {
 // 先頭16バイト。バージョンを分けているのは、形式を変えたときに
 // 古いサイドカーを黙って読んで誤った結果を出さないため。
 const char kMagic[12] = {'L', 'U', 'N', 'A', 'S', 'T', 'K', 'S', 'I', 'D', 'E', '1'};
-constexpr std::uint32_t kVersion = 1;
+// v1の参照画像は、疎なAP外周をS/Wから参照へ直接切り替えて作られており、
+// タイル状アーティファクトが画像自体に焼き付いている可能性がある。
+// バイナリ構造は同じでも意味的に安全ではないため、v2で再解析を必須にする。
+constexpr std::uint32_t kVersion = 2;
 
 struct Writer {
     std::FILE* f;
