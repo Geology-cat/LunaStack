@@ -227,6 +227,110 @@ double rms_vs_truth(const FrameBuffer& img, const FrameBuffer& truth, int margin
 
 }  // namespace
 
+MT_TEST(map_品質評価とアライメントを分けても一括処理と一致する) {
+    // GUIが工程ごとに停止しても、従来の一括処理と全く同じ解析結果になることを
+    // 保証する。ここが崩れると、「解析」ボタンを分けただけで画質が変わってしまう。
+    const int size = 96;
+    const SyntheticSource source(size, 24, 2.0, 1.0, 0.02, 8181);
+
+    MapStackSettings settings;
+    settings.reference_top_percent = 60.0;
+    settings.ap_top_percent = 50.0;
+    settings.ap.ap_size = 32;
+    settings.local.search_radius = 8;
+    settings.reference_passes = 2;
+
+    const stackcore::GlobalStageReport quality =
+        stackcore::evaluate_frame_quality(source, settings.global, settings.raw_cfa, nullptr);
+    MT_CHECK_EQ(static_cast<int>(quality.frames.size()), source.frame_count());
+    for (std::size_t i = 0; i < quality.frames.size(); ++i) {
+        MT_CHECK(quality.frames[i].accepted);
+        MT_CHECK_EQ(quality.frames[i].dx, 0);
+        MT_CHECK_EQ(quality.frames[i].dy, 0);
+        MT_CHECK_EQ(quality.frames[i].similarity, 0.0);
+    }
+
+    const stackcore::GlobalStageReport aligned = stackcore::run_global_alignment(
+        source, settings.global, settings.raw_cfa, quality, nullptr);
+    MT_CHECK_EQ(aligned.reference_index, quality.reference_index);
+    MT_CHECK_EQ(aligned.reference_mean, quality.reference_mean);
+    MT_CHECK_EQ(aligned.frames.size(), quality.frames.size());
+    for (std::size_t i = 0; i < quality.frames.size(); ++i) {
+        MT_CHECK_EQ(aligned.frames[i].index, quality.frames[i].index);
+        MT_CHECK_EQ(aligned.frames[i].quality, quality.frames[i].quality);
+        MT_CHECK_EQ(aligned.frames[i].mean, quality.frames[i].mean);
+    }
+
+    MapStackReport staged_report;
+    const stackcore::AnalysisData staged =
+        stackcore::analyze_map_alignment(source, settings, aligned, nullptr, staged_report);
+    MapStackReport combined_report;
+    const stackcore::AnalysisData combined =
+        stackcore::analyze_map_stack(source, settings, nullptr, combined_report);
+
+    MT_CHECK_EQ(staged.reference_index, combined.reference_index);
+    MT_CHECK_EQ(staged.reference_mean, combined.reference_mean);
+    MT_CHECK_EQ(staged.width, combined.width);
+    MT_CHECK_EQ(staged.height, combined.height);
+    MT_CHECK_EQ(staged.channels, combined.channels);
+    MT_CHECK_EQ(staged.ap_size, combined.ap_size);
+    MT_CHECK_EQ(staged.ap_grid_step, combined.ap_grid_step);
+    MT_CHECK_EQ(staged.frames.size(), combined.frames.size());
+    MT_CHECK_EQ(staged.points.size(), combined.points.size());
+    MT_CHECK_EQ(staged.analyzed_indices.size(), combined.analyzed_indices.size());
+    MT_CHECK_EQ(staged.matrix.size(), combined.matrix.size());
+    MT_CHECK_EQ(staged.reference.size(), combined.reference.size());
+
+    for (std::size_t i = 0; i < staged.frames.size(); ++i) {
+        const stackcore::FrameInfo& a = staged.frames[i];
+        const stackcore::FrameInfo& b = combined.frames[i];
+        MT_CHECK_EQ(a.index, b.index);
+        MT_CHECK_EQ(a.quality, b.quality);
+        MT_CHECK_EQ(a.mean, b.mean);
+        MT_CHECK_EQ(a.dx, b.dx);
+        MT_CHECK_EQ(a.dy, b.dy);
+        MT_CHECK_EQ(a.similarity, b.similarity);
+        MT_CHECK_EQ(a.accepted, b.accepted);
+        MT_CHECK_EQ(static_cast<int>(a.reason), static_cast<int>(b.reason));
+    }
+    for (std::size_t i = 0; i < staged.points.size(); ++i) {
+        MT_CHECK_EQ(staged.points[i].cx, combined.points[i].cx);
+        MT_CHECK_EQ(staged.points[i].cy, combined.points[i].cy);
+        MT_CHECK_EQ(staged.points[i].mean_gradient, combined.points[i].mean_gradient);
+        MT_CHECK_EQ(staged.points[i].mean_level, combined.points[i].mean_level);
+        MT_CHECK_EQ(staged.points[i].min_eigenvalue, combined.points[i].min_eigenvalue);
+    }
+    for (std::size_t i = 0; i < staged.matrix.size(); ++i) {
+        MT_CHECK_EQ(staged.matrix[i].dx, combined.matrix[i].dx);
+        MT_CHECK_EQ(staged.matrix[i].dy, combined.matrix[i].dy);
+        MT_CHECK_EQ(staged.matrix[i].score, combined.matrix[i].score);
+        MT_CHECK_EQ(staged.matrix[i].quality, combined.matrix[i].quality);
+        MT_CHECK_EQ(staged.matrix[i].valid, combined.matrix[i].valid);
+    }
+    MT_CHECK(staged.analyzed_indices == combined.analyzed_indices);
+    MT_CHECK(staged.reference == combined.reference);
+
+    MapStackReport staged_stack_report, combined_stack_report;
+    const FrameBuffer staged_image = stackcore::stack_from_analysis(
+        source, settings, staged, nullptr, staged_stack_report);
+    const FrameBuffer combined_image = stackcore::stack_from_analysis(
+        source, settings, combined, nullptr, combined_stack_report);
+    MT_CHECK_EQ(staged_image.width(), combined_image.width());
+    MT_CHECK_EQ(staged_image.height(), combined_image.height());
+    MT_CHECK_EQ(staged_image.channels(), combined_image.channels());
+    for (int c = 0; c < staged_image.channels(); ++c) {
+        for (int y = 0; y < staged_image.height(); ++y) {
+            for (int x = 0; x < staged_image.width(); ++x) {
+                if (staged_image.row(c, y)[x] != combined_image.row(c, y)[x]) {
+                    microtest::fail("段階処理のスタックが一括処理と一致しない (" +
+                                    microtest::mt_str(x) + "," + microtest::mt_str(y) + ")");
+                    return;
+                }
+            }
+        }
+    }
+}
+
 MT_TEST(map_既知の局所歪みをM1より正確に取り除く) {
     // M2の受け入れ条件「M1の単純スタックより細部が改善」を、
     // 歪みの量が分かっている合成データで測る。

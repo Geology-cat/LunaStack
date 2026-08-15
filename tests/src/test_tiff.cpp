@@ -102,7 +102,7 @@ ParsedTiff parse_tiff(const std::vector<std::uint8_t>& b) {
     return t;
 }
 
-std::string temp_path(const char* name) { return std::string("./lunastack_test_") + name; }
+std::string temp_path(const char* name) { return std::string("/tmp/lunastack_test_") + name; }
 
 }  // namespace
 

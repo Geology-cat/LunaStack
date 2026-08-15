@@ -18,7 +18,7 @@ using stackcore::SerDecoder;
 
 namespace {
 
-std::string temp_path(const char* name) { return std::string("./lunastack_test_") + name; }
+std::string temp_path(const char* name) { return std::string("/tmp/lunastack_test_") + name; }
 
 }  // namespace
 

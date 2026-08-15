@@ -20,6 +20,7 @@
 
 #include "stackcore/debayer.hpp"
 #include "stackcore/frame_selector.hpp"
+#include "stackcore/fits_writer.hpp"
 #include "stackcore/global_aligner.hpp"
 #include "stackcore/quality.hpp"
 #include "stackcore/ser_decoder.hpp"
@@ -42,7 +43,7 @@ using stackcore::SerColorId;
 using stackcore::SerDecoder;
 using stackcore::VideoSource;
 
-const char* const kVersion = "0.7.0 (M7並列化・PNG出力)";
+const char* const kVersion = "0.8.0 (段階処理・32bit FITS出力)";
 
 struct Options {
     std::string command;
@@ -106,13 +107,21 @@ bool ends_with_ci(const std::string& value, const char* suffix) {
 }
 
 bool output_is_png(const Options& opts) { return ends_with_ci(opts.output, ".png"); }
+bool output_is_fits(const Options& opts) {
+    return ends_with_ci(opts.output, ".fit") || ends_with_ci(opts.output, ".fits");
+}
 
 const char* output_format_name(const Options& opts) {
     if (output_is_png(opts)) return "16bit PNG";
+    if (output_is_fits(opts)) return "32bit float FITS";
     return opts.as_float ? "32bit float TIFF" : "16bit TIFF";
 }
 
 void write_output_image(const Options& opts, const FrameBuffer& image) {
+    if (output_is_fits(opts)) {
+        stackcore::write_fits_float32(opts.output, image);
+        return;
+    }
     if (output_is_png(opts)) {
         if (opts.as_float) {
             throw std::invalid_argument("PNGと--floatは同時に指定できません（PNGは16bit整数です）");
@@ -205,14 +214,14 @@ void print_usage() {
         "  stackcli info <file.ser|file.avi> [オプション]\n"
         "      ヘッダと実測値を表示する（デコーダの診断用）\n"
         "\n"
-        "  stackcli extract <file.ser|file.avi> -f <番号> -o <出力.tif|png> [オプション]\n"
-        "      指定フレームをTIFFまたはPNGに書き出す\n"
+        "  stackcli extract <file.ser|file.avi> -f <番号> -o <出力.tif|png|fits> [オプション]\n"
+        "      指定フレームをTIFF・PNG・32bit float FITSに書き出す\n"
         "\n"
-        "  stackcli stack <file.ser|file.avi> -o <出力.tif> [オプション]\n"
+        "  stackcli stack <file.ser|file.avi> -o <出力.tif|fits> [オプション]\n"
         "      グローバルアライメント＋品質選択＋単純平均スタック (M1)\n"
         "      切り出しは整数変位のみ。サブピクセル補間はM2以降\n"
         "\n"
-        "  stackcli mapstack <file.ser|file.avi> -o <出力.tif> [オプション]\n"
+        "  stackcli mapstack <file.ser|file.avi> -o <出力.tif|fits> [オプション]\n"
         "      MAP局所アライメント＋オーバーラップ窓合成スタック (M2)\n"
         "      APごとに別のフレームを選ぶ spatial lucky imaging\n"
         "\n"
@@ -271,7 +280,7 @@ void print_usage() {
         "  --bit-depth <N>           正規化に使うビット深度を上書きする\n"
         "                            「16bitと書いてあるが中身は12bit」への対処\n"
         "  -f, --frame <N>           フレーム番号 (0始まり)\n"
-        "  -o, --output <path>       出力ファイル\n"
+        "  -o, --output <path>       出力ファイル（.fits/.fit で32bit float FITS）\n"
         "      --float               32bit float TIFFで書き出す (既定は16bit)\n"
         "      --raw-cfa             Bayerをデバイヤーせず生のCFAのまま出力する\n",
         kVersion);

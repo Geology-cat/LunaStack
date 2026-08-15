@@ -23,6 +23,7 @@ add_library(stackcore STATIC
     src/pipeline/map_pipeline.cpp
     src/io/tiff_writer.cpp
     src/io/png_writer.cpp
+    src/io/fits_writer.cpp
 )
 
 target_include_directories(stackcore PUBLIC include)

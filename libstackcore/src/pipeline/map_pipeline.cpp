@@ -482,10 +482,19 @@ struct StageSetup {
     std::vector<FrameInfo> analyzed;
 };
 
-StageSetup prepare_stages(const VideoSource& source, const MapStackSettings& settings,
-                          const ProgressFn& progress, MapStackReport& report) {
-    report.global = run_global_stage(source, settings.global, settings.raw_cfa, progress);
-
+StageSetup prepare_alignment_stages(const VideoSource& source,
+                                    const MapStackSettings& settings,
+                                    const GlobalStageReport& global,
+                                    const ProgressFn& progress, MapStackReport& report) {
+    const int expected = settings.global.limit > 0 && settings.global.limit < source.frame_count()
+                             ? settings.global.limit
+                             : source.frame_count();
+    if (global.frames.size() != static_cast<std::size_t>(expected) ||
+        global.reference_index < 0 || global.reference_index >= expected) {
+        throw std::invalid_argument(
+            "MAPアライメント: グローバルアライメント結果が現在の入力と一致しません");
+    }
+    report.global = global;
     const std::vector<FrameInfo> ref_frames =
         select_top_frames(report.global.frames, settings.reference_top_percent);
     if (ref_frames.empty()) {
@@ -507,8 +516,18 @@ StageSetup prepare_stages(const VideoSource& source, const MapStackSettings& set
 
 AnalysisData analyze_map_stack(const VideoSource& source, const MapStackSettings& settings,
                                const ProgressFn& progress, MapStackReport& report) {
+    const GlobalStageReport global =
+        run_global_stage(source, settings.global, settings.raw_cfa, progress);
+    return analyze_map_alignment(source, settings, global, progress, report);
+}
+
+AnalysisData analyze_map_alignment(const VideoSource& source,
+                                   const MapStackSettings& settings,
+                                   const GlobalStageReport& global,
+                                   const ProgressFn& progress, MapStackReport& report) {
     report = MapStackReport{};
-    StageSetup setup = prepare_stages(source, settings, progress, report);
+    StageSetup setup =
+        prepare_alignment_stages(source, settings, global, progress, report);
 
     // 参照の反復精密化がある場合、最後のパスの解析だけが必要になる。
     // 途中のパスは「次の参照を作るため」に加算まで行う。

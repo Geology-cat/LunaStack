@@ -4,6 +4,7 @@
 # CMake / IDEビルド生成物
 build/
 build-*/
+.build/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt

@@ -68,7 +68,22 @@ public:
     const char* what() const noexcept override { return "処理が中断されました"; }
 };
 
-// 全フレームの品質評価とグローバルアライメントを行う（仕様書 §4.2・§4.3）。
+// 全フレームの品質と平均輝度だけを評価する（仕様書 §4.3）。
+//
+// この段階ではdx/dy/similarityは0のまま、全フレームをaccepted=trueにする。
+// GUIで品質グラフを確認してから、run_global_alignmentを別に実行できる。
+GlobalStageReport evaluate_frame_quality(const VideoSource& source,
+                                         const GlobalStageSettings& settings, bool raw_cfa,
+                                         const ProgressFn& progress);
+
+// 品質評価済みの結果を使って、グローバルアライメントだけを行う（仕様書 §4.2）。
+// 品質の再計算はしない。参照フレームはqualityで選ばれた中央値品質のフレーム。
+GlobalStageReport run_global_alignment(const VideoSource& source,
+                                       const GlobalStageSettings& settings, bool raw_cfa,
+                                       const GlobalStageReport& quality,
+                                       const ProgressFn& progress);
+
+// 品質評価とグローバルアライメントを続けて行う互換API（仕様書 §4.2・§4.3）。
 //
 // 参照フレームは**品質の中央値**のフレームを選ぶ。
 // 最高品質を選んではいけない。勾配エネルギーは「シャープさ」と

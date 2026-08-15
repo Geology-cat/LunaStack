@@ -27,8 +27,10 @@
 
 - (NSString*)stateSymbol {
     switch (_state) {
+        case QueueItemStateQualityEvaluated:
+            return LSLocalizedString(@"品質評価済");
         case QueueItemStateAnalyzed:
-            return LSLocalizedString(@"解析済");
+            return LSLocalizedString(@"アライメント済");
         case QueueItemStateStacked:
             return LSLocalizedString(@"完了");
         case QueueItemStateError:
@@ -41,6 +43,8 @@
 
 - (NSColor*)stateColor {
     switch (_state) {
+        case QueueItemStateQualityEvaluated:
+            return [NSColor systemBlueColor];
         case QueueItemStateAnalyzed:
             return [NSColor systemBlueColor];
         case QueueItemStateStacked:

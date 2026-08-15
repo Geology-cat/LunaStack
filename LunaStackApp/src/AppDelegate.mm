@@ -24,7 +24,9 @@
     const char* openPath = getenv("LUNASTACK_OPEN");
     const char* autorun = getenv("LUNASTACK_AUTORUN");
     const char* limitText = getenv("LUNASTACK_LIMIT");
-    // "run"（既定）/ "analyze"（解析だけ）/ "batch"（キューを一括処理）
+    // "run"（既定、自己検証の一括処理）/ "staged"（GUIの3工程を順に通す）/
+    // "analyze"（品質評価だけ）/ "alignment"（アライメントまで）/
+    // "batch"（キューを一括処理）
     const char* mode = getenv("LUNASTACK_MODE");
     const char* outDir = getenv("LUNASTACK_OUTDIR");
     // "幅x高さ"。最小サイズ（UI設計書 §2 の 1000×640）でも
@@ -71,7 +73,16 @@
         MainWindowController* controller = _controller;
         const char* sharpenText = getenv("LUNASTACK_SHARPEN");
         const char* apCheck = getenv("LUNASTACK_APCHECK");
+        const BOOL stagedMode = mode && strcmp(mode, "staged") == 0;
+        const BOOL alignmentMode = mode && strcmp(mode, "alignment") == 0;
+        __block int stagedStep = 0;
         [_controller setOnRunFinished:^{
+            if ((stagedMode && stagedStep < 2) || (alignmentMode && stagedStep < 1)) {
+                ++stagedStep;
+                if (stagedStep == 1) [_controller startAlignmentOnly];
+                else [_controller startStackOnly];
+                return;
+            }
             if (apCheck) {
                 // 描画とクリックの座標変換が食い違っていないかを見る。
                 NSLog(@"AP当たり判定: %@", [_controller selfCheckApHitTest] ? @"一致" : @"ずれあり");
@@ -80,6 +91,9 @@
             if (sharpenText) {
                 // スライダーを動かしたのと同じ経路を通してから撮る。
                 [_controller setSharpenForTesting:atof(sharpenText) denoise:0.3];
+            }
+            if (getenv("LUNASTACK_WAVELET_OFF")) {
+                [_controller setWaveletPreviewForTesting:NO];
             }
             if (getenv("LUNASTACK_HEATMAP")) {
                 [_controller setApHeatmapForTesting:YES];
@@ -90,7 +104,8 @@
         (void)controller;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-                           if (mode && strcmp(mode, "analyze") == 0) {
+                           if (stagedMode || alignmentMode ||
+                               (mode && strcmp(mode, "analyze") == 0)) {
                                [_controller startAnalyzeOnly];
                            } else if (mode && strcmp(mode, "batch") == 0) {
                                [_controller startBatch];
@@ -176,9 +191,12 @@
     NSMenuItem* processItem = [[[NSMenuItem alloc] init] autorelease];
     [mainMenu addItem:processItem];
     NSMenu* processMenu = [[[NSMenu alloc] initWithTitle:LSLocalizedString(@"処理")] autorelease];
-    [processMenu addItemWithTitle:LSLocalizedString(@"解析")
+    [processMenu addItemWithTitle:LSLocalizedString(@"品質評価")
                            action:@selector(analyze:)
                     keyEquivalent:@"e"];
+    [processMenu addItemWithTitle:LSLocalizedString(@"アライメント")
+                           action:@selector(align:)
+                    keyEquivalent:@"a"];
     [processMenu addItemWithTitle:LSLocalizedString(@"スタック")
                            action:@selector(run:)
                     keyEquivalent:@"r"];

@@ -96,12 +96,13 @@ const FrameBuffer* read_prepared_frame(const VideoSource& source, int index, boo
     return &cfa;
 }
 
-GlobalStageReport run_global_stage(const VideoSource& source,
-                                   const GlobalStageSettings& settings, bool raw_cfa,
-                                   const ProgressFn& progress) {
+GlobalStageReport evaluate_frame_quality(const VideoSource& source,
+                                         const GlobalStageSettings& settings, bool raw_cfa,
+                                         const ProgressFn& progress) {
     const int total = settings.limit > 0 && settings.limit < source.frame_count()
                           ? settings.limit
                           : source.frame_count();
+    if (total <= 0) throw std::runtime_error("品質評価: 入力にフレームがありません");
 
     GlobalStageReport report;
     report.frames.resize(static_cast<std::size_t>(total));
@@ -127,6 +128,9 @@ GlobalStageReport run_global_stage(const VideoSource& source,
         info.index = i;
         info.quality = quality_score(*f, settings.quality_metric, w.workspace);
         info.mean = mean_luma(*f);
+        // 追跡による採否は次段で決める。品質グラフでは全フレームを表示する。
+        info.accepted = true;
+        info.reason = RejectReason::None;
     });
 
     // 参照は品質の中央値のフレーム（理由はヘッダのコメント参照）。
@@ -148,6 +152,44 @@ GlobalStageReport run_global_stage(const VideoSource& source,
         }
     }
     report.reference_mean = report.frames[static_cast<std::size_t>(report.reference_index)].mean;
+
+    return report;
+}
+
+GlobalStageReport run_global_alignment(const VideoSource& source,
+                                       const GlobalStageSettings& settings, bool raw_cfa,
+                                       const GlobalStageReport& quality,
+                                       const ProgressFn& progress) {
+    const int total = settings.limit > 0 && settings.limit < source.frame_count()
+                          ? settings.limit
+                          : source.frame_count();
+    if (total <= 0) throw std::runtime_error("アライメント: 入力にフレームがありません");
+    if (quality.frames.size() != static_cast<std::size_t>(total) ||
+        quality.reference_index < 0 || quality.reference_index >= total) {
+        throw std::invalid_argument(
+            "アライメント: 品質評価結果が現在の入力またはフレーム制限と一致しません");
+    }
+    for (int i = 0; i < total; ++i) {
+        if (quality.frames[static_cast<std::size_t>(i)].index != i) {
+            throw std::invalid_argument("アライメント: 品質評価結果のフレーム番号が不正です");
+        }
+    }
+
+    GlobalStageReport report = quality;
+    report.rejected_low_similarity = 0;
+    report.rejected_shift = 0;
+    report.rejected_outlier = 0;
+    report.similarity_median = 0.0;
+    report.similarity_threshold = -1.0;
+    for (FrameInfo& info : report.frames) {
+        info.dx = 0;
+        info.dy = 0;
+        info.similarity = 0.0;
+        info.accepted = false;
+        info.reason = RejectReason::None;
+    }
+
+    const int workers = analysis_worker_count(source, total);
 
     // --- パス2: グローバルアライメント ------------------------------------
     FrameBuffer ref_cfa, ref_rgb;
@@ -212,6 +254,14 @@ GlobalStageReport run_global_stage(const VideoSource& source,
         }
     }
     return report;
+}
+
+GlobalStageReport run_global_stage(const VideoSource& source,
+                                   const GlobalStageSettings& settings, bool raw_cfa,
+                                   const ProgressFn& progress) {
+    const GlobalStageReport quality =
+        evaluate_frame_quality(source, settings, raw_cfa, progress);
+    return run_global_alignment(source, settings, raw_cfa, quality, progress);
 }
 
 std::vector<FrameInfo> select_top_frames(const std::vector<FrameInfo>& frames, double percent) {

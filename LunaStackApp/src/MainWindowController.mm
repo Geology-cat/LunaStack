@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "stackcore/fits_writer.hpp"
 #include "stackcore/map_pipeline.hpp"
 #include "stackcore/png_writer.hpp"
 #include "stackcore/tiff_writer.hpp"
@@ -36,10 +37,14 @@ namespace {
 // ウェーブレットのレイヤー数。仕様書 §4.10 の既定。
 constexpr int kWaveletLayers = 6;
 
-enum class OutputFormat { Tiff16, TiffFloat32, Png16 };
+enum class OutputFormat { Tiff16, TiffFloat32, FitsFloat32, Png16 };
 
 void write_output_image(const std::string& path, const stackcore::FrameBuffer& image,
                         OutputFormat format) {
+    if (format == OutputFormat::FitsFloat32) {
+        stackcore::write_fits_float32(path, image);
+        return;
+    }
     if (format == OutputFormat::Png16) {
         stackcore::write_png16(path, image);
         return;
@@ -65,65 +70,114 @@ NSTextField* MakeLabel(NSString* text) {
 //
 // **GUIから完全に切り離してある。** 単発実行もバッチも同じ関数を通るので、
 // 「バッチだけ挙動が違う」という食い違いが起きない。
+enum class JobStage { Quality, Alignment, Stack, Full };
+
 struct JobRequest {
     std::string path;
     stackcore::OpenOptions options;
     stackcore::MapStackSettings settings;
     bool global_only = false;
     bool low_memory = false;
-    // 使い回す解析結果。null なら解析からやり直す。
-    std::shared_ptr<stackcore::AnalysisData> reuse;
-    bool want_stack = true;
+    JobStage stage = JobStage::Full;
+    // 前工程の結果。工程をまたいで画素を持たず、解析値だけを渡す。
+    std::shared_ptr<stackcore::GlobalStageReport> quality;
+    std::shared_ptr<stackcore::GlobalStageReport> global;
+    std::shared_ptr<stackcore::AnalysisData> analysis;
 };
 
 struct JobResult {
+    JobStage stage = JobStage::Full;
+    std::shared_ptr<stackcore::GlobalStageReport> quality;
+    std::shared_ptr<stackcore::GlobalStageReport> global;
     std::shared_ptr<stackcore::AnalysisData> analysis;  // MAPモードのみ
     std::vector<stackcore::FrameInfo> frames;           // 品質グラフ用
-    std::shared_ptr<stackcore::FrameBuffer> image;      // want_stack のとき
+    std::shared_ptr<stackcore::FrameBuffer> image;      // スタック工程のとき
     std::string error;
     bool cancelled = false;
-    bool reused_analysis = false;
 };
 
 JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) {
     JobResult out;
+    out.stage = req.stage;
     try {
         std::unique_ptr<stackcore::VideoSource> source =
             stackcore::open_video(req.path, req.options);
         if (req.low_memory) source->set_low_memory(true);
 
-        if (req.global_only) {
-            // グローバルのみのモードにはAP変位場が無いので、サイドカーは作らない。
-            // そもそも解析の重い部分はMAP段なので、再利用の価値も小さい。
-            const stackcore::GlobalStageReport global = stackcore::run_global_stage(
-                *source, req.settings.global, req.settings.raw_cfa, progress);
-            out.frames = global.frames;
-            if (req.want_stack) {
-                const std::vector<stackcore::FrameInfo> selected = stackcore::select_top_frames(
-                    global.frames, req.settings.reference_top_percent);
-                out.image = std::make_shared<stackcore::FrameBuffer>(
-                    stackcore::build_global_reference(*source, global, selected,
-                                                      req.settings.raw_cfa, progress,
-                                                      req.settings.normalize_brightness));
+        if (req.stage == JobStage::Quality) {
+            out.quality = std::make_shared<stackcore::GlobalStageReport>(
+                stackcore::evaluate_frame_quality(*source, req.settings.global,
+                                                  req.settings.raw_cfa, progress));
+            out.frames = out.quality->frames;
+            return out;
+        }
+
+        if (req.stage == JobStage::Alignment) {
+            if (!req.quality) {
+                throw std::runtime_error("アライメント: 先に品質評価を実行してください");
+            }
+            out.global = std::make_shared<stackcore::GlobalStageReport>(
+                stackcore::run_global_alignment(*source, req.settings.global,
+                                                req.settings.raw_cfa, *req.quality, progress));
+            out.frames = out.global->frames;
+            if (!req.global_only) {
+                stackcore::MapStackReport report;
+                out.analysis = std::make_shared<stackcore::AnalysisData>(
+                    stackcore::analyze_map_alignment(*source, req.settings, *out.global,
+                                                     progress, report));
+                out.frames = out.analysis->frames;
             }
             return out;
         }
 
-        std::shared_ptr<stackcore::AnalysisData> analysis = req.reuse;
-        if (analysis) {
-            out.reused_analysis = true;
+        if (req.stage == JobStage::Stack) {
+            if (req.global_only) {
+                if (!req.global) {
+                    throw std::runtime_error("スタック: 先にアライメントを実行してください");
+                }
+                const std::vector<stackcore::FrameInfo> selected =
+                    stackcore::select_top_frames(req.global->frames,
+                                                 req.settings.reference_top_percent);
+                out.frames = req.global->frames;
+                out.image = std::make_shared<stackcore::FrameBuffer>(
+                    stackcore::build_global_reference(*source, *req.global, selected,
+                                                      req.settings.raw_cfa, progress,
+                                                      req.settings.normalize_brightness));
+            } else {
+                if (!req.analysis) {
+                    throw std::runtime_error("スタック: 先にアライメントを実行してください");
+                }
+                stackcore::MapStackReport report;
+                out.analysis = req.analysis;
+                out.frames = req.analysis->frames;
+                out.image = std::make_shared<stackcore::FrameBuffer>(
+                    stackcore::stack_from_analysis(*source, req.settings, *req.analysis,
+                                                   progress, report));
+            }
+            return out;
+        }
+
+        // バッチとGUI自己検証用の一括経路。通常のGUIボタンはここを通らない。
+        if (req.global_only) {
+            out.global = std::make_shared<stackcore::GlobalStageReport>(
+                stackcore::run_global_stage(*source, req.settings.global,
+                                            req.settings.raw_cfa, progress));
+            out.frames = out.global->frames;
+            const std::vector<stackcore::FrameInfo> selected = stackcore::select_top_frames(
+                out.global->frames, req.settings.reference_top_percent);
+            out.image = std::make_shared<stackcore::FrameBuffer>(
+                stackcore::build_global_reference(*source, *out.global, selected,
+                                                  req.settings.raw_cfa, progress,
+                                                  req.settings.normalize_brightness));
         } else {
             stackcore::MapStackReport report;
-            analysis = std::make_shared<stackcore::AnalysisData>(
+            out.analysis = std::make_shared<stackcore::AnalysisData>(
                 stackcore::analyze_map_stack(*source, req.settings, progress, report));
-        }
-        out.analysis = analysis;
-        out.frames = analysis->frames;
-
-        if (req.want_stack) {
-            stackcore::MapStackReport report;
+            out.global =
+                std::make_shared<stackcore::GlobalStageReport>(report.global);
+            out.frames = out.analysis->frames;
             out.image = std::make_shared<stackcore::FrameBuffer>(stackcore::stack_from_analysis(
-                *source, req.settings, *analysis, progress, report));
+                *source, req.settings, *out.analysis, progress, report));
         }
     } catch (const stackcore::Cancelled&) {
         out.cancelled = true;
@@ -157,9 +211,10 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 // 定義より前に出てくるため、これがないと型が分からず素通りしてしまう。
 @interface MainWindowController ()
 - (void)reportStage:(NSString*)stage done:(int)done total:(int)total;
+- (void)beginJobStage:(JobStage)stage;
 - (void)finishJob:(const JobResult&)result
-        signature:(NSString*)signature
-      wantedStack:(bool)wantedStack;
+ qualitySignature:(NSString*)qualitySignature
+alignmentSignature:(NSString*)alignmentSignature;
 - (NSString*)queuePathAtIndex:(NSUInteger)index;
 - (void)beginBatchItem:(NSUInteger)index position:(NSUInteger)position of:(NSUInteger)count;
 - (void)finishBatchItem:(NSUInteger)index
@@ -244,6 +299,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     NSTextField* _sharpenValues[kWaveletLayers];
     NSSlider* _denoiseSliders[kWaveletLayers];
     NSTextField* _denoiseValues[kWaveletLayers];
+    NSButton* _waveletPreviewCheck;
     NSButton* _stretchCheck;
 
     NSPopUpButton* _formatPopup;
@@ -254,7 +310,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     // --- 下部 ---
     NSTextField* _statusLabel;
     NSProgressIndicator* _progress;
-    NSButton* _analyzeButton;
+    NSButton* _qualityButton;
+    NSButton* _alignButton;
     NSButton* _stackButton;
     NSButton* _batchButton;
     NSButton* _cancelButton;
@@ -279,6 +336,10 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     int _rejectedFrames;
     int _sourceWidth;
     int _sourceHeight;
+    std::shared_ptr<stackcore::GlobalStageReport> _qualityStage;
+    std::shared_ptr<stackcore::GlobalStageReport> _globalStage;
+    NSString* _qualitySignature;
+    NSString* _globalSignature;
     std::shared_ptr<stackcore::AnalysisData> _analysis;
     NSString* _analysisSignature;   // _analysis を作ったときの設定
     // 手動配置。**「使うかどうか」と「中身」は別に持つ。**
@@ -357,6 +418,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_items release];
     [_sections release];
     [_sectionHeaders release];
+    [_qualitySignature release];
+    [_globalSignature release];
     [_analysisSignature release];
     [_outputDirectory release];
     [_etaStage release];
@@ -609,7 +672,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_zoomControl setTranslatesAutoresizingMaskIntoConstraints:NO];
     [tools2 addArrangedSubview:_zoomControl];
 
-    _apShowCheck = [self checkboxWithTitle:@"AP表示" state:YES];
+    _apShowCheck = [self checkboxWithTitle:@"位置合わせ領域を表示" state:YES];
     [_apShowCheck setTarget:self];
     [_apShowCheck setAction:@selector(apDisplayChanged:)];
     [tools2 addArrangedSubview:_apShowCheck];
@@ -619,7 +682,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_apHeatCheck setAction:@selector(apDisplayChanged:)];
     [tools2 addArrangedSubview:_apHeatCheck];
 
-    _apEditCheck = [self checkboxWithTitle:@"AP編集" state:NO];
+    _apEditCheck = [self checkboxWithTitle:@"配置を編集" state:NO];
     [_apEditCheck setTarget:self];
     [_apEditCheck setAction:@selector(apDisplayChanged:)];
     [tools2 addArrangedSubview:_apEditCheck];
@@ -658,13 +721,14 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (NSView*)buildRightPane {
     NSView* pane = [[[NSView alloc] initWithFrame:NSZeroRect] autorelease];
 
-    // 工程タブ。UI設計書 §6 のワークフロー（解析→スタック→仕上げ→書き出し）を
-    // UIの構造にも出す。全セクションを1列に積むと「今どの段階の設定を
-    // 触っているのか」が分からなくなる、という声への対応。
+    // 工程タブ。品質評価・位置合わせ・合成を別々に停止できるようにする。
+    // 完了後は次のタブへ案内するが、次工程を勝手に実行はしない。
     _inspectorTab = [[[NSSegmentedControl alloc] init] autorelease];
-    [_inspectorTab setSegmentCount:2];
-    [_inspectorTab setLabel:@"1. 解析・スタック" forSegment:0];
-    [_inspectorTab setLabel:@"2. 仕上げ・書き出し" forSegment:1];
+    [_inspectorTab setSegmentCount:4];
+    [_inspectorTab setLabel:@"品質評価" forSegment:0];
+    [_inspectorTab setLabel:@"アライメント" forSegment:1];
+    [_inspectorTab setLabel:@"スタック" forSegment:2];
+    [_inspectorTab setLabel:@"仕上げ・出力" forSegment:3];
     [_inspectorTab setSelectedSegment:0];
     [_inspectorTab setTarget:self];
     [_inspectorTab setAction:@selector(inspectorTabChanged:)];
@@ -705,8 +769,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                               constant:4.0] setActive:YES];
     [[[box widthAnchor] constraintEqualToConstant:278.0] setActive:YES];
 
-    [self buildAlignmentSection:box];
     [self buildQualitySection:box];
+    [self buildAlignmentSection:box];
     [self buildStackSection:box];
     [self buildDrizzleSection:box];
     [self buildWaveletSection:box];
@@ -716,11 +780,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     return pane;
 }
 
-// セクションがどちらの工程タブに属するか。
-// 前半＝解析とスタックの設定、後半＝出来上がった結果に対する操作。
+// セクションがどの工程タブに属するか。
 - (NSInteger)tabIndexForSectionKey:(NSString*)key {
-    if ([key isEqualToString:@"wavelet"] || [key isEqualToString:@"export"]) return 1;
-    return 0;
+    if ([key isEqualToString:@"quality"]) return 0;
+    if ([key isEqualToString:@"align"]) return 1;
+    if ([key isEqualToString:@"stack"] || [key isEqualToString:@"drizzle"]) return 2;
+    return 3;
 }
 
 - (void)inspectorTabChanged:(id)sender {
@@ -774,13 +839,13 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)updateSectionHeader:(NSButton*)header key:(NSString*)key {
     NSString* mark = [self sectionOpen:key] ? @"▼" : @"▶";
     NSString* title = @"";
-    if ([key isEqualToString:@"align"]) title = @"Alignment";
-    else if ([key isEqualToString:@"quality"]) title = @"Quality";
-    else if ([key isEqualToString:@"stack"]) title = @"Stack";
-    else if ([key isEqualToString:@"drizzle"]) title = @"Drizzle";
-    else if ([key isEqualToString:@"wavelet"]) title = @"Wavelet";
-    else if ([key isEqualToString:@"export"]) title = @"Export";
-    [header setTitle:[NSString stringWithFormat:@"%@ %@", mark, title]];
+    if ([key isEqualToString:@"align"]) title = @"アライメント（位置合わせ）";
+    else if ([key isEqualToString:@"quality"]) title = @"各フレームの品質評価";
+    else if ([key isEqualToString:@"stack"]) title = @"スタック（画像の合成）";
+    else if ([key isEqualToString:@"drizzle"]) title = @"ドリズル拡大";
+    else if ([key isEqualToString:@"wavelet"]) title = @"ウェーブレット仕上げ";
+    else if ([key isEqualToString:@"export"]) title = @"書き出し";
+    [header setTitle:[NSString stringWithFormat:@"%@ %@", mark, LSLocalizedString(title)]];
 }
 
 - (void)toggleSection:(id)sender {
@@ -795,7 +860,24 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)buildAlignmentSection:(NSStackView*)box {
     NSString* key = @"align";
-    [self beginSection:@"Alignment" key:key inBox:box];
+    [self beginSection:@"アライメント（位置合わせ）" key:key inBox:box];
+
+    [self addToSection:key view:MakeLabel(@"位置合わせ方法") box:box];
+    _methodPopup = [[[NSPopUpButton alloc] init] autorelease];
+    [_methodPopup addItemWithTitle:@"複数領域の局所位置合わせ（推奨）"];
+    [_methodPopup addItemWithTitle:@"画像全体の位置合わせのみ（高速）"];
+    [_methodPopup setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [_methodPopup setTarget:self];
+    [_methodPopup setAction:@selector(analysisSettingChanged:)];
+    [self addToSection:key view:_methodPopup box:box];
+
+    NSTextField* explanation =
+        MakeLabel(@"位置合わせ領域とは、画像を小領域に分け、大気の揺らぎによる"
+                  @"局所的なずれを別々に補正する単位です。");
+    [explanation setTextColor:[NSColor secondaryLabelColor]];
+    [[explanation cell] setWraps:YES];
+    [explanation setPreferredMaxLayoutWidth:270.0];
+    [self addToSection:key view:explanation box:box];
 
     [self addToSection:key view:MakeLabel(@"対象モード") box:box];
     _modeSegment = [[[NSSegmentedControl alloc] init] autorelease];
@@ -809,7 +891,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_modeSegment setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self addToSection:key view:_modeSegment box:box];
 
-    [self addToSection:key view:MakeLabel(@"AP サイズ") box:box];
+    [self addToSection:key view:MakeLabel(@"位置合わせ領域の大きさ") box:box];
     _apSizePopup = [[[NSPopUpButton alloc] init] autorelease];
     [_apSizePopup addItemWithTitle:@"自動"];
     for (NSString* s in @[ @"32", @"48", @"64", @"96", @"128", @"200" ]) {
@@ -820,7 +902,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_apSizePopup setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self addToSection:key view:_apSizePopup box:box];
 
-    [self addToSection:key view:MakeLabel(@"探索半径") box:box];
+    [self addToSection:key view:MakeLabel(@"位置ずれの探索範囲") box:box];
     _searchRadiusSlider = [self sliderMin:8.0 max:32.0 value:16.0
                                    action:@selector(searchRadiusChanged:)];
     _searchRadiusValue = MakeLabel(@"±16");
@@ -828,7 +910,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                   view:[self row:_searchRadiusSlider trailing:_searchRadiusValue]
                    box:box];
 
-    [self addToSection:key view:MakeLabel(@"AP配置") box:box];
+    [self addToSection:key view:MakeLabel(@"位置合わせ領域の配置") box:box];
     NSStackView* apButtons = [[[NSStackView alloc] init] autorelease];
     [apButtons setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
     [apButtons setSpacing:6.0];
@@ -852,7 +934,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)buildQualitySection:(NSStackView*)box {
     NSString* key = @"quality";
-    [self beginSection:@"Quality" key:key inBox:box];
+    [self beginSection:@"各フレームの品質評価" key:key inBox:box];
 
     [self addToSection:key view:MakeLabel(@"品質指標") box:box];
     _qualityMetricPopup = [[[NSPopUpButton alloc] init] autorelease];
@@ -863,60 +945,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_qualityMetricPopup setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self addToSection:key view:_qualityMetricPopup box:box];
 
-    [self addToSection:key view:MakeLabel(@"選択方式") box:box];
-    _selectionModeSegment = [[[NSSegmentedControl alloc] initWithFrame:NSZeroRect] autorelease];
-    [_selectionModeSegment setSegmentCount:2];
-    [_selectionModeSegment setLabel:@"割合" forSegment:0];
-    [_selectionModeSegment setLabel:@"枚数" forSegment:1];
-    [_selectionModeSegment setSelectedSegment:0];
-    [_selectionModeSegment setTarget:self];
-    [_selectionModeSegment setAction:@selector(selectionModeChanged:)];
-    [_selectionModeSegment setTranslatesAutoresizingMaskIntoConstraints:NO];
-    [self addToSection:key view:_selectionModeSegment box:box];
-
-    _apTopCaption = MakeLabel(@"AP別に採用するフレーム（%）");
-    [self addToSection:key view:_apTopCaption box:box];
-    _apTopSlider = [self sliderMin:1.0 max:100.0 value:10.0 action:@selector(apTopChanged:)];
-    _apTopValue = MakeLabel(@"10 %");
-    [self addToSection:key view:[self row:_apTopSlider trailing:_apTopValue] box:box];
-
-    NSTextField* note = MakeLabel(@"これだけを変えた再スタックは解析をやり直しません");
-    [note setTextColor:[NSColor secondaryLabelColor]];
-    [[note cell] setWraps:YES];
-    [self addToSection:key view:note box:box];
-}
-
-- (void)buildStackSection:(NSStackView*)box {
-    NSString* key = @"stack";
-    [self beginSection:@"Stack" key:key inBox:box];
-
-    [self addToSection:key view:MakeLabel(@"処理") box:box];
-    _methodPopup = [[[NSPopUpButton alloc] init] autorelease];
-    [_methodPopup addItemWithTitle:@"MAP局所アライメント（推奨）"];
-    [_methodPopup addItemWithTitle:@"グローバルのみ（高速）"];
-    [_methodPopup setTranslatesAutoresizingMaskIntoConstraints:NO];
-    [_methodPopup setTarget:self];
-    [_methodPopup setAction:@selector(analysisSettingChanged:)];
-    [self addToSection:key view:_methodPopup box:box];
-
-    _normalizeCheck = [self checkboxWithTitle:@"輝度正規化" state:YES];
-    [self addToSection:key view:_normalizeCheck box:box];
-
-    [self addToSection:key view:MakeLabel(@"加算方式") box:box];
-    _stackModePopup = [[[NSPopUpButton alloc] init] autorelease];
-    [_stackModePopup addItemWithTitle:@"単純平均"];
-    [_stackModePopup addItemWithTitle:@"品質重み付き平均"];
-    [_stackModePopup addItemWithTitle:@"σクリップ"];
-    [_stackModePopup setTarget:self];
-    [_stackModePopup setAction:@selector(analysisSettingChanged:)];
-    [_stackModePopup setTranslatesAutoresizingMaskIntoConstraints:NO];
-    [self addToSection:key view:_stackModePopup box:box];
-
-    _lowMemoryCheck = [self checkboxWithTitle:@"低メモリモード（2GB上限）" state:NO];
-    [self addToSection:key view:_lowMemoryCheck box:box];
-
-    // 画像が破綻して見えるときに真っ先に触る2つ（UI設計書 §7.2）。
-    // 警告バナーから操作先が無いと、バナーを出す意味がない。
+    // 入力の読み方は、品質評価の前に確定する。
     [self addToSection:key view:MakeLabel(@"バイトオーダー（SERのみ）") box:box];
     _endianPopup = [[[NSPopUpButton alloc] init] autorelease];
     for (NSString* t in @[ @"自動判定", @"little を使う", @"big を使う" ]) {
@@ -938,9 +967,53 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self addToSection:key view:_depthPopup box:box];
 }
 
+- (void)buildStackSection:(NSStackView*)box {
+    NSString* key = @"stack";
+    [self beginSection:@"スタック（画像の合成）" key:key inBox:box];
+
+    [self addToSection:key view:MakeLabel(@"フレームの選択方式") box:box];
+    _selectionModeSegment = [[[NSSegmentedControl alloc] initWithFrame:NSZeroRect] autorelease];
+    [_selectionModeSegment setSegmentCount:2];
+    [_selectionModeSegment setLabel:@"割合" forSegment:0];
+    [_selectionModeSegment setLabel:@"枚数" forSegment:1];
+    [_selectionModeSegment setSelectedSegment:0];
+    [_selectionModeSegment setTarget:self];
+    [_selectionModeSegment setAction:@selector(selectionModeChanged:)];
+    [_selectionModeSegment setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [self addToSection:key view:_selectionModeSegment box:box];
+
+    _apTopCaption = MakeLabel(@"位置合わせ領域ごとに採用するフレーム（%）");
+    [self addToSection:key view:_apTopCaption box:box];
+    _apTopSlider = [self sliderMin:1.0 max:100.0 value:10.0 action:@selector(apTopChanged:)];
+    _apTopValue = MakeLabel(@"10 %");
+    [self addToSection:key view:[self row:_apTopSlider trailing:_apTopValue] box:box];
+
+    NSTextField* note = MakeLabel(@"これだけを変えた再スタックは解析をやり直しません");
+    [note setTextColor:[NSColor secondaryLabelColor]];
+    [[note cell] setWraps:YES];
+    [self addToSection:key view:note box:box];
+
+    _normalizeCheck = [self checkboxWithTitle:@"輝度正規化" state:YES];
+    [self addToSection:key view:_normalizeCheck box:box];
+
+    [self addToSection:key view:MakeLabel(@"加算方式") box:box];
+    _stackModePopup = [[[NSPopUpButton alloc] init] autorelease];
+    [_stackModePopup addItemWithTitle:@"単純平均"];
+    [_stackModePopup addItemWithTitle:@"品質重み付き平均"];
+    [_stackModePopup addItemWithTitle:@"σクリップ"];
+    [_stackModePopup setTarget:self];
+    [_stackModePopup setAction:@selector(analysisSettingChanged:)];
+    [_stackModePopup setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [self addToSection:key view:_stackModePopup box:box];
+
+    _lowMemoryCheck = [self checkboxWithTitle:@"低メモリモード（2GB上限）" state:NO];
+    [self addToSection:key view:_lowMemoryCheck box:box];
+
+}
+
 - (void)buildDrizzleSection:(NSStackView*)box {
     NSString* key = @"drizzle";
-    [self beginSection:@"Drizzle" key:key inBox:box];
+    [self beginSection:@"ドリズル拡大" key:key inBox:box];
 
     _drizzleSegment = [[[NSSegmentedControl alloc] init] autorelease];
     [_drizzleSegment setSegmentCount:4];
@@ -954,7 +1027,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_drizzleSegment setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self addToSection:key view:_drizzleSegment box:box];
 
-    [self addToSection:key view:MakeLabel(@"pixfrac") box:box];
+    [self addToSection:key view:MakeLabel(@"投影する画素の幅（pixfrac）") box:box];
     _pixfracSlider = [self sliderMin:0.5 max:1.0 value:0.9 action:@selector(drizzleChanged:)];
     _pixfracValue = MakeLabel(@"0.90");
     [self addToSection:key view:[self row:_pixfracSlider trailing:_pixfracValue] box:box];
@@ -976,9 +1049,22 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)buildWaveletSection:(NSStackView*)box {
     NSString* key = @"wavelet";
-    [self beginSection:@"Wavelet" key:key inBox:box];
+    [self beginSection:@"ウェーブレット仕上げ" key:key inBox:box];
 
-    NSTextField* head = MakeLabel(@"上=Sharpen / 下=Denoise（結果に即反映）");
+    _waveletPreviewCheck =
+        [self checkboxWithTitle:@"ウェーブレット効果をプレビュー" state:YES];
+    [_waveletPreviewCheck setTarget:self];
+    [_waveletPreviewCheck setAction:@selector(waveletPreviewChanged:)];
+    [self addToSection:key view:_waveletPreviewCheck box:box];
+
+    NSTextField* compareNote =
+        MakeLabel(@"ON/OFFは比較表示のみです。書き出しには設定中の効果を適用します。");
+    [compareNote setTextColor:[NSColor secondaryLabelColor]];
+    [[compareNote cell] setWraps:YES];
+    [compareNote setPreferredMaxLayoutWidth:270.0];
+    [self addToSection:key view:compareNote box:box];
+
+    NSTextField* head = MakeLabel(@"上：細部強調（1.00＝変化なし） / 下：ノイズ低減");
     [head setTextColor:[NSColor secondaryLabelColor]];
     [self addToSection:key view:head box:box];
 
@@ -1029,12 +1115,13 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)buildExportSection:(NSStackView*)box {
     NSString* key = @"export";
-    [self beginSection:@"Export" key:key inBox:box];
+    [self beginSection:@"書き出し" key:key inBox:box];
 
     [self addToSection:key view:MakeLabel(@"形式") box:box];
     _formatPopup = [[[NSPopUpButton alloc] init] autorelease];
     [_formatPopup addItemWithTitle:@"16bit TIFF"];
     [_formatPopup addItemWithTitle:@"32bit float TIFF"];
+    [_formatPopup addItemWithTitle:@"32bit float FITS（PixInsight向け）"];
     [_formatPopup addItemWithTitle:@"16bit PNG"];
     [_formatPopup setTranslatesAutoresizingMaskIntoConstraints:NO];
     [_formatPopup setTarget:self];
@@ -1071,7 +1158,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (NSView*)buildStatusBar {
     NSView* bar = [[[NSView alloc] initWithFrame:NSZeroRect] autorelease];
 
-    _analyzeButton = [self buttonWithTitle:@"解析" action:@selector(analyze:)];
+    _qualityButton = [self buttonWithTitle:@"品質評価" action:@selector(analyze:)];
+    _alignButton = [self buttonWithTitle:@"アライメント" action:@selector(align:)];
     _stackButton = [self buttonWithTitle:@"スタック" action:@selector(run:)];
     [_stackButton setKeyEquivalent:@"\r"];
     _batchButton = [self buttonWithTitle:@"すべて処理" action:@selector(batch:)];
@@ -1089,24 +1177,24 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     _statusLabel = MakeLabel(@"動画を追加してください");
     [_statusLabel setLineBreakMode:NSLineBreakByTruncatingTail];
 
-    for (NSView* v in @[ _analyzeButton, _stackButton, _batchButton, _cancelButton, _progress,
-                         _statusLabel ]) {
+    for (NSView* v in @[ _qualityButton, _alignButton, _stackButton, _batchButton, _cancelButton,
+                         _progress, _statusLabel ]) {
         [bar addSubview:v];
     }
 
-    NSDictionary* views = NSDictionaryOfVariableBindings(_analyzeButton, _stackButton,
-                                                         _batchButton, _cancelButton, _progress,
-                                                         _statusLabel);
+    NSDictionary* views = NSDictionaryOfVariableBindings(_qualityButton, _alignButton,
+                                                         _stackButton, _batchButton,
+                                                         _cancelButton, _progress, _statusLabel);
     [bar addConstraints:[NSLayoutConstraint
                             constraintsWithVisualFormat:
-                                @"H:|[_analyzeButton(>=70)]-6-[_stackButton(>=80)]-6-[_batchButton(>=90)"
+                                @"H:|[_qualityButton(>=76)]-6-[_alignButton(>=96)]-6-[_stackButton(>=76)]-6-[_batchButton(>=88)"
                                 @"]-12-[_progress(>=120)]-10-[_statusLabel(>=180)]-8-"
                                 @"[_cancelButton(>=60)]|"
                                                 options:NSLayoutFormatAlignAllCenterY
                                                 metrics:nil
                                                   views:views]];
     [bar addConstraints:[NSLayoutConstraint
-                            constraintsWithVisualFormat:@"V:|-8-[_analyzeButton]-(>=0)-|"
+                            constraintsWithVisualFormat:@"V:|-8-[_qualityButton]-(>=0)-|"
                                                 options:0
                                                 metrics:nil
                                                   views:views]];
@@ -1341,6 +1429,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     _inputPath = std::string([[item path] UTF8String]);
 
     // 選んだファイルが変わったら、前のファイルの解析結果は使えない。
+    _qualityStage.reset();
+    _globalStage.reset();
+    [_qualitySignature release];
+    _qualitySignature = nil;
+    [_globalSignature release];
+    _globalSignature = nil;
     _analysis.reset();
     [_analysisSignature release];
     _analysisSignature = nil;
@@ -1465,7 +1559,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     const NSInteger row = [self contextQueueRow];
     if (row < 0 || row >= static_cast<NSInteger>([_items count])) return;
     if (row != _currentIndex) [self selectQueueIndex:row];
-    [self run:sender];
+    // このコンテキストメニューは「一括処理の対象を1件にする」操作。
+    // 下部のスタックボタンとは異なり、自己検証用の一括経路を通す。
+    [self startRun];
 }
 
 - (void)openDocument:(id)sender {
@@ -1537,7 +1633,17 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     return settings;
 }
 
-// 解析結果を使い回してよいかを判断するための指紋。
+// 品質評価結果を使い回してよいかを判断するための指紋。
+// 位置合わせの設定は入れない。領域の大きさを変えても品質は再計算不要である。
+- (NSString*)qualitySignature {
+    return [NSString
+        stringWithFormat:@"path=%@;quality=%ld;limit=%d;endian=%ld;depth=%ld;",
+                         [self inputPathString], (long)[_qualityMetricPopup indexOfSelectedItem],
+                         _frameLimit, (long)[_endianPopup indexOfSelectedItem],
+                         (long)[_depthPopup indexOfSelectedItem]];
+}
+
+// アライメント結果を使い回してよいかを判断するための指紋。
 //
 // **ここに入れる項目と入れない項目の区別が、このアプリの速さそのもの**である。
 //   入れる  : 解析結果そのものが変わるもの（AP・参照・追跡）
@@ -1566,6 +1672,21 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (BOOL)analysisUsable {
     if (!_analysis || !_analysisSignature) return NO;
     return [_analysisSignature isEqualToString:[self analysisSignature]];
+}
+
+- (BOOL)qualityUsable {
+    if (!_qualityStage || !_qualitySignature) return NO;
+    return [_qualitySignature isEqualToString:[self qualitySignature]];
+}
+
+- (BOOL)globalUsable {
+    if (!_globalStage || !_globalSignature) return NO;
+    return [_globalSignature isEqualToString:[self analysisSignature]];
+}
+
+- (BOOL)alignmentUsable {
+    return [_methodPopup indexOfSelectedItem] == 1 ? [self globalUsable]
+                                                   : [self analysisUsable];
 }
 
 // 解析に影響する設定が変わった。
@@ -1616,12 +1737,14 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         // ファイルを開く前に枚数プリセットを選んでも値を1へ潰さない。
         const int maximum = available > 0 ? available : std::max(1, _apTopCountSetting);
         _apTopCountSetting = std::max(1, std::min(_apTopCountSetting, maximum));
-        [_apTopCaption setStringValue:LSLocalizedString(@"AP別に採用するフレーム（枚数）")];
+        [_apTopCaption setStringValue:
+                           LSLocalizedString(@"位置合わせ領域ごとに採用するフレーム（枚数）")];
         [_apTopSlider setMinValue:1.0];
         [_apTopSlider setMaxValue:maximum];
         [_apTopSlider setDoubleValue:_apTopCountSetting];
     } else {
-        [_apTopCaption setStringValue:LSLocalizedString(@"AP別に採用するフレーム（%）")];
+        [_apTopCaption setStringValue:
+                           LSLocalizedString(@"位置合わせ領域ごとに採用するフレーム（%）")];
         [_apTopSlider setMinValue:1.0];
         [_apTopSlider setMaxValue:100.0];
         [_apTopSlider setDoubleValue:_apTopPercentSetting];
@@ -1701,7 +1824,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)updateControlsEnabled {
     const BOOL hasFile = !_inputPath.empty();
     const BOOL globalOnly = [_methodPopup indexOfSelectedItem] == 1;
-    const BOOL analysisOk = [self analysisUsable];
+    const BOOL qualityOk = [self qualityUsable];
+    const BOOL alignmentOk = [self alignmentUsable];
 
     // **実行中は選択を変えさせない。**
     // 変えると _inputPath が差し替わり、走り終わった仕事の解析結果が
@@ -1711,8 +1835,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     // すり抜けて黙って誤った画像が出る。
     [_queueTable setEnabled:!_running];
 
-    [_analyzeButton setEnabled:hasFile && !_running && !globalOnly];
-    [_stackButton setEnabled:hasFile && !_running];
+    [_qualityButton setEnabled:hasFile && !_running];
+    [_alignButton setEnabled:hasFile && qualityOk && !_running];
+    [_stackButton setEnabled:hasFile && alignmentOk && !_running];
     [_batchButton setEnabled:([_items count] > 0) && !_running];
     [_cancelButton setEnabled:_running];
     [_saveButton setEnabled:(_displayed != nullptr) && !_running];
@@ -1725,13 +1850,19 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_refineCheck setEnabled:!globalOnly];
     [_searchRadiusSlider setEnabled:!globalOnly];
     [_apEditCheck setEnabled:!globalOnly];
+    [_methodPopup setEnabled:!_running];
 
-    // 「解析済み」であることを、押す前に分かるようにする（設計原則1.2）。
-    [_stackButton setTitle:LSLocalizedString(analysisOk ? @"再スタック" : @"スタック")];
+    // 各工程の完了状態を、押す前に分かるようにする。
+    [_qualityButton setTitle:LSLocalizedString(qualityOk ? @"品質を再評価" : @"品質評価")];
+    [_alignButton setTitle:LSLocalizedString(alignmentOk ? @"再アライメント"
+                                                    : @"アライメント")];
+    [_stackButton setTitle:LSLocalizedString(_stacked ? @"再スタック" : @"スタック")];
     if (_currentIndex >= 0 && !_running) {
         QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
         if ([item state] != QueueItemStateError && [item state] != QueueItemStateStacked) {
-            [item setState:analysisOk ? QueueItemStateAnalyzed : QueueItemStatePending];
+            [item setState:alignmentOk ? QueueItemStateAnalyzed
+                                      : (qualityOk ? QueueItemStateQualityEvaluated
+                                                   : QueueItemStatePending)];
             [_queueTable reloadData];
             [_queueTable selectRowIndexes:[NSIndexSet indexSetWithIndex:
                                                           static_cast<NSUInteger>(_currentIndex)]
@@ -1743,11 +1874,20 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 // ---- 実行 -----------------------------------------------------------------
 
 - (void)startRun {
-    [self run:nil];
+    // GUI自己検証専用。通常のボタンは工程ごとに停止する。
+    [self beginJobStage:JobStage::Full];
 }
 
 - (void)startAnalyzeOnly {
     [self analyze:nil];
+}
+
+- (void)startAlignmentOnly {
+    [self align:nil];
+}
+
+- (void)startStackOnly {
+    [self run:nil];
 }
 
 - (void)startBatch {
@@ -1767,12 +1907,17 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)analyze:(id)sender {
     (void)sender;
-    [self beginJobWithStack:NO];
+    [self beginJobStage:JobStage::Quality];
+}
+
+- (void)align:(id)sender {
+    (void)sender;
+    [self beginJobStage:JobStage::Alignment];
 }
 
 - (void)run:(id)sender {
     (void)sender;
-    [self beginJobWithStack:YES];
+    [self beginJobStage:JobStage::Stack];
 }
 
 - (void)cancel:(id)sender {
@@ -1782,8 +1927,10 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_statusLabel setStringValue:LSLocalizedString(@"中断しています…")];
 }
 
-- (void)beginJobWithStack:(BOOL)wantStack {
+- (void)beginJobStage:(JobStage)stage {
     if (_running || _inputPath.empty()) return;
+    if (stage == JobStage::Alignment && ![self qualityUsable]) return;
+    if (stage == JobStage::Stack && ![self alignmentUsable]) return;
 
     _running = YES;
     _batchRunning = NO;
@@ -1802,14 +1949,24 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     req.settings = [self currentSettings];
     req.global_only = [_methodPopup indexOfSelectedItem] == 1;
     req.low_memory = [_lowMemoryCheck state] == NSControlStateValueOn;
-    req.want_stack = wantStack ? true : false;
-    if ([self analysisUsable]) req.reuse = _analysis;
+    req.stage = stage;
+    if (stage == JobStage::Alignment) req.quality = _qualityStage;
+    if (stage == JobStage::Stack) {
+        req.global = _globalStage;
+        req.analysis = _analysis;
+    }
 
-    NSString* signature = [[self analysisSignature] copy];
-    const BOOL reusing = (req.reuse != nullptr);
-    [_statusLabel
-        setStringValue:LSLocalizedString(reusing ? @"解析結果を使い回して加算します…"
-                                                 : @"開始しています…")];
+    NSString* qualitySignature = [[self qualitySignature] copy];
+    NSString* alignmentSignature = [[self analysisSignature] copy];
+    if (stage == JobStage::Quality) {
+        [_statusLabel setStringValue:LSLocalizedString(@"各フレームの品質を評価しています…")];
+    } else if (stage == JobStage::Alignment) {
+        [_statusLabel setStringValue:LSLocalizedString(@"位置合わせを実行しています…")];
+    } else if (stage == JobStage::Stack) {
+        [_statusLabel setStringValue:LSLocalizedString(@"解析結果を使ってスタックしています…")];
+    } else {
+        [_statusLabel setStringValue:LSLocalizedString(@"自己検証用の一括処理を開始します…")];
+    }
 
     std::atomic<bool>* cancelFlag = _cancelFlag;
     MainWindowController* controller = self;
@@ -1831,15 +1988,18 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
         JobResult result = run_job(req, progress);
         dispatch_async(dispatch_get_main_queue(), ^{
-            [controller finishJob:result signature:signature wantedStack:req.want_stack];
-            [signature release];
+            [controller finishJob:result
+                 qualitySignature:qualitySignature
+               alignmentSignature:alignmentSignature];
+            [qualitySignature release];
+            [alignmentSignature release];
         });
     });
 }
 
 - (void)finishJob:(const JobResult&)result
-        signature:(NSString*)signature
-      wantedStack:(bool)wantedStack {
+ qualitySignature:(NSString*)qualitySignature
+alignmentSignature:(NSString*)alignmentSignature {
     _running = NO;
     [_progress setDoubleValue:0.0];
     [_progress setHidden:YES];
@@ -1866,24 +2026,88 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         return;
     }
 
+    if (result.stage == JobStage::Quality && result.quality) {
+        _qualityStage = result.quality;
+        [_qualitySignature release];
+        _qualitySignature = [qualitySignature copy];
+
+        // 品質を評価し直したら、それ以降の工程は新しい値に対して未実行である。
+        _globalStage.reset();
+        [_globalSignature release];
+        _globalSignature = nil;
+        _analysis.reset();
+        [_analysisSignature release];
+        _analysisSignature = nil;
+        _referenceImage.reset();
+        _stacked.reset();
+        _displayed.reset();
+        _wavelet.reset();
+        [_preview clearAlignmentPoints];
+        [self showFrames:result.frames];
+        [_inspectorTab setSelectedSegment:1];
+        [self updateInspectorVisibility];
+        [_statusLabel
+            setStringValue:[NSString stringWithFormat:
+                                         LSLocalizedString(@"品質評価が完了しました — %dフレーム"),
+                                                    static_cast<int>(result.frames.size())]];
+        [self notifyDone:LSLocalizedString(@"品質評価が完了しました。次はアライメントです")];
+        [self updateControlsEnabled];
+        if (_onRunFinished) _onRunFinished();
+        return;
+    }
+
+    if (result.stage == JobStage::Alignment && result.global) {
+        _globalStage = result.global;
+        [_globalSignature release];
+        _globalSignature = [alignmentSignature copy];
+        if (!result.analysis) {
+            // 画像全体の位置合わせに切り替えたとき、以前の局所領域を残さない。
+            _analysis.reset();
+            [_analysisSignature release];
+            _analysisSignature = nil;
+            _referenceImage.reset();
+            [_preview clearAlignmentPoints];
+        }
+        _stacked.reset();
+        _displayed.reset();
+        _wavelet.reset();
+    }
+
     if (result.analysis) {
         _analysis = result.analysis;
         [_analysisSignature release];
-        _analysisSignature = [signature copy];
-        if (!result.reused_analysis) [self saveSidecarForCurrent];
+        _analysisSignature = [alignmentSignature copy];
+        if (result.stage == JobStage::Alignment || result.stage == JobStage::Full) {
+            [self saveSidecarForCurrent];
+        }
         [self rebuildReferenceImage];
+    }
+
+    if (result.stage == JobStage::Full && result.global) {
+        _qualityStage = std::make_shared<stackcore::GlobalStageReport>(*result.global);
+        _globalStage = result.global;
+        [_qualitySignature release];
+        _qualitySignature = [qualitySignature copy];
+        [_globalSignature release];
+        _globalSignature = [alignmentSignature copy];
     }
     [self showFrames:result.frames];
 
-    if (wantedStack && result.image) {
+    if ((result.stage == JobStage::Stack || result.stage == JobStage::Full) && result.image) {
         _stacked = result.image;
+        if (_currentIndex >= 0) {
+            QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
+            [item setState:QueueItemStateStacked];
+            [item setMessage:@""];
+            [_queueTable reloadData];
+        }
         // 分解はここで1回だけ行う。以降スライダーを動かしても再構成しか走らない。
         _wavelet = std::make_shared<stackcore::WaveletSharpener>();
         _wavelet->analyze(*_stacked, kWaveletLayers);
         [_viewModeSegment setSelectedSegment:2];
         // 結果が出たら次の工程（仕上げ・書き出し）のタブへ進める。
         // 「スタックし終わったのに次に何をするのか分からない」を防ぐ。
-        [_inspectorTab setSelectedSegment:1];
+        [_inspectorTab setSelectedSegment:3];
         [self updateInspectorVisibility];
         [self applyWavelet];
         [_statusLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"完了 — %d×%d"),
@@ -1891,10 +2115,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                                                 _stacked->height()]];
         [self notifyDone:[NSString stringWithFormat:LSLocalizedString(@"スタックが完了しました（%d×%d）"),
                                                     _stacked->width(), _stacked->height()]];
-    } else {
+    } else if (result.stage == JobStage::Alignment) {
+        [_inspectorTab setSelectedSegment:2];
+        [self updateInspectorVisibility];
         [_statusLabel setStringValue:
                           [NSString stringWithFormat:
-                                        LSLocalizedString(@"解析が終わりました — AP %d個 / %d フレーム"),
+                                        LSLocalizedString(@"アライメントが完了しました — 位置合わせ領域 %d個 / %dフレーム"),
                                                      _analysis ? static_cast<int>(
                                                                      _analysis->points.size())
                                                                : 0,
@@ -1903,7 +2129,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             [_viewModeSegment setSelectedSegment:1];
             [_preview showFrameBuffer:*_referenceImage];
         }
-        [self notifyDone:LSLocalizedString(@"解析が完了しました")];
+        [self notifyDone:LSLocalizedString(@"アライメントが完了しました。次はスタックです")];
     }
     // **APオーバーレイの更新は _stacked を入れたあとに行う。**
     // オーバーレイの座標倍率はDrizzle倍率から決まるが、その判断に
@@ -1977,11 +2203,11 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     NSMutableArray* parts = [NSMutableArray array];
     if (_byteOrderSuspect) {
         [parts addObject:LSLocalizedString(
-                             @"バイトオーダーがヘッダの主張と違います。画像が破綻して見えるならStackで切り替えてください")];
+                             @"バイトオーダーがヘッダの主張と違います。画像が破綻して見えるなら品質評価タブで切り替えてください")];
     }
     if (_looksLikeShallowDepth) {
         [parts addObject:LSLocalizedString(
-                             @"16bitですが実測は12bit幅です。暗く写るならStackで「12bitとして扱う」を選んでください")];
+                             @"16bitですが実測は12bit幅です。暗く写るなら品質評タブで「12bitとして扱う」を選んでください")];
     }
     if (_rejectedFrames > 0) {
         [parts addObject:[NSString
@@ -2058,8 +2284,10 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             }
             break;
         case 2:
-            if (_displayed) {
-                [_preview showFrameBuffer:*_displayed];
+            if (_displayed && _stacked) {
+                const BOOL showEffect =
+                    [_waveletPreviewCheck state] == NSControlStateValueOn;
+                [_preview showFrameBuffer:showEffect ? *_displayed : *_stacked];
             } else {
                 [_statusLabel setStringValue:LSLocalizedString(@"スタック結果はまだありません")];
                 [_viewModeSegment setSelectedSegment:0];
@@ -2078,7 +2306,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         [_apCountLabel setStringValue:_manualPoints.empty()
                                           ? @""
                                           : [NSString stringWithFormat:
-                                                            LSLocalizedString(@"手動AP %zu 個（未解析）"),
+                                                            LSLocalizedString(@"手動の位置合わせ領域 %zu個（未実行）"),
                                                                        _manualPoints.size()]];
         return;
     }
@@ -2089,7 +2317,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                           apSize:_analysis->ap_size
                    meanQualities:quality
                  coordinateScale:scale];
-    [_apCountLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"AP %zu 個 / %d px"),
+    [_apCountLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"位置合わせ領域 %zu個 / %d px"),
                                                              _analysis->points.size(),
                                                              _analysis->ap_size]];
 }
@@ -2255,10 +2483,22 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         return;
     }
 
+    // サイドカーはアライメント完了後の結果なので、前段の完了状態も復元する。
+    auto global = std::make_shared<stackcore::GlobalStageReport>();
+    global->frames = loaded->frames;
+    global->reference_index = loaded->reference_index;
+    global->reference_mean = loaded->reference_mean;
+    _qualityStage = std::make_shared<stackcore::GlobalStageReport>(*global);
+    _globalStage = global;
+    [_qualitySignature release];
+    _qualitySignature = [[self qualitySignature] copy];
+    [_globalSignature release];
+    _globalSignature = [[self analysisSignature] copy];
+
     [self rebuildReferenceImage];
     [self showFrames:_analysis->frames];
     [_statusLabel
-        setStringValue:LSLocalizedString(@"解析済みの結果を読み込みました。すぐに再スタックできます")];
+        setStringValue:LSLocalizedString(@"アライメント済みの結果を読み込みました。すぐにスタックできます")];
 }
 
 // ---- プリセット -----------------------------------------------------------
@@ -2542,7 +2782,10 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 }
 
 - (void)applyManualPoints {
-    // AP集合が変わったら解析結果はもう使えない。
+    // 位置合わせ領域が変わったら、アライメント以降はもう使えない。
+    _globalStage.reset();
+    [_globalSignature release];
+    _globalSignature = nil;
     _analysis.reset();
     [_analysisSignature release];
     _analysisSignature = nil;
@@ -2553,7 +2796,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     if (size == 0) size = 64;  // 自動のときは表示だけ暫定値で描く
     [_preview setAlignmentPoints:_manualPoints apSize:size meanQualities:none coordinateScale:1.0];
     [_apCountLabel setStringValue:[NSString stringWithFormat:
-                                                        LSLocalizedString(@"手動AP %zu 個（未解析）"),
+                                                        LSLocalizedString(@"手動の位置合わせ領域 %zu個（未実行）"),
                                                              _manualPoints.size()]];
     [self updateControlsEnabled];
 }
@@ -2562,6 +2805,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     (void)sender;
     _manualPointsActive = NO;
     _manualPoints.clear();
+    _globalStage.reset();
+    [_globalSignature release];
+    _globalSignature = nil;
     _analysis.reset();
     [_analysisSignature release];
     _analysisSignature = nil;
@@ -2577,13 +2823,16 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     // 消したのに黙って置き直されるほうが、よほど分かりにくい。
     _manualPointsActive = YES;
     _manualPoints.clear();
+    _globalStage.reset();
+    [_globalSignature release];
+    _globalSignature = nil;
     _analysis.reset();
     [_analysisSignature release];
     _analysisSignature = nil;
     [_preview clearAlignmentPoints];
-    [_apCountLabel setStringValue:LSLocalizedString(@"AP 0 個（手動）")];
+    [_apCountLabel setStringValue:LSLocalizedString(@"位置合わせ領域 0個（手動）")];
     [_statusLabel
-        setStringValue:LSLocalizedString(@"APをすべて消しました。プレビューをクリックして置き直せます")];
+        setStringValue:LSLocalizedString(@"位置合わせ領域をすべて消しました。プレビューをクリックして置き直せます")];
     [self updateControlsEnabled];
 }
 
@@ -2604,6 +2853,17 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                                                         doubleValue]]];
     }
     [self applyWavelet];
+}
+
+- (void)waveletPreviewChanged:(id)sender {
+    (void)sender;
+    if (!_stacked || !_displayed) return;
+    [_viewModeSegment setSelectedSegment:2];
+    const BOOL showEffect = [_waveletPreviewCheck state] == NSControlStateValueOn;
+    [_preview showFrameBuffer:showEffect ? *_displayed : *_stacked];
+    [_statusLabel
+        setStringValue:LSLocalizedString(showEffect ? @"ウェーブレット効果ありのプレビュー"
+                                              : @"ウェーブレット効果なしのプレビュー")];
 }
 
 - (void)resetWavelet:(id)sender {
@@ -2628,7 +2888,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     _wavelet->synthesize(params, *out);
     out->set_source_bit_depth(_stacked->source_bit_depth());
     _displayed = out;
-    [_preview showFrameBuffer:*_displayed];
+    const BOOL showEffect = [_waveletPreviewCheck state] == NSControlStateValueOn;
+    [_preview showFrameBuffer:showEffect ? *_displayed : *_stacked];
 }
 
 - (void)setDrizzleIndexForTesting:(int)index {
@@ -2656,12 +2917,18 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self waveletChanged:nil];
 }
 
+- (void)setWaveletPreviewForTesting:(BOOL)on {
+    [_waveletPreviewCheck setState:on ? NSControlStateValueOn : NSControlStateValueOff];
+    [self waveletPreviewChanged:nil];
+}
+
 // ---- 書き出し -------------------------------------------------------------
 
 - (OutputFormat)currentOutputFormat {
     const NSInteger index = [_formatPopup indexOfSelectedItem];
     if (index == 1) return OutputFormat::TiffFloat32;
-    if (index == 2) return OutputFormat::Png16;
+    if (index == 2) return OutputFormat::FitsFloat32;
+    if (index == 3) return OutputFormat::Png16;
     return OutputFormat::Tiff16;
 }
 
@@ -2676,7 +2943,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                                       (scale == 1.5) ? @"1.5"
                                                                      : [NSString stringWithFormat:
                                                                                      @"%.0f", scale]];
-    NSString* extension = [self currentOutputFormat] == OutputFormat::Png16 ? @"png" : @"tif";
+    NSString* extension = @"tif";
+    if ([self currentOutputFormat] == OutputFormat::Png16) extension = @"png";
+    else if ([self currentOutputFormat] == OutputFormat::FitsFloat32) extension = @"fits";
     NSString* selection = _selectionUsesCount
                               ? [NSString stringWithFormat:@"%dframes", _apTopCountSetting]
                               : [NSString stringWithFormat:@"%.0fpct", _apTopPercentSetting];
@@ -2727,7 +2996,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
     NSSavePanel* panel = [NSSavePanel savePanel];
     const OutputFormat format = [self currentOutputFormat];
-    [panel setAllowedFileTypes:format == OutputFormat::Png16 ? @[ @"png" ] : @[ @"tif" ]];
+    if (format == OutputFormat::Png16) [panel setAllowedFileTypes:@[ @"png" ]];
+    else if (format == OutputFormat::FitsFloat32) [panel setAllowedFileTypes:@[ @"fits", @"fit" ]];
+    else [panel setAllowedFileTypes:@[ @"tif" ]];
     [panel setNameFieldStringValue:[_namePreview stringValue]];
     if (_outputDirectory) [panel setDirectoryURL:[NSURL fileURLWithPath:_outputDirectory]];
     if ([panel runModal] != NSModalResponseOK) return;
@@ -2811,7 +3082,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             req.settings = settings;
             req.global_only = globalOnly;
             req.low_memory = lowMemory;
-            req.want_stack = true;
+            req.stage = JobStage::Full;
 
             const stackcore::ProgressFn progress =
                 [controller, cancelFlag](const char* stage, int done, int total) -> bool {

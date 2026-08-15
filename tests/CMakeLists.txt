@@ -4,6 +4,7 @@ add_executable(stackcore_tests
     src/test_ser.cpp
     src/test_tiff.cpp
     src/test_png.cpp
+    src/test_fits.cpp
     src/test_debayer.cpp
     src/test_quality.cpp
     src/test_phase_correlate.cpp

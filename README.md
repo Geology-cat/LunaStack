@@ -24,17 +24,23 @@ RegiStax のウェーブレットシャープニングを1つのアプリに統�
 ## GUIアプリ
 
 ```bash
-cmake -S . -B build && cmake --build build -j8
-open build/LunaStackApp/LunaStack.app
+./scripts/build_app.sh
+open dist/LunaStack.app
 ```
 
+`dist/LunaStack.app` が常に最新の検証済みUniversalアプリである。
+中間生成物は `.build/universal/` へ集約し、リポジトリ直下に別の
+`LunaStack.app` を作らない。
+
 左＝入力キューと品質グラフ、中央＝プレビュー、右＝Inspector の3ペイン構成。
-動画を開く → ［解析］→ 品質グラフを見て選択条件を決める → ［スタック］→
+動画を開く → ［品質評価］→ グラフを確認 → ［アライメント］→ 参照画像と
+位置合わせ領域を確認 → ［スタック］→
 仕上げスライダーで追い込む → 書き出し、までGUIだけで完結する。
+各主工程は完了時に必ず停止し、次工程を勝手に実行しない。
 処理中も操作でき、中断できる。
 
-右Inspectorは工程タブの2段構成（**1. 解析・スタック** ／ **2. 仕上げ・書き出し**）。
-スタックが完了すると自動で仕上げタブに進み、新しいファイルを選ぶと最初のタブに戻る。
+右Inspectorは4つの工程タブ（**品質評価 / アライメント / スタック / 仕上げ・出力**）で構成する。
+各工程の完了後は次タブへ案内し、新しいファイルを選ぶと品質評価タブに戻る。
 「どの段階の設定を触っているのか」をUIの構造で示すための分割である。
 
 **選択率を変えただけの再スタックは解析をやり直さない。**
@@ -42,15 +48,15 @@ open build/LunaStackApp/LunaStack.app
 木星300フレームの実測で、解析込み 22.2 秒に対し再スタックは 2.35 秒だった。
 
 仕上げ（ウェーブレット）は分解を1回だけ行い、スライダー操作では再構成しか走らないので
-即座に反映される。
+即座に反映される。「ウェーブレット効果をプレビュー」のON/OFFで効果あり/なしを比較できる。
 
 そのほか:
 
-- APオーバーレイの表示・クリックでの追加・Deleteでの削除、品質のヒートマップ表示
+- 位置合わせ領域の表示・クリックでの追加・Deleteでの削除、品質のヒートマップ表示
 - 品質グラフのカットラインをドラッグして選択率を決める（時系列 ⇄ 品質順を切替可能）
 - 品質指標（勾配エネルギー／FFT周波数帯パワー比）、選択方式（割合／枚数）の切替
 - 輝度正規化、単純平均／品質重み付き平均／σクリップの切替
-- 16bit TIFF、32bit float TIFF、16bit PNGの書き出し
+- 16bit TIFF、32bit float TIFF、32bit float FITS（PixInsight向け）、16bit PNGの書き出し
 - 残り時間の推定と完了通知
 - プリセットのJSON保存（`~/Library/Application Support/LunaStack/Presets/`）
 - キューの一括処理。自動命名・途中中断・処理済みのスキップによる再開
@@ -63,19 +69,20 @@ UIはmacOSの優先言語に従って日本語・英語を切り替える。
 ## ビルドとテスト
 
 ```bash
-cmake -S . -B build && cmake --build build -j8
+cmake -S . -B .build/local && cmake --build .build/local -j8
 ```
 
 テストを実行する:
 
 ```bash
-cd build && ctest --output-on-failure
+ctest --test-dir .build/local --output-on-failure
 ```
 
-`ctest` は2つを実行する。
+`ctest` は3つを実行する。
 
 1. `stackcore_tests` — エンジンのユニット・リグレッションテスト
-2. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。
+2. `localization_strings_valid` — 日本語・英語リソースの構文検証
+3. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。
    デプロイメントターゲット(10.13)より新しいAPIを使ったコードが
    コンパイルエラーになることを確認する。これが「成功」してしまうと
    availabilityガードが効いていない＝10.13対応が無検証、ということになる。
@@ -83,13 +90,13 @@ cd build && ctest --output-on-failure
 Universal 2（x86_64 + arm64）でビルドする:
 
 ```bash
-cmake -S . -B build-universal -DLUNASTACK_UNIVERSAL=ON && cmake --build build-universal -j8
+./scripts/build_app.sh
 ```
 
 出荷バイナリの最低OSを確認する:
 
 ```bash
-vtool -show-build build/stackcli/stackcli
+vtool -show-build .build/universal/stackcli/stackcli
 ```
 
 x86_64スライスは `LC_VERSION_MIN_MACOSX version 10.13`、
@@ -105,16 +112,19 @@ arm64スライスは `minos 11.0` になっていれば正しい
 
 ```bash
 # SERファイルのヘッダと実測値を表示（デコーダの診断用）
-./build/stackcli/stackcli info capture.ser
+./.build/local/stackcli/stackcli info capture.ser
 
 # 指定フレームをTIFFまたは16bit PNGに書き出す
-./build/stackcli/stackcli extract capture.ser -f 100 -o frame100.png
+./.build/local/stackcli/stackcli extract capture.ser -f 100 -o frame100.png
+
+# 拡張子 .fits で32bit float FITSに書き出す（0.0〜1.0に正規化）
+./.build/local/stackcli/stackcli extract capture.ser -f 100 -o frame100.fits
 
 # 動画1本をスタックして1枚の画像にする（M1: グローバルのみ）
-./build/stackcli/stackcli stack capture.ser -o stacked.tif --top 25
+./.build/local/stackcli/stackcli stack capture.ser -o stacked.tif --top 25
 
 # MAP局所アライメント＋オーバーラップ窓合成（M2）
-./build/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 10
+./.build/local/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 10
 ```
 
 主なオプション:
@@ -125,6 +135,7 @@ arm64スライスは `minos 11.0` になっていれば正しい
 | `--bit-depth <N>` | 正規化に使うビット深度を上書き |
 | `--float` | 32bit float TIFFで書き出す |
 | 出力名 `.png` | 決定論的な16bit PNGで書き出す |
+| 出力名 `.fits` / `.fit` | PixInsight等向けの32bit float FITSで書き出す |
 | `--raw-cfa` | Bayerをデバイヤーせず生のCFAのまま出力 |
 
 `mapstack` のオプション（`stack` のものも使える）:
@@ -187,8 +198,11 @@ libstackcore/     エンジン（C++17静的ライブラリ、UI非依存）
   src/map/          ap_placer, local_aligner
   src/stack/        simple_stacker, frame_selector, windowed_stacker
   src/pipeline/     global_stage, map_pipeline
-  src/io/           ser_decoder, avi_decoder, video_source, tiff_writer, png_writer, mapped_file
+  src/io/           ser_decoder, avi_decoder, video_source, tiff/png/fits_writer, mapped_file
 stackcli/         CLI
+scripts/          検証済みアプリの作成スクリプト
+.build/           CMake中間生成物（リポジトリには含めない）
+dist/LunaStack.app 最新の検証済みUniversalアプリ
 tests/            テスト（自前の最小ハーネス、外部依存なし）
 tools/            開発用スクリプト（ビルドには含まれない）
 docs/             仕様書・実装計画書
@@ -233,7 +247,7 @@ python3 ../tools/avi_to_ser.py jup16.nut jup16.ser
 
 ```bash
 c++ -std=c++17 -O2 -Ilibstackcore/include tools/ser_sweep.cpp \
-    build/libstackcore/libstackcore.a -framework Accelerate -o /tmp/ser_sweep
+    .build/local/libstackcore/libstackcore.a -framework Accelerate -o /tmp/ser_sweep
 /tmp/ser_sweep sample-data/jupiter.ser
 ```
 
@@ -251,6 +265,7 @@ c++ -std=c++17 -O2 -Ilibstackcore/include tools/ser_sweep.cpp \
 - bilinearデバイヤー（RGGB / GRBG / GBRG / BGGR）
 - TIFF書き出し（16bit / 32bit float、1ch / 3ch）
 - PNG書き出し（決定論的な無圧縮DEFLATE、16bit、1ch / 3ch）
+- FITS書き出し（32bit float、1ch / RGBデータキューブ、PixInsight向け正規化）
 - CLI `info` / `extract`
 
 ### M1で実装済み（入力）
@@ -300,10 +315,10 @@ AVFoundationのAVI対応はOSバージョンで挙動が変わりうるため
 
 ```bash
 # 解析してサイドカーに保存
-./build/stackcli/stackcli mapstack capture.ser -o out.tif --sidecar capture.lstk
+./.build/local/stackcli/stackcli mapstack capture.ser -o out.tif --sidecar capture.lstk
 
 # 選択率だけ変えて再スタック（解析はやり直さない）
-./build/stackcli/stackcli mapstack capture.ser -o out2.tif --ap-top 25 \
+./.build/local/stackcli/stackcli mapstack capture.ser -o out2.tif --ap-top 25 \
     --sidecar capture.lstk --reuse-sidecar
 ```
 
@@ -337,7 +352,7 @@ MAP段に統合済み（`mapstack --drizzle 2.0`）。窓合成スタッカ自�
 - 応答: 512x512x3の再構成が **6.9 ms**（目標100ms）
 
 ```bash
-./build/stackcli/stackcli mapstack capture.ser -o out.tif \
+./.build/local/stackcli/stackcli mapstack capture.ser -o out.tif \
     --sharpen 1.8,1.5,1.2 --denoise 0.5,0.3 --stretch 0.0,0.35,1.8
 ```
 

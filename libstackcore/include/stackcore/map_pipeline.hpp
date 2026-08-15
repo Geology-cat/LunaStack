@@ -89,6 +89,13 @@ FrameBuffer run_map_stack(const VideoSource& source, const MapStackSettings& set
 AnalysisData analyze_map_stack(const VideoSource& source, const MapStackSettings& settings,
                                const ProgressFn& progress, MapStackReport& report);
 
+// 品質評価・グローバルアライメント済みの結果から、MAP局所アライメントだけを行う。
+// 品質評価を再実行しないため、GUIで工程を段階的に進められる。
+AnalysisData analyze_map_alignment(const VideoSource& source,
+                                   const MapStackSettings& settings,
+                                   const GlobalStageReport& global,
+                                   const ProgressFn& progress, MapStackReport& report);
+
 // 解析結果から加算だけを行う。
 // 選択率（ap_top_percent）を変えて何度も呼べる。
 FrameBuffer stack_from_analysis(const VideoSource& source, const MapStackSettings& settings,

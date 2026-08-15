@@ -22,13 +22,17 @@
 - (void)addPathsToQueue:(NSArray*)paths;
 
 // ---- 自己検証用 ----
-// GUIを人が操作しなくても「開く→解析→スタック→プレビュー」の経路を通せるようにする。
+// GUIを人が操作しなくても「開く→品質評価→アライメント→スタック」の
+// 経路を通せる。通常のGUIでは各工程で必ず停止する。
 @property(nonatomic, copy) void (^onRunFinished)(void);
-- (void)startRun;         // 解析＋スタック
-- (void)startAnalyzeOnly;
+- (void)startRun;         // 自己検証用の一括処理
+- (void)startAnalyzeOnly; // 品質評価だけ
+- (void)startAlignmentOnly;
+- (void)startStackOnly;
 - (void)startBatch;
 - (void)setFrameLimit:(int)limit;
 - (void)setSharpenForTesting:(double)value denoise:(double)denoise;
+- (void)setWaveletPreviewForTesting:(BOOL)on;
 - (void)setBatchOutputDirectory:(NSString*)path;
 // APの当たり判定が描画とずれていないかを確かめる。
 - (BOOL)selfCheckApHitTest;

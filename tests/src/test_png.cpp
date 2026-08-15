@@ -96,7 +96,7 @@ ParsedPng parse_png(const std::vector<std::uint8_t>& bytes) {
     return png;
 }
 
-std::string temp_path(const char* name) { return std::string("./lunastack_test_") + name; }
+std::string temp_path(const char* name) { return std::string("/tmp/lunastack_test_") + name; }
 
 }  // namespace
 

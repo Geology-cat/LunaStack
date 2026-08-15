@@ -3,10 +3,11 @@
 #import <Cocoa/Cocoa.h>
 
 typedef NS_ENUM(NSInteger, QueueItemState) {
-    QueueItemStatePending = 0,   // 未処理
-    QueueItemStateAnalyzed = 1,  // 解析済み（サイドカーあり）
-    QueueItemStateStacked = 2,   // スタック済み（書き出し済み）
-    QueueItemStateError = 3,     // 失敗
+    QueueItemStatePending = 0,           // 未処理
+    QueueItemStateQualityEvaluated = 1,  // フレーム品質の評価済み
+    QueueItemStateAnalyzed = 2,          // アライメント済み（サイドカーあり）
+    QueueItemStateStacked = 3,           // スタック完了（バッチ時は書き出しも完了）
+    QueueItemStateError = 4,             // 失敗
 };
 
 // 入力キューの1行（UI設計書 §3.1）。
