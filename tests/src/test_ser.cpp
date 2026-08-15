@@ -45,6 +45,33 @@ MT_TEST(ser_ヘッダを正しく読む) {
     MT_CHECK_EQ(d.header().observer, std::string("TestObserver"));
 }
 
+MT_TEST(ser_GenikaAstroの非標準識別子を互換入力として読める) {
+    // 実ファイルで確認した方言。Genika AstroはSERの各フィールドを正しく書く一方、
+    // 先頭14バイトだけ標準のLUCAM-RECORDERではなくGenikaAstroにしている。
+    // 寸法・深度・必要サイズを厳密に検査した上で、識別子だけを理由に拒否しない。
+    synthetic::SerSpec spec;
+    spec.file_id = "GenikaAstro";
+    spec.pixel_depth = 8;
+    spec.width = 40;
+    spec.height = 24;
+    spec.frames = 3;
+    const std::string path = temp_path("genika_id.ser");
+    synthetic::write_ser(path, spec);
+
+    SerDecoder d;
+    d.open(path);
+    MT_CHECK_EQ(d.header().file_id, std::string("GenikaAstro"));
+    MT_CHECK_EQ(d.header().width, 40);
+    MT_CHECK_EQ(d.header().height, 24);
+    MT_CHECK_EQ(d.frame_count(), 3);
+
+    FrameBuffer fb;
+    d.read_frame(2, fb);
+    const float expected =
+        static_cast<float>(synthetic::synthetic_value(spec, 11, 7, 2, 0)) / 255.0f;
+    MT_CHECK_NEAR(fb.row(0, 7)[11], expected, 1e-6);
+}
+
 MT_TEST(ser_16bitモノクロの画素値が一致する) {
     synthetic::SerSpec spec;
     spec.width = 33;  // stride と width をずらすため半端な幅にする

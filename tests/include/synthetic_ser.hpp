@@ -16,6 +16,7 @@
 namespace synthetic {
 
 struct SerSpec {
+    std::string file_id = "LUCAM-RECORDER";
     int width = 32;
     int height = 24;
     int frames = 5;
@@ -104,7 +105,7 @@ inline void write_ser(const std::string& path, const SerSpec& spec) {
 
     std::vector<std::uint8_t> out;
 
-    detail::push_fixed(out, "LUCAM-RECORDER", 14);
+    detail::push_fixed(out, spec.file_id, 14);
     detail::push_i32(out, 0);                       // LuID
     detail::push_i32(out, spec.color_id);
     detail::push_i32(out, spec.header_says_little ? 1 : 0);
