@@ -33,6 +33,7 @@
 - (void)setFrameLimit:(int)limit;
 - (void)setSharpenForTesting:(double)value denoise:(double)denoise;
 - (void)setWaveletPreviewForTesting:(BOOL)on;
+- (void)clearForTesting;
 - (void)setBatchOutputDirectory:(NSString*)path;
 // APの当たり判定が描画とずれていないかを確かめる。
 - (BOOL)selfCheckApHitTest;

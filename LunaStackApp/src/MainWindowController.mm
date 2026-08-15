@@ -235,6 +235,7 @@ alignmentSignature:(NSString*)alignmentSignature;
 - (void)showSourceFrame:(int)index;
 - (void)rebuildReferenceImage;
 - (void)selectQueueIndex:(NSInteger)index;
+- (void)resetWorkspaceForNewProcessing;
 - (void)useLittleEndianFromBanner:(id)sender;
 - (void)useBigEndianFromBanner:(id)sender;
 - (void)use12BitFromBanner:(id)sender;
@@ -250,6 +251,7 @@ alignmentSignature:(NSString*)alignmentSignature;
     NSTableView* _queueTable;
     QualityGraphView* _graph;
     NSSegmentedControl* _graphMode;
+    NSButton* _clearButton;
 
     // --- 中央 ---
     PreviewView* _preview;
@@ -545,6 +547,11 @@ alignmentSignature:(NSString*)alignmentSignature;
     [buttons addArrangedSubview:[self buttonWithTitle:@"追加…" action:@selector(openDocument:)]];
     [buttons addArrangedSubview:[self buttonWithTitle:@"削除"
                                                action:@selector(removeSelectedFromQueue:)]];
+    _clearButton = [self buttonWithTitle:@"クリア" action:@selector(clearWorkspace:)];
+    [_clearButton
+        setToolTip:LSLocalizedString(
+                       @"入力キューと処理結果を消去します。元動画・解析キャッシュ・書き出し済みファイル・設定は残ります")];
+    [buttons addArrangedSubview:_clearButton];
     [pane addSubview:buttons];
 
     NSTextField* graphTitle = [self sectionTitle:@"品質グラフ"];
@@ -1504,12 +1511,75 @@ alignmentSignature:(NSString*)alignmentSignature;
     if ([_items count] > 0) {
         [self selectQueueIndex:std::min<NSInteger>(row, static_cast<NSInteger>([_items count]) - 1)];
     } else {
-        _inputPath.clear();
-        [_preview clearImage];
-        [_preview clearAlignmentPoints];
-        [_graph clearData];
+        [self resetWorkspaceForNewProcessing];
+        [_statusLabel setStringValue:LSLocalizedString(@"動画を追加してください")];
     }
     [self updateControlsEnabled];
+}
+
+// 次の素材をすぐに処理できる空の作業状態へ戻す。
+// 元動画、サイドカー、書き出し済みファイルには触れず、画面内の状態だけを破棄する。
+- (void)resetWorkspaceForNewProcessing {
+    _currentIndex = -1;
+    _inputPath.clear();
+
+    _qualityStage.reset();
+    _globalStage.reset();
+    [_qualitySignature release];
+    _qualitySignature = nil;
+    [_globalSignature release];
+    _globalSignature = nil;
+    _analysis.reset();
+    [_analysisSignature release];
+    _analysisSignature = nil;
+    _referenceImage.reset();
+    _stacked.reset();
+    _displayed.reset();
+    _wavelet.reset();
+
+    _manualPointsActive = NO;
+    _manualPoints.clear();
+    _sourceChannels = 1;
+    _sourceFrames = 0;
+    _sourceWidth = 0;
+    _sourceHeight = 0;
+    _rejectedFrames = 0;
+    _byteOrderSuspect = NO;
+    _looksLikeShallowDepth = NO;
+    _bannerDismissed = NO;
+
+    [_queueTable deselectAll:nil];
+    [_graph clearData];
+    [_preview clearImage];
+    [_preview clearAlignmentPoints];
+    [_apCountLabel setStringValue:@""];
+    [_frameSlider setMinValue:0.0];
+    [_frameSlider setMaxValue:0.0];
+    [_frameSlider setDoubleValue:0.0];
+    [_viewModeSegment setSelectedSegment:0];
+    [_inspectorTab setSelectedSegment:0];
+    [_progress setDoubleValue:0.0];
+    [_progress setHidden:YES];
+    [_statusLabel
+        setStringValue:LSLocalizedString(@"クリアしました — 新しい動画を追加してください")];
+
+    [self updateBanner];
+    [self updateInspectorVisibility];
+    [self updateNamePreview];
+    [self updateDrizzleEstimate];
+    [self updateControlsEnabled];
+}
+
+- (void)clearWorkspace:(id)sender {
+    (void)sender;
+    if (_running || [_items count] == 0) return;
+    [_items removeAllObjects];
+    [_queueTable reloadData];
+    [self resetWorkspaceForNewProcessing];
+}
+
+- (void)clearForTesting {
+    [self clearWorkspace:nil];
 }
 
 // 右クリックされた行を優先する。通常の選択行とは別の行を右クリックしても、
@@ -1839,6 +1909,7 @@ alignmentSignature:(NSString*)alignmentSignature;
     [_alignButton setEnabled:hasFile && qualityOk && !_running];
     [_stackButton setEnabled:hasFile && alignmentOk && !_running];
     [_batchButton setEnabled:([_items count] > 0) && !_running];
+    [_clearButton setEnabled:([_items count] > 0) && !_running];
     [_cancelButton setEnabled:_running];
     [_saveButton setEnabled:(_displayed != nullptr) && !_running];
 

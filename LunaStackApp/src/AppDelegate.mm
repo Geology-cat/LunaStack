@@ -98,6 +98,13 @@
             if (getenv("LUNASTACK_HEATMAP")) {
                 [_controller setApHeatmapForTesting:YES];
             }
+            if (getenv("LUNASTACK_CLEAR_AFTER_RUN")) {
+                [_controller clearForTesting];
+                // クリア後も同じ起動中に次の素材を追加できることを確認する。
+                if (const char* reopenPath = getenv("LUNASTACK_REOPEN_AFTER_CLEAR")) {
+                    [_controller openFileAtPath:[NSString stringWithUTF8String:reopenPath]];
+                }
+            }
             [self writeSnapshotTo:path];
             [NSApp terminate:nil];
         }];
