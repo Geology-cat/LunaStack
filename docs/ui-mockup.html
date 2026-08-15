@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LunaStack UIモックアップ</title>
+<style>
+  :root {
+    --win-bg: #ececec;
+    --sidebar: #f2f2f4;
+    --content: #ffffff;
+    --panel: #f7f7f8;
+    --text: #1d1d1f;
+    --text-dim: #6e6e73;
+    --text-faint: #96969b;
+    --line: #d8d8dc;
+    --accent: #007aff;
+    --ok: #34c759;
+    --warn: #ff9f0a;
+    --chrome: #dfdfe2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --win-bg: #1e1e20;
+      --sidebar: #252528;
+      --content: #17171a;
+      --panel: #2a2a2e;
+      --text: #f5f5f7;
+      --text-dim: #a1a1a6;
+      --text-faint: #6e6e73;
+      --line: #3a3a3e;
+      --accent: #0a84ff;
+      --ok: #30d158;
+      --warn: #ffd60a;
+      --chrome: #313134;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #b9b9bd;
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    font-size: 13px;
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #0d0d0f; } }
+
+  .caption {
+    max-width: 1120px; margin: 0 auto 14px; color: #3a3a3e; font-size: 12px; line-height: 1.6;
+  }
+  @media (prefers-color-scheme: dark) { .caption { color: #a1a1a6; } }
+
+  .window {
+    max-width: 1120px; margin: 0 auto;
+    background: var(--win-bg);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 22px 60px rgba(0,0,0,.35), 0 0 0 .5px rgba(0,0,0,.2);
+  }
+
+  /* ---- タイトルバー ---- */
+  .titlebar {
+    height: 38px; display: flex; align-items: center; gap: 8px;
+    padding: 0 12px; background: var(--chrome);
+    border-bottom: .5px solid var(--line);
+  }
+  .lights { display: flex; gap: 8px; }
+  .light { width: 12px; height: 12px; border-radius: 50%; }
+  .l1 { background: #ff5f57; } .l2 { background: #febc2e; } .l3 { background: #28c840; }
+  .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; }
+  .title small { font-weight: 400; color: var(--text-dim); }
+
+  /* ---- ツールバー ---- */
+  .toolbar {
+    height: 44px; display: flex; align-items: center; gap: 6px;
+    padding: 0 12px; background: var(--chrome);
+    border-bottom: .5px solid var(--line);
+  }
+  .btn {
+    height: 24px; padding: 0 11px; border-radius: 6px;
+    border: .5px solid var(--line); background: var(--content);
+    font-size: 12px; color: var(--text); display: inline-flex; align-items: center; gap: 5px;
+    white-space: nowrap; flex: none;
+  }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; font-weight: 500; }
+  .seg { display: inline-flex; border: .5px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg span { padding: 4px 11px; font-size: 12px; background: var(--content); }
+  .seg span + span { border-left: .5px solid var(--line); }
+  .seg span.on { background: var(--accent); color: #fff; }
+  .spacer { flex: 1; }
+
+  /* ---- 本体3ペイン ---- */
+  .body { display: grid; grid-template-columns: 220px 1fr 280px; min-height: 520px; }
+  .sidebar { background: var(--sidebar); border-right: .5px solid var(--line); padding: 10px 0; }
+  .inspector { background: var(--sidebar); border-left: .5px solid var(--line); padding: 4px 0 10px; }
+  .center { background: var(--content); display: flex; flex-direction: column; }
+
+  .sec-title {
+    font-size: 11px; font-weight: 600; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: .04em;
+    padding: 10px 12px 6px;
+  }
+
+  /* ---- 入力キュー ---- */
+  .file { padding: 6px 12px; display: flex; gap: 8px; align-items: flex-start; }
+  .file.sel { background: var(--accent); color: #fff; }
+  .file.sel .sub, .file.sel .badge { color: rgba(255,255,255,.82); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex: none; }
+  .dot.done { background: var(--ok); } .dot.idle { background: var(--text-faint); }
+  .dot.warnc { background: var(--warn); }
+  .fname { font-size: 12px; font-weight: 500; }
+  .sub { font-size: 10.5px; color: var(--text-dim); margin-top: 1px; }
+  .badge { font-size: 9.5px; color: var(--ok); font-weight: 600; margin-top: 2px; }
+
+  /* ---- 品質グラフ ---- */
+  .graph { margin: 4px 12px 0; }
+  .graph svg { width: 100%; height: 78px; display: block; }
+  .glabel { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+
+  /* ---- プレビュー ---- */
+  .banner {
+    display: flex; align-items: center; gap: 10px;
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+    border-bottom: .5px solid var(--line);
+    padding: 7px 12px; font-size: 11.5px;
+  }
+  .banner b { font-weight: 600; }
+  .preview { flex: 1; display: flex; align-items: center; justify-content: center; padding: 16px;
+             background: repeating-conic-gradient(#00000008 0% 25%, transparent 0% 50%) 50%/16px 16px; }
+  @media (prefers-color-scheme: dark) {
+    .preview { background: repeating-conic-gradient(#ffffff08 0% 25%, transparent 0% 50%) 50%/16px 16px; }
+  }
+  .prevbar {
+    height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 12px;
+    border-top: .5px solid var(--line); background: var(--panel); font-size: 11.5px; color: var(--text-dim);
+  }
+
+  /* ---- Inspector ---- */
+  .isec { border-bottom: .5px solid var(--line); padding: 8px 12px 11px; }
+  .ihead { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .ihead .tri { color: var(--text-faint); font-size: 9px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; }
+  .row label { font-size: 11.5px; color: var(--text-dim); }
+  .val { font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .pop {
+    font-size: 11.5px; padding: 2px 7px; border-radius: 5px;
+    border: .5px solid var(--line); background: var(--content); min-width: 84px; text-align: left;
+  }
+  .slider { position: relative; height: 4px; background: var(--line); border-radius: 2px; flex: 1; }
+  .slider i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 2px; }
+  .slider b {
+    position: absolute; top: -5px; width: 13px; height: 13px; border-radius: 50%;
+    background: #fff; box-shadow: 0 .5px 2px rgba(0,0,0,.4); transform: translateX(-50%);
+  }
+  .note {
+    font-size: 10.5px; line-height: 1.55; color: var(--text-dim);
+    background: color-mix(in srgb, var(--warn) 13%, transparent);
+    border-left: 2px solid var(--warn); padding: 6px 8px; border-radius: 0 4px 4px 0; margin-top: 8px;
+  }
+  .wav { display: grid; grid-template-columns: 44px 1fr 30px 1fr 26px; gap: 5px 7px; align-items: center; }
+  .wav span { font-size: 10.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .wavhead { font-size: 9.5px; color: var(--text-faint); text-align: center; }
+
+  /* ---- ステータスバー ---- */
+  .status {
+    height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: var(--chrome); border-top: .5px solid var(--line); font-size: 11.5px;
+  }
+  .bar { width: 210px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 62%; background: var(--accent); }
+  .mono { font-variant-numeric: tabular-nums; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<div class="caption">
+  <strong>LunaStack UIモックアップ</strong> — 情報密度とレイアウトの確認用。実際の描画はAppKit（Core Graphics）で行う。
+  お使いのOSの外観設定（ライト／ダーク）に追従して表示が変わります。
+</div>
+
+<div class="window">
+
+  <div class="titlebar">
+    <div class="lights"><i class="light l1"></i><i class="light l2"></i><i class="light l3"></i></div>
+    <div class="title">LunaStack &nbsp;<small>— jupiter_2026-08-09.ser</small></div>
+    <div style="width:52px"></div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn">＋ 追加</button>
+    <button class="btn primary">解析</button>
+    <button class="btn">スタック</button>
+    <button class="btn">すべて処理</button>
+    <div class="spacer"></div>
+    <div class="seg"><span>フレーム</span><span>参照</span><span class="on">結果</span></div>
+    <button class="btn">AP編集</button>
+  </div>
+
+  <div class="body">
+
+    <!-- ============ 左サイドバー ============ -->
+    <div class="sidebar">
+      <div class="sec-title">入力キュー</div>
+
+      <div class="file sel">
+        <i class="dot done"></i>
+        <div>
+          <div class="fname">jupiter_2026-08-09.ser</div>
+          <div class="sub">3,000フレーム · 640×480 · 16bit · RGGB</div>
+          <div class="badge">解析済み — 再スタックは高速</div>
+        </div>
+      </div>
+      <div class="file">
+        <i class="dot idle"></i>
+        <div>
+          <div class="fname">saturn_2026-08-09.ser</div>
+          <div class="sub">4,500フレーム · 800×600 · 16bit · MONO</div>
+        </div>
+      </div>
+      <div class="file">
+        <i class="dot warnc"></i>
+        <div>
+          <div class="fname">moon_copernicus.avi</div>
+          <div class="sub">1,200フレーム · 1920×1080 · 8bit</div>
+        </div>
+      </div>
+
+      <div class="sec-title" style="margin-top:6px">品質グラフ（時系列）</div>
+      <div class="graph">
+        <svg viewBox="0 0 200 78" preserveAspectRatio="none" aria-label="フレーム品質の時系列グラフ">
+          <!-- 品質バー -->
+          <g fill="var(--accent)" opacity=".55">
+            <rect x="2"   y="46" width="3" height="32"/><rect x="7"   y="38" width="3" height="40"/>
+            <rect x="12"  y="52" width="3" height="26"/><rect x="17"  y="30" width="3" height="48"/>
+            <rect x="22"  y="22" width="3" height="56"/><rect x="27"  y="41" width="3" height="37"/>
+            <rect x="32"  y="58" width="3" height="20"/><rect x="37"  y="35" width="3" height="43"/>
+            <rect x="42"  y="18" width="3" height="60"/><rect x="47"  y="12" width="3" height="66"/>
+            <rect x="52"  y="25" width="3" height="53"/><rect x="57"  y="44" width="3" height="34"/>
+            <rect x="62"  y="61" width="3" height="17"/><rect x="67"  y="55" width="3" height="23"/>
+            <rect x="72"  y="33" width="3" height="45"/><rect x="77"  y="20" width="3" height="58"/>
+            <rect x="82"  y="14" width="3" height="64"/><rect x="87"  y="28" width="3" height="50"/>
+            <rect x="92"  y="48" width="3" height="30"/><rect x="97"  y="64" width="3" height="14"/>
+            <rect x="102" y="68" width="3" height="10"/><rect x="107" y="59" width="3" height="19"/>
+            <rect x="112" y="43" width="3" height="35"/><rect x="117" y="26" width="3" height="52"/>
+            <rect x="122" y="16" width="3" height="62"/><rect x="127" y="9"  width="3" height="69"/>
+            <rect x="132" y="21" width="3" height="57"/><rect x="137" y="37" width="3" height="41"/>
+            <rect x="142" y="50" width="3" height="28"/><rect x="147" y="63" width="3" height="15"/>
+            <rect x="152" y="70" width="3" height="8"/> <rect x="157" y="57" width="3" height="21"/>
+            <rect x="162" y="40" width="3" height="38"/><rect x="167" y="24" width="3" height="54"/>
+            <rect x="172" y="15" width="3" height="63"/><rect x="177" y="31" width="3" height="47"/>
+            <rect x="182" y="45" width="3" height="33"/><rect x="187" y="53" width="3" height="25"/>
+            <rect x="192" y="66" width="3" height="12"/><rect x="197" y="49" width="3" height="29"/>
+          </g>
+          <!-- 選択率のカットライン（ドラッグ可能） -->
+          <line x1="0" y1="20" x2="200" y2="20" stroke="var(--warn)" stroke-width="1.2" stroke-dasharray="4 3"/>
+        </svg>
+        <div class="glabel"><span>frame 0</span><span style="color:var(--warn)">上位10%のカット</span><span>3000</span></div>
+      </div>
+    </div>
+
+    <!-- ============ 中央プレビュー ============ -->
+    <div class="center">
+
+      <div class="banner">
+        <span>⚠</span>
+        <span><b>バイトオーダー:</b> ヘッダは big と記録していますが、自動判定では little と判断しました。画像が破綻して見える場合は切り替えてください。</span>
+        <span class="spacer"></span>
+        <button class="btn">bigを使う</button>
+      </div>
+
+      <div class="preview">
+        <svg width="330" height="300" viewBox="0 0 330 300" aria-label="木星のプレビューとAlignment Pointオーバーレイ">
+          <defs>
+            <clipPath id="disc"><ellipse cx="165" cy="150" rx="128" ry="120"/></clipPath>
+            <radialGradient id="limb" cx="42%" cy="36%" r="72%">
+              <stop offset="0%"  stop-color="#fff" stop-opacity=".26"/>
+              <stop offset="62%" stop-color="#000" stop-opacity="0"/>
+              <stop offset="100%" stop-color="#000" stop-opacity=".55"/>
+            </radialGradient>
+          </defs>
+
+          <!-- 木星本体 -->
+          <g clip-path="url(#disc)">
+            <rect x="30" y="30" width="270" height="240" fill="#d9b489"/>
+            <rect x="30" y="52"  width="270" height="20" fill="#c39a6e"/>
+            <rect x="30" y="86"  width="270" height="26" fill="#a87850" opacity=".85"/>
+            <rect x="30" y="128" width="270" height="15" fill="#e8d3b4" opacity=".7"/>
+            <rect x="30" y="158" width="270" height="30" fill="#b07f57" opacity=".9"/>
+            <rect x="30" y="204" width="270" height="22" fill="#c8a074" opacity=".8"/>
+            <rect x="30" y="240" width="270" height="18" fill="#a87850" opacity=".6"/>
+            <ellipse cx="205" cy="172" rx="30" ry="15" fill="#b8543c" opacity=".85"/>
+            <rect x="30" y="30" width="270" height="240" fill="url(#limb)"/>
+          </g>
+
+          <!-- Alignment Point オーバーレイ（50%オーバーラップ格子） -->
+          <g fill="none" stroke="#34c759" stroke-width="1" opacity=".85">
+            <rect x="78"  y="70"  width="48" height="48"/><rect x="126" y="70"  width="48" height="48"/>
+            <rect x="174" y="70"  width="48" height="48"/>
+            <rect x="54"  y="118" width="48" height="48"/><rect x="102" y="118" width="48" height="48"/>
+            <rect x="150" y="118" width="48" height="48"/><rect x="198" y="118" width="48" height="48"/>
+            <rect x="78"  y="166" width="48" height="48"/><rect x="126" y="166" width="48" height="48"/>
+            <rect x="174" y="166" width="48" height="48"/>
+          </g>
+          <g stroke="#34c759" stroke-width="1" opacity=".95">
+            <path d="M102 90h-4M102 90v-4M102 94v-4M106 90h-4"/>
+          </g>
+          <!-- 選択中のAP -->
+          <rect x="150" y="118" width="48" height="48" fill="none" stroke="#0a84ff" stroke-width="2"/>
+        </svg>
+      </div>
+
+      <div class="prevbar">
+        <span>ズーム 200%</span><span>·</span>
+        <span>AP 182個</span><span>·</span>
+        <span>AP 64px / 50%オーバーラップ</span>
+        <span class="spacer"></span>
+        <span>選択中AP: 平均品質 87.4（上位12%）</span>
+      </div>
+    </div>
+
+    <!-- ============ 右Inspector ============ -->
+    <div class="inspector">
+
+      <div class="isec">
+        <div class="ihead"><span class="tri">▼</span> Alignment</div>
+        <div class="row"><label>対象モード</label><div class="seg"><span class="on">惑星</span><span>月・太陽</span></div></div>
+        <div class="row"><label>APサイズ</label><button class="pop">64 px ⌄</button></div>
+        <div class="row"><label>探索半径</label><span class="val">±16 px</span></div>
+        <div class="row"><div class="slider" style="margin-left:0"><i style="width:40%"></i><b style="left:40%"></b></div></div>
+        <div class="row"><label>参照フレーム</label><span class="val">上位 25%</span></div>
+      </div>
+
+      <div class="isec">
+        <div class="ihead"><span class="tri">▼</span> Quality</div>
+        <div class="row"><label>品質指標</label><button class="pop">勾配エネルギー ⌄</button></div>
+        <div class="row"><label>選択率</label><span class="val">10 %</span></div>
+        <div class="row"><div class="slider"><i style="width:10%"></i><b style="left:10%"></b></div></div>
+        <div class="row"><label style="font-size:10.5px">左の品質グラフのカットラインと連動</label></div>
+      </div>
+
+      <div class="isec">
+        <div class="ihead"><span class="tri">▼</span> Drizzle</div>
+        <div class="row"><label>倍率</label><div class="seg"><span class="on">1×</span><span>1.5×</span><span>2×</span><span>3×</span></div></div>
+        <div class="note">
+          Drizzleが有効なのは撮像がアンダーサンプリングされている場合だけです。
+          焦点距離が十分長く既にオーバーサンプリング気味なら、倍率を上げても解像度は向上しません。
+        </div>
+      </div>
+
+      <div class="isec">
+        <div class="ihead"><span class="tri">▼</span> Wavelet</div>
+        <div class="wav">
+          <span></span><div class="wavhead">Sharpen</div><span></span><div class="wavhead">Denoise</div><span></span>
+          <span>Layer 1</span><div class="slider"><i style="width:15%"></i><b style="left:15%"></b></div><span>0.15</span><div class="slider"><i style="width:40%"></i><b style="left:40%"></b></div><span>0.40</span>
+          <span>Layer 2</span><div class="slider"><i style="width:35%"></i><b style="left:35%"></b></div><span>0.35</span><div class="slider"><i style="width:20%"></i><b style="left:20%"></b></div><span>0.20</span>
+          <span>Layer 3</span><div class="slider"><i style="width:25%"></i><b style="left:25%"></b></div><span>0.25</span><div class="slider"><i style="width:5%"></i><b style="left:5%"></b></div><span>0.05</span>
+          <span>Layer 4</span><div class="slider"><i style="width:10%"></i><b style="left:10%"></b></div><span>0.10</span><div class="slider"><i style="width:0%"></i><b style="left:0%"></b></div><span>0</span>
+          <span>Layer 5</span><div class="slider"><i style="width:0%"></i><b style="left:0%"></b></div><span>0</span><div class="slider"><i style="width:0%"></i><b style="left:0%"></b></div><span>0</span>
+          <span>Layer 6</span><div class="slider"><i style="width:0%"></i><b style="left:0%"></b></div><span>0</span><div class="slider"><i style="width:0%"></i><b style="left:0%"></b></div><span>0</span>
+        </div>
+      </div>
+
+      <div class="isec" style="border-bottom:none">
+        <div class="ihead"><span class="tri">▼</span> Export</div>
+        <div class="row"><label>形式</label><button class="pop">16bit TIFF ⌄</button></div>
+        <div class="row"><label style="font-size:10.5px;line-height:1.5">jupiter_2026-08-09<br>_ap64_10pct_x1.tif</label></div>
+        <div class="row"><button class="btn primary" style="width:100%;justify-content:center">書き出し</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    <span>解析中</span>
+    <div class="bar"><i></i></div>
+    <span class="mono">62%</span>
+    <span class="mono">1,860 / 3,000 フレーム</span>
+    <span class="mono">残り約 1分20秒</span>
+    <span class="spacer"></span>
+    <button class="btn">⊗ キャンセル</button>
+  </div>
+
+</div>
+</body>
+</html>

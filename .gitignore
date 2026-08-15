@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# CMake / IDEビルド生成物
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.xcodeproj/
+DerivedData/
+
+# 配布物・一時出力
+dist/
+*.dmg
+
+# 巨大な検証素材（READMEの手順で各自用意する）
+sample-data/
+
+# テストが作る一時ファイル
+lunastack_test_*.ser
+lunastack_test_*.tif
+lunastack_test_*.png
+
+# 実入力に付随する解析キャッシュ
+*.lstk
+*.lstk.json
