@@ -17,6 +17,9 @@
 "入力キュー" = "Input Queue";
 "追加…" = "Add…";
 "削除" = "Remove";
+"Finderで表示" = "Show in Finder";
+"キューから削除" = "Remove from Queue";
+"このファイルだけ処理" = "Process This File Only";
 "品質グラフ" = "Quality Graph";
 "時系列" = "Timeline";
 "品質順" = "Quality Order";
@@ -39,6 +42,10 @@
 "失敗" = "Failed";
 "未処理" = "Pending";
 "AVI (非圧縮)" = "AVI (Uncompressed)";
+"little endianとして読み直す" = "Read Again as Little-Endian";
+"big endianとして読み直す" = "Read Again as Big-Endian";
+"12bitとして読み直す" = "Read Again as 12-bit";
+"警告を閉じる" = "Dismiss Warning";
 
 /* Workflow and alignment */
 "1. 解析・スタック" = "1. Analyze & Stack";

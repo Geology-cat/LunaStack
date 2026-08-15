@@ -180,6 +180,11 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)showSourceFrame:(int)index;
 - (void)rebuildReferenceImage;
 - (void)selectQueueIndex:(NSInteger)index;
+- (void)useLittleEndianFromBanner:(id)sender;
+- (void)useBigEndianFromBanner:(id)sender;
+- (void)use12BitFromBanner:(id)sender;
+- (void)dismissBanner:(id)sender;
+- (NSInteger)contextQueueRow;
 - (stackcore::OpenOptions)currentOpenOptions;
 - (void)applySettingsDictionary:(NSDictionary*)d includePostProcessing:(BOOL)includePost;
 - (void)refreshSelectionControl;
@@ -198,7 +203,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     NSButton* _apHeatCheck;
     NSButton* _apEditCheck;
     NSTextField* _apCountLabel;
+    NSStackView* _bannerBar;
     NSTextField* _bannerLabel;
+    NSButton* _bannerLittleButton;
+    NSButton* _bannerBigButton;
+    NSButton* _bannerDepthButton;
+    NSButton* _bannerCloseButton;
 
     // --- 右Inspector ---
     NSSegmentedControl* _inspectorTab;   // 工程タブ（解析・スタック ⇄ 仕上げ・書き出し）
@@ -265,6 +275,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     int _sourceFrames;
     BOOL _byteOrderSuspect;
     BOOL _looksLikeShallowDepth;  // 16bitコンテナに12bitが入っている疑い
+    BOOL _bannerDismissed;
     int _rejectedFrames;
     int _sourceWidth;
     int _sourceHeight;
@@ -438,6 +449,26 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_queueTable setDelegate:self];
     [_queueTable setTarget:self];
     [_queueTable setUsesAlternatingRowBackgroundColors:YES];
+    NSMenu* queueMenu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+    [queueMenu setDelegate:self];
+    for (NSMenuItem* item in @[
+             [[[NSMenuItem alloc]
+                 initWithTitle:LSLocalizedString(@"Finderで表示")
+                        action:@selector(revealQueueItemInFinder:)
+                 keyEquivalent:@""] autorelease],
+             [[[NSMenuItem alloc]
+                 initWithTitle:LSLocalizedString(@"キューから削除")
+                        action:@selector(removeSelectedFromQueue:)
+                 keyEquivalent:@""] autorelease],
+             [[[NSMenuItem alloc]
+                 initWithTitle:LSLocalizedString(@"このファイルだけ処理")
+                        action:@selector(processOnlySelectedQueueItem:)
+                 keyEquivalent:@""] autorelease]
+         ]) {
+        [item setTarget:self];
+        [queueMenu addItem:item];
+    }
+    [_queueTable setMenu:queueMenu];
     // ドラッグ&ドロップで追加できるようにする（UI設計書 §3.1）。
     // NSFilenamesPboardType は10.14で非推奨なので、10.13から使える
     // NSPasteboardTypeFileURL を指定する。
@@ -505,10 +536,34 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (NSView*)buildCenterPane {
     NSView* pane = [[[NSView alloc] initWithFrame:NSZeroRect] autorelease];
 
+    _bannerBar = [[[NSStackView alloc] init] autorelease];
+    [_bannerBar setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
+    [_bannerBar setSpacing:4.0];
+    [_bannerBar setTranslatesAutoresizingMaskIntoConstraints:NO];
+
     _bannerLabel = MakeLabel(@"");
     [_bannerLabel setTextColor:[NSColor systemOrangeColor]];
     [_bannerLabel setLineBreakMode:NSLineBreakByTruncatingTail];
-    [pane addSubview:_bannerLabel];
+    [_bannerLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
+                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [_bannerBar addArrangedSubview:_bannerLabel];
+
+    _bannerLittleButton = [self buttonWithTitle:@"little" action:@selector(useLittleEndianFromBanner:)];
+    _bannerBigButton = [self buttonWithTitle:@"big" action:@selector(useBigEndianFromBanner:)];
+    _bannerDepthButton = [self buttonWithTitle:@"12bit" action:@selector(use12BitFromBanner:)];
+    _bannerCloseButton = [self buttonWithTitle:@"×" action:@selector(dismissBanner:)];
+    for (NSButton* button in
+         @[ _bannerLittleButton, _bannerBigButton, _bannerDepthButton, _bannerCloseButton ]) {
+        [button setControlSize:NSControlSizeSmall];
+        [button setFont:[NSFont systemFontOfSize:10.0]];
+        [button setHidden:YES];
+        [_bannerBar addArrangedSubview:button];
+    }
+    [_bannerLittleButton setToolTip:LSLocalizedString(@"little endianとして読み直す")];
+    [_bannerBigButton setToolTip:LSLocalizedString(@"big endianとして読み直す")];
+    [_bannerDepthButton setToolTip:LSLocalizedString(@"12bitとして読み直す")];
+    [_bannerCloseButton setToolTip:LSLocalizedString(@"警告を閉じる")];
+    [pane addSubview:_bannerBar];
 
     _preview = [[[PreviewView alloc] initWithFrame:NSZeroRect] autorelease];
     [_preview setTranslatesAutoresizingMaskIntoConstraints:NO];
@@ -539,7 +594,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [tools addArrangedSubview:_viewModeSegment];
 
     _frameSlider = [self sliderMin:0.0 max:0.0 value:0.0 action:@selector(frameSliderChanged:)];
-    [[_frameSlider widthAnchor] constraintGreaterThanOrEqualToConstant:80.0].active = YES;
+    [[_frameSlider widthAnchor] constraintGreaterThanOrEqualToConstant:140.0].active = YES;
     [tools addArrangedSubview:_frameSlider];
 
     _zoomControl = [[[NSSegmentedControl alloc] init] autorelease];
@@ -580,10 +635,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [pane addSubview:tools];
     [pane addSubview:tools2];
 
-    NSDictionary* views =
-        NSDictionaryOfVariableBindings(_bannerLabel, _preview, tools, tools2);
+    NSDictionary* views = NSDictionaryOfVariableBindings(_bannerBar, _preview, tools, tools2);
     for (NSString* format in
-         @[ @"H:|[_bannerLabel]|", @"H:|[_preview]|", @"H:|[tools]-(>=0)-|",
+         @[ @"H:|[_bannerBar]|", @"H:|[_preview]|", @"H:|[tools]-(>=0)-|",
             @"H:|[tools2]-(>=0)-|" ]) {
         [pane addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:format
                                                                     options:0
@@ -592,7 +646,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     }
     [pane addConstraints:[NSLayoutConstraint
                              constraintsWithVisualFormat:
-                                 @"V:|[_bannerLabel(16)]-4-[_preview(>=240)]-6-[tools]-4-[tools2]|"
+                                 @"V:|[_bannerBar(22)]-4-[_preview(>=240)]-6-[tools]-4-[tools2]|"
                                                  options:0
                                                  metrics:nil
                                                    views:views]];
@@ -1045,9 +1099,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                                          _statusLabel);
     [bar addConstraints:[NSLayoutConstraint
                             constraintsWithVisualFormat:
-                                @"H:|[_analyzeButton(70)]-6-[_stackButton(80)]-6-[_batchButton(90)"
+                                @"H:|[_analyzeButton(>=70)]-6-[_stackButton(>=80)]-6-[_batchButton(>=90)"
                                 @"]-12-[_progress(>=120)]-10-[_statusLabel(>=180)]-8-"
-                                @"[_cancelButton(60)]|"
+                                @"[_cancelButton(>=60)]|"
                                                 options:NSLayoutFormatAlignAllCenterY
                                                 metrics:nil
                                                   views:views]];
@@ -1278,6 +1332,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)selectQueueIndex:(NSInteger)index {
     if (index < 0 || index >= static_cast<NSInteger>([_items count])) return;
+    if (index != _currentIndex) _bannerDismissed = NO;
     _currentIndex = index;
     [_queueTable selectRowIndexes:[NSIndexSet indexSetWithIndex:static_cast<NSUInteger>(index)]
              byExtendingSelection:NO];
@@ -1363,6 +1418,56 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self updateControlsEnabled];
 }
 
+// 右クリックされた行を優先する。通常の選択行とは別の行を右クリックしても、
+// 意図したファイルに操作が掛かるようにする（UI設計書 §3.1）。
+- (NSInteger)contextQueueRow {
+    const NSInteger clicked = [_queueTable clickedRow];
+    return clicked >= 0 ? clicked : [_queueTable selectedRow];
+}
+
+- (void)menuWillOpen:(NSMenu*)menu {
+    if (menu != [_queueTable menu] || _running) return;
+    const NSInteger row = [self contextQueueRow];
+    if (row >= 0 && row < static_cast<NSInteger>([_items count])) {
+        if (row != _currentIndex) [self selectQueueIndex:row];
+        else {
+            [_queueTable
+                selectRowIndexes:[NSIndexSet indexSetWithIndex:static_cast<NSUInteger>(row)]
+                byExtendingSelection:NO];
+        }
+    }
+}
+
+- (BOOL)validateMenuItem:(NSMenuItem*)menuItem {
+    const SEL action = [menuItem action];
+    if (action != @selector(revealQueueItemInFinder:) &&
+        action != @selector(removeSelectedFromQueue:) &&
+        action != @selector(processOnlySelectedQueueItem:)) {
+        return YES;
+    }
+    const NSInteger row = [self contextQueueRow];
+    const BOOL hasRow = row >= 0 && row < static_cast<NSInteger>([_items count]);
+    if (action == @selector(revealQueueItemInFinder:)) return hasRow;
+    return hasRow && !_running;
+}
+
+- (void)revealQueueItemInFinder:(id)sender {
+    (void)sender;
+    const NSInteger row = [self contextQueueRow];
+    if (row < 0 || row >= static_cast<NSInteger>([_items count])) return;
+    NSString* path = [_items[static_cast<NSUInteger>(row)] path];
+    [[NSWorkspace sharedWorkspace]
+        activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:path] ]];
+}
+
+- (void)processOnlySelectedQueueItem:(id)sender {
+    if (_running) return;
+    const NSInteger row = [self contextQueueRow];
+    if (row < 0 || row >= static_cast<NSInteger>([_items count])) return;
+    if (row != _currentIndex) [self selectQueueIndex:row];
+    [self run:sender];
+}
+
 - (void)openDocument:(id)sender {
     (void)sender;
     NSOpenPanel* panel = [NSOpenPanel openPanel];
@@ -1391,6 +1496,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)inputInterpretationChanged:(id)sender {
     (void)sender;
+    _bannerDismissed = NO;
     // 読み方が変われば1枚目の見え方も変わる。開き直して確かめられるようにする。
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
     [self updateControlsEnabled];
@@ -1851,6 +1957,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_graph setCutPercent:[_topSlider doubleValue]];
 
     _rejectedFrames = rejected;
+    _bannerDismissed = NO;
     [self updateBanner];
 }
 
@@ -1859,6 +1966,14 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 // CLIの `info` が出す診断と同じことを、GUIでも見逃さないようにする。
 // **黙って処理しない**のが趣旨なので、原因と対処先を1行にまとめる。
 - (void)updateBanner {
+    if (_bannerDismissed) {
+        [_bannerLabel setStringValue:@""];
+        [_bannerLittleButton setHidden:YES];
+        [_bannerBigButton setHidden:YES];
+        [_bannerDepthButton setHidden:YES];
+        [_bannerCloseButton setHidden:YES];
+        return;
+    }
     NSMutableArray* parts = [NSMutableArray array];
     if (_byteOrderSuspect) {
         [parts addObject:LSLocalizedString(
@@ -1875,6 +1990,34 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                                                     _rejectedFrames]];
     }
     [_bannerLabel setStringValue:[parts componentsJoinedByString:@" ／ "]];
+    [_bannerLittleButton setHidden:!_byteOrderSuspect];
+    [_bannerBigButton setHidden:!_byteOrderSuspect];
+    [_bannerDepthButton setHidden:!_looksLikeShallowDepth];
+    [_bannerCloseButton setHidden:[parts count] == 0];
+}
+
+- (void)useLittleEndianFromBanner:(id)sender {
+    (void)sender;
+    [_endianPopup selectItemAtIndex:1];
+    [self inputInterpretationChanged:nil];
+}
+
+- (void)useBigEndianFromBanner:(id)sender {
+    (void)sender;
+    [_endianPopup selectItemAtIndex:2];
+    [self inputInterpretationChanged:nil];
+}
+
+- (void)use12BitFromBanner:(id)sender {
+    (void)sender;
+    [_depthPopup selectItemAtIndex:1];
+    [self inputInterpretationChanged:nil];
+}
+
+- (void)dismissBanner:(id)sender {
+    (void)sender;
+    _bannerDismissed = YES;
+    [self updateBanner];
 }
 
 // 入力の1枚を表示する。

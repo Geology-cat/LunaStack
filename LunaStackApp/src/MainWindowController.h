@@ -12,7 +12,8 @@
 //   下   : ステータスバー（フェーズ名・進捗・残り時間・中断）
 @interface MainWindowController
     : NSWindowController <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate,
-                          QualityGraphViewDelegate, PreviewViewDelegate>
+                          NSMenuDelegate, NSMenuItemValidation, QualityGraphViewDelegate,
+                          PreviewViewDelegate>
 
 - (instancetype)init;
 
