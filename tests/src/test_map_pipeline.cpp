@@ -431,6 +431,12 @@ MT_TEST(map_参照の反復精密化が結果を改善する) {
 
     MT_CHECK_EQ(r1.passes_run, 1);
     MT_CHECK_EQ(r2.passes_run, 2);
+    MT_CHECK_EQ(r1.alignment_frame_passes,
+                static_cast<long long>(r1.frames_analyzed));
+    MT_CHECK_EQ(r2.alignment_frame_passes,
+                static_cast<long long>(r2.frames_analyzed) * 2);
+    MT_CHECK(r1.consensus_fallback_frames <= r1.alignment_frame_passes);
+    MT_CHECK(r2.consensus_fallback_frames <= r2.alignment_frame_passes);
     // 悪化しないことを要求する。改善幅は素材によるので下限は課さない。
     if (!(rms2 <= rms1 * 1.02)) {
         microtest::fail("反復精密化で悪化した: 1回=" + microtest::mt_str(rms1) +
@@ -639,11 +645,11 @@ MT_TEST(sidecar_壊れたファイルや別の入力を拒否する) {
     std::remove(path.c_str());
 }
 
-MT_TEST(sidecar_旧窓合成の参照画像を持つv1は再解析を要求する) {
-    const std::string path = "/tmp/lunastack_test_sidecar_v1.lstk";
+MT_TEST(sidecar_旧窓合成または旧局所場を持つv2以前は再解析を要求する) {
+    const std::string path = "/tmp/lunastack_test_sidecar_v2.lstk";
     std::FILE* f = std::fopen(path.c_str(), "wb");
     const char magic[12] = {'L', 'U', 'N', 'A', 'S', 'T', 'K', 'S', 'I', 'D', 'E', '1'};
-    const std::uint32_t old_version = 1;
+    const std::uint32_t old_version = 2;
     std::fwrite(magic, 1, sizeof(magic), f);
     std::fwrite(&old_version, 1, sizeof(old_version), f);
     std::fclose(f);

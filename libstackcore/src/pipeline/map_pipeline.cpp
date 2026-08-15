@@ -239,8 +239,11 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
     report.ap_count = static_cast<int>(points.size());
     if (pass_index == 0) {
         report.ap_frame_pairs = 0;
+        report.alignment_frame_passes = 0;
         report.invalid_matches = 0;
         report.clipped_matches = 0;
+        report.consensus_fallback_frames = 0;
+        report.consensus_outlier_matches = 0;
     }
 
     const int radius = settings.local.search_radius;
@@ -353,9 +356,15 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
             per_frame[a].dy += static_cast<float>(info.dy);
         }
         const std::vector<LocalMatch> before = per_frame;
-        repair_displacement_field(points, per_frame, report.ap_grid_step, settings.local);
+        const LocalFieldRepairStats repair =
+            repair_displacement_field(points, per_frame, report.ap_grid_step, settings.local);
+        if (repair.used_global_consensus) {
+            ++report.consensus_fallback_frames;
+        }
+        report.consensus_outlier_matches +=
+            static_cast<long long>(repair.consensus_outliers);
         for (std::size_t a = 0; a < ap_count; ++a) {
-            if (before[a].valid &&
+            if (!repair.used_global_consensus && before[a].valid && per_frame[a].valid &&
                 (before[a].dx != per_frame[a].dx || before[a].dy != per_frame[a].dy)) {
                 ++report.clipped_matches;
             }
@@ -365,6 +374,7 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
         }
 
         report.ap_frame_pairs += static_cast<long long>(ap_count);
+        ++report.alignment_frame_passes;
         notify(progress, align_stage, static_cast<int>(fi) + 1, static_cast<int>(frame_count));
     }
 

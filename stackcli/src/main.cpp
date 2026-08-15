@@ -972,6 +972,15 @@ int command_mapstack(const Options& opts) {
                     100.0 * report.invalid_matches / report.ap_frame_pairs);
         std::printf("    隣接との差でクリップ    : %lld (%.2f%%)\n", report.clipped_matches,
                     100.0 * report.clipped_matches / report.ap_frame_pairs);
+        const long long frame_passes = report.alignment_frame_passes;
+        if (frame_passes > 0) {
+            std::printf("    共通変位へ安全退避      : %lld / %lld フレーム×パス (%.2f%%)\n",
+                        report.consensus_fallback_frames, frame_passes,
+                        100.0 * report.consensus_fallback_frames / frame_passes);
+        }
+        std::printf("    空間的不整合の外れAP    : %lld (%.2f%%)\n",
+                    report.consensus_outlier_matches,
+                    100.0 * report.consensus_outlier_matches / report.ap_frame_pairs);
     }
     if (opts.ap_top_count > 0) {
         std::printf("  AP毎の採用    : 上位 %d フレーム\n", report.frames_per_ap);

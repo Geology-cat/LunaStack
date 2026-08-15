@@ -44,15 +44,30 @@ struct LocalAlignSettings {
     double neighbor_clip_ratio = 0.25;
 };
 
+// 1フレームぶんの変位場修復で行った処理。
+// 診断表示と、相関の回帰を実データで検知するために返す。
+struct LocalFieldRepairStats {
+    // APごとの変位が空間的に不整合だったため、全APをフレーム共通の
+    // サブピクセル変位へ退避させた。
+    bool used_global_consensus = false;
+    // 一貫した変位場の中に孤立していた相関外れ値の数。
+    std::size_t consensus_outliers = 0;
+    // 有効AP変位の成分別中央値からの距離の中央値（px）。
+    double median_deviation = 0.0;
+};
+
 // 1フレームぶんのAP変位場に対して外れ値処理を行う（仕様書 §4.6）。
 //
-//   1. 無効なAP（信頼度不足・探索範囲の縁に張り付き）を近傍の有効APから補間する
-//   2. 隣接APとの変位差が大きすぎるものを平滑化制約でクリップする
+//   1. AP変位場全体の空間的一貫性を検査する
+//   2. 不整合な場合はフレーム共通のサブピクセル変位へ安全に退避する
+//   3. 一貫している場合は孤立外れ値を除き、無効APを近傍から補間する
+//   4. 隣接APとの変位差が大きすぎるものを平滑化制約でクリップする
 //
 // ap_grid_step はAP中心どうしの間隔（APサイズの1/2）。
 // この関数は matches を書き換える。
-void repair_displacement_field(const std::vector<AlignmentPoint>& points,
-                               std::vector<LocalMatch>& matches, int ap_grid_step,
-                               const LocalAlignSettings& settings);
+LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint>& points,
+                                                std::vector<LocalMatch>& matches,
+                                                int ap_grid_step,
+                                                const LocalAlignSettings& settings);
 
 }  // namespace stackcore

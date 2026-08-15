@@ -509,8 +509,10 @@ MT_TEST(repair_無効なAPは近傍の有効APから埋められる) {
     m[4].dy = -99.0f;
     m[4].valid = false;
 
-    stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
 
+    MT_CHECK(!stats.used_global_consensus);
     MT_CHECK_NEAR(m[4].dx, 2.0f, 1e-4);
     MT_CHECK_NEAR(m[4].dy, -1.0f, 1e-4);
     MT_CHECK(!m[4].valid);  // 補間で埋めたことは記録に残る
@@ -525,14 +527,16 @@ MT_TEST(repair_近傍に有効APがなければゼロにする) {
         m[i].dy = 50.0f;
         m[i].valid = false;
     }
-    stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    MT_CHECK(stats.used_global_consensus);
     for (std::size_t i = 0; i < m.size(); ++i) {
         MT_CHECK_NEAR(m[i].dx, 0.0f, 1e-6);
         MT_CHECK_NEAR(m[i].dy, 0.0f, 1e-6);
     }
 }
 
-MT_TEST(repair_隣接と大きく違う変位はクリップされる) {
+MT_TEST(repair_孤立した偽ピークは除いて近傍から補間する) {
     const int step = 16;
     const std::vector<AlignmentPoint> pts = grid3x3(step);
     std::vector<LocalMatch> m(pts.size());
@@ -543,11 +547,34 @@ MT_TEST(repair_隣接と大きく違う変位はクリップされる) {
     }
     m[4].dx = 20.0f;  // 近傍から大きく外れた値
 
-    stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
 
-    // 許容量は AP間隔 x 0.25 = 4px。近傍平均(1.0)から4px以内に収まるはず。
-    MT_CHECK(std::fabs(m[4].dx - 1.0f) <= 4.0f + 1e-3f);
-    MT_CHECK(m[4].dx > 1.0f);  // 完全に平均へ潰さず、外れた向きは残す
+    MT_CHECK(!stats.used_global_consensus);
+    MT_CHECK_EQ(stats.consensus_outliers, static_cast<std::size_t>(1));
+    MT_CHECK_NEAR(m[4].dx, 1.0f, 1e-4);
+    MT_CHECK_NEAR(m[4].dy, 0.0f, 1e-4);
+    MT_CHECK(!m[4].valid);
+}
+
+MT_TEST(repair_小さな局所差は設定した近傍上限までクリップする) {
+    const int step = 16;
+    const std::vector<AlignmentPoint> pts = grid3x3(step);
+    std::vector<LocalMatch> m(pts.size());
+    for (LocalMatch& match : m) {
+        match.valid = true;
+    }
+    m[4].dx = 1.0f;
+
+    LocalAlignSettings settings;
+    settings.neighbor_clip_ratio = 0.02;  // 上限0.32px
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, settings);
+
+    MT_CHECK(!stats.used_global_consensus);
+    MT_CHECK_EQ(stats.consensus_outliers, static_cast<std::size_t>(0));
+    MT_CHECK_NEAR(m[4].dx, 0.32f, 1e-4);
+    MT_CHECK(m[4].valid);
 }
 
 MT_TEST(repair_妥当な変位場は変更されない) {
@@ -562,9 +589,42 @@ MT_TEST(repair_妥当な変位場は変更されない) {
         m[i].valid = true;
     }
     const std::vector<LocalMatch> before = m;
-    stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+    MT_CHECK(!stats.used_global_consensus);
     for (std::size_t i = 0; i < m.size(); ++i) {
         MT_CHECK_NEAR(m[i].dx, before[i].dx, 1e-5);
         MT_CHECK_NEAR(m[i].dy, before[i].dy, 1e-5);
+    }
+}
+
+MT_TEST(repair_空間的に不整合な変位場は共通変位へ安全退避する) {
+    const int step = 16;
+    std::vector<AlignmentPoint> pts;
+    std::vector<LocalMatch> m;
+    for (int y = 0; y < 5; ++y) {
+        for (int x = 0; x < 5; ++x) {
+            AlignmentPoint p;
+            p.cx = 32 + x * step;
+            p.cy = 32 + y * step;
+            pts.push_back(p);
+
+            LocalMatch match;
+            match.dx = static_cast<float>((x - 2) * 5);
+            match.dy = static_cast<float>((y - 2) * 4);
+            match.valid = true;
+            m.push_back(match);
+        }
+    }
+
+    const stackcore::LocalFieldRepairStats stats =
+        stackcore::repair_displacement_field(pts, m, step, LocalAlignSettings{});
+
+    MT_CHECK(stats.used_global_consensus);
+    MT_CHECK(stats.median_deviation > 1.5);
+    for (const LocalMatch& match : m) {
+        MT_CHECK_NEAR(match.dx, 0.0f, 1e-6);
+        MT_CHECK_NEAR(match.dy, 0.0f, 1e-6);
+        MT_CHECK(match.valid);  // 元の相関判定は診断用に保持する
     }
 }

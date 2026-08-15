@@ -1,5 +1,6 @@
 #include "stackcore/local_aligner.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -17,20 +18,86 @@ double distance_sq(const AlignmentPoint& a, const AlignmentPoint& b) {
     return dx * dx + dy * dy;
 }
 
+double median(std::vector<double> values) {
+    if (values.empty()) return 0.0;
+    const std::size_t middle = values.size() / 2;
+    std::nth_element(values.begin(), values.begin() + middle, values.end());
+    const double upper = values[middle];
+    if ((values.size() & 1U) != 0U) return upper;
+    const double lower = *std::max_element(values.begin(), values.begin() + middle);
+    return 0.5 * (lower + upper);
+}
+
 }  // namespace
 
-void repair_displacement_field(const std::vector<AlignmentPoint>& points,
-                               std::vector<LocalMatch>& matches, int ap_grid_step,
-                               const LocalAlignSettings& settings) {
+LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint>& points,
+                                                std::vector<LocalMatch>& matches,
+                                                int ap_grid_step,
+                                                const LocalAlignSettings& settings) {
     if (points.size() != matches.size()) {
         throw std::invalid_argument("外れ値処理: AP数と結果数が一致しません");
     }
-    if (points.empty()) return;
+    LocalFieldRepairStats stats;
+    if (points.empty()) return stats;
+
+    // --- 1. フレーム全体で変位場の一貫性を調べる -------------------------
+    //
+    // 木星の帯のようなほぼ一方向の模様では、ZNCCが高いまま偽ピークへ滑り、
+    // APごとに互いに矛盾する変位を返すことがある。誤った近傍どうしで補間すると
+    // 円盤の輪郭まで局所的に引き延ばされるため、補間より前に場全体を検査する。
+    std::vector<double> valid_dx;
+    std::vector<double> valid_dy;
+    valid_dx.reserve(matches.size());
+    valid_dy.reserve(matches.size());
+    for (const LocalMatch& match : matches) {
+        if (!match.valid) continue;
+        valid_dx.push_back(match.dx);
+        valid_dy.push_back(match.dy);
+    }
+
+    const double consensus_x = median(valid_dx);
+    const double consensus_y = median(valid_dy);
+    std::vector<double> deviations;
+    deviations.reserve(valid_dx.size());
+    for (std::size_t i = 0; i < valid_dx.size(); ++i) {
+        deviations.push_back(
+            std::hypot(valid_dx[i] - consensus_x, valid_dy[i] - consensus_y));
+    }
+    stats.median_deviation = median(deviations);
+
+    // 48px AP（24px間隔）で1.5pxを基準とする。大きなAPでは局所変形の
+    // 許容量も比例させるが、細かな格子で過敏にならないよう下限を置く。
+    const double spread_limit = std::max(1.5, ap_grid_step / 16.0);
+    const bool too_few_valid = valid_dx.size() * 2 < points.size();
+    const bool inconsistent =
+        valid_dx.empty() || too_few_valid || stats.median_deviation > spread_limit;
+
+    if (inconsistent) {
+        // 有効点が少数でも中央値なら単発の偽ピークに引かれにくい。
+        // 1点も無い場合の中央値は0で、グローバル位置合わせだけを使う。
+        for (LocalMatch& match : matches) {
+            match.dx = static_cast<float>(consensus_x);
+            match.dy = static_cast<float>(consensus_y);
+        }
+        stats.used_global_consensus = true;
+        return stats;
+    }
+
+    // 場全体は一貫していても、孤立した偽ピークはあり得る。中央値から
+    // 十分に離れた有効点を無効扱いにし、後段の近傍補間へ回す。
+    const double outlier_limit = std::max(spread_limit, 3.0 * stats.median_deviation);
+    for (LocalMatch& match : matches) {
+        if (!match.valid) continue;
+        if (std::hypot(match.dx - consensus_x, match.dy - consensus_y) > outlier_limit) {
+            match.valid = false;
+            ++stats.consensus_outliers;
+        }
+    }
 
     const double range_sq =
         (kNeighborRange * ap_grid_step) * (kNeighborRange * ap_grid_step);
 
-    // --- 1. 無効なAPを近傍の有効APから補間する ----------------------------
+    // --- 2. 無効なAPを近傍の有効APから補間する ----------------------------
     //
     // 無効なAPをそのまま使うと、そのAP領域だけ全く違う場所を切り出して加算し、
     // 出力に局所的な二重像が出る。近傍から埋めるほうが、
@@ -59,15 +126,15 @@ void repair_displacement_field(const std::vector<AlignmentPoint>& points,
             matches[i].dx = static_cast<float>(sx / wsum);
             matches[i].dy = static_cast<float>(sy / wsum);
         } else {
-            // 近傍に有効APが1つもない。グローバル変位のまま（0）にしておく。
-            matches[i].dx = 0.0f;
-            matches[i].dy = 0.0f;
+            // 近傍に有効APが1つもない場合も、場全体の頑健な代表値を使う。
+            matches[i].dx = static_cast<float>(consensus_x);
+            matches[i].dy = static_cast<float>(consensus_y);
         }
         // valid は false のまま残す。補間で埋めた値であることを
         // 上流（スタック時の重み付けや診断）が知れるようにするため。
     }
 
-    // --- 2. 隣接APとの差が大きすぎる変位をクリップする --------------------
+    // --- 3. 隣接APとの差が大きすぎる変位をクリップする --------------------
     //
     // シーイングによる歪みは連続的なので、隣り合うAPの変位が大きく違うのは
     // 相関の誤りである可能性が高い。仕様書 §4.6 は「AP間隔の1/4超」を目安としている。
@@ -100,6 +167,7 @@ void repair_displacement_field(const std::vector<AlignmentPoint>& points,
             matches[i].dy = static_cast<float>(my + ey * scale);
         }
     }
+    return stats;
 }
 
 }  // namespace stackcore

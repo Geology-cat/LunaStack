@@ -56,8 +56,11 @@ struct MapStackReport {
     int reference_frames = 0;   // 参照画像を作るのに使った枚数
     int frames_analyzed = 0;    // ローカルアライメントを掛けたフレーム数
     long long ap_frame_pairs = 0;
+    long long alignment_frame_passes = 0;  // AP数に依存しないフレーム×パス数
     long long invalid_matches = 0;   // 信頼度不足・縁張り付きで補間したAP×フレーム
     long long clipped_matches = 0;   // 近傍との差でクリップされたAP×フレーム
+    long long consensus_fallback_frames = 0;  // 共通変位へ退避したフレーム×パス
+    long long consensus_outlier_matches = 0;  // 場の中央値から除いたAP×フレーム
     int frames_per_ap = 0;
     int passes_run = 0;
     WindowedStackStats stack;
