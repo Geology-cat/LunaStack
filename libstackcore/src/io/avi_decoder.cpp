@@ -1,7 +1,10 @@
 #include "stackcore/avi_decoder.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+
+#include "stackcore/jpeg_decoder.hpp"
 
 namespace stackcore {
 namespace {
@@ -71,6 +74,15 @@ bool is_raw_fourcc(std::uint32_t c, int& out_bits, bool& out_is_gray) {
     return false;
 }
 
+bool is_mjpeg_fourcc(std::uint32_t compression) {
+    const std::uint8_t b[4] = {static_cast<std::uint8_t>(compression & 0xFF),
+                               static_cast<std::uint8_t>((compression >> 8) & 0xFF),
+                               static_cast<std::uint8_t>((compression >> 16) & 0xFF),
+                               static_cast<std::uint8_t>((compression >> 24) & 0xFF)};
+    return fourcc_is(b, "MJPG") || fourcc_is(b, "mjpg") || fourcc_is(b, "JPEG") ||
+           fourcc_is(b, "jpeg") || fourcc_is(b, "dmb1");
+}
+
 }  // namespace
 
 int AviDecoder::planes() const noexcept {
@@ -105,6 +117,24 @@ void AviDecoder::open(const std::string& path) {
         throw std::runtime_error("AVI: 映像フレームが1つも見つかりませんでした");
     }
     header_.frame_count = static_cast<int>(frames_.size());
+
+    // MJPEGはフレームごとに圧縮サイズが異なり、行バイト数を持たない。
+    if (mjpeg_) {
+        FrameBuffer probe;
+        const FrameRef& first = frames_[0];
+        decode_baseline_jpeg(file_.data() + first.offset, first.size, probe);
+        if (probe.width() != header_.width || probe.height() != header_.height) {
+            throw std::runtime_error("AVI: MJPEGフレームの寸法がAVIヘッダと一致しません (" +
+                                     std::to_string(probe.width()) + "x" +
+                                     std::to_string(probe.height()) + " / " +
+                                     std::to_string(header_.width) + "x" +
+                                     std::to_string(header_.height) + ")");
+        }
+        color_id_ = probe.channels() == 1 ? SerColorId::Mono : SerColorId::RGB;
+        header_.bit_count = probe.channels() * 8;
+        header_.row_bytes = 0;
+        return;
+    }
 
     // 1行あたりのバイト数を、実際のフレームサイズから決める。
     // DIBの本来の規約はDWORD境界への切り上げだが、揃えずに書く実装もあるため、
@@ -241,11 +271,16 @@ void AviDecoder::parse(const std::uint8_t* data, std::uint64_t size) {
     } else if (is_raw_fourcc(header_.compression, fourcc_bits, fourcc_gray)) {
         color_id_ = fourcc_gray ? SerColorId::Mono : SerColorId::BGR;
         if (header_.bit_count == 0) header_.bit_count = fourcc_bits;
+    } else if (is_mjpeg_fourcc(header_.compression)) {
+        // JPEG側で成分順をRGBへ正規化するため、上流にはRGBとして渡す。
+        mjpeg_ = true;
+        color_id_ = SerColorId::RGB;
+        header_.bit_count = 24;
     } else {
-        // MJPEG等はここで明示的に拒否する。黙って生画素として読むと
+        // 未対応圧縮はここで明示的に拒否する。黙って生画素として読むと
         // ノイズのような画像を出したうえで「読めた」と主張してしまう。
         throw std::runtime_error("AVI: 未対応の圧縮形式です (" + header_.compression_name +
-                                 ")。この版は非圧縮AVIのみ対応しています");
+                                 ")。対応形式は非圧縮またはMJPEGです");
     }
 
     // ---- movi を走査してフレーム位置を集める -----------------------------
@@ -315,6 +350,21 @@ void AviDecoder::read_frame(int index, FrameBuffer& out) const {
     const int ch = planes();
     const std::size_t row_bytes = header_.row_bytes;
 
+    if (mjpeg_) {
+        decode_baseline_jpeg(file_.data() + ref.offset, ref.size, out);
+        if (out.width() != w || out.height() != h) {
+            throw std::runtime_error("AVI: MJPEGフレームの寸法がAVIヘッダと一致しません (" +
+                                     std::to_string(out.width()) + "x" +
+                                     std::to_string(out.height()) + " / " +
+                                     std::to_string(w) + "x" + std::to_string(h) + ")");
+        }
+        if (out.channels() != 1 && out.channels() != 3) {
+            throw std::runtime_error("AVI: MJPEGフレームの成分数が不正です");
+        }
+        file_.note_read(ref.size);
+        return;
+    }
+
     if (ref.size < row_bytes * static_cast<std::size_t>(h)) {
         throw std::runtime_error("AVI: フレーム " + std::to_string(index) +
                                  " のデータが不足しています");
@@ -368,6 +418,34 @@ FrameStats AviDecoder::frame_stats(int index) const {
         throw std::out_of_range("AVI: フレーム番号が範囲外です");
     }
     const FrameRef& ref = frames_[static_cast<std::size_t>(index)];
+    if (mjpeg_) {
+        FrameBuffer decoded;
+        read_frame(index, decoded);
+        FrameStats stats;
+        stats.min_value = 0xFFFFFFFFu;
+        stats.max_value = 0;
+        double sum = 0.0;
+        std::size_t count = 0;
+        for (int c = 0; c < decoded.channels(); ++c) {
+            for (int y = 0; y < decoded.height(); ++y) {
+                const float* row = decoded.row(c, y);
+                for (int x = 0; x < decoded.width(); ++x) {
+                    const std::uint32_t value = static_cast<std::uint32_t>(
+                        std::max(0.0f, std::min(255.0f, row[x] * 255.0f + 0.5f)));
+                    stats.min_value = std::min(stats.min_value, value);
+                    stats.max_value = std::max(stats.max_value, value);
+                    sum += value;
+                    ++count;
+                }
+            }
+        }
+        if (count == 0) {
+            stats.min_value = 0;
+        } else {
+            stats.mean_value = sum / static_cast<double>(count);
+        }
+        return stats;
+    }
     const int w = header_.width;
     const int h = header_.height;
     const std::size_t row_bytes = header_.row_bytes;

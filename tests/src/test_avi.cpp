@@ -11,6 +11,9 @@ using stackcore::AviDecoder;
 using stackcore::FrameBuffer;
 using stackcore::SerColorId;
 
+std::vector<std::uint8_t> lunastack_test_minimal_color_jpeg();
+std::vector<std::uint8_t> lunastack_test_minimal_gray_jpeg();
+
 namespace {
 
 // 期待値（0..250の整数）を 0..1 正規化した値に直す。
@@ -174,13 +177,55 @@ MT_TEST(avi_recで束ねられたフレームを見つける) {
     std::remove(path.c_str());
 }
 
-MT_TEST(avi_未対応の圧縮形式は黙って読まずに拒否する) {
-    // MJPEGを生画素として読むとノイズのような画像を出したうえで
-    // 「読めた」と主張してしまう。明示的に失敗させる。
+MT_TEST(avi_MJPEGのベースラインJPEGを読む) {
     synthetic_avi::Options o;
+    o.width = 8;
+    o.height = 8;
     o.bit_count = 24;
     o.compression = synthetic_avi::fourcc("MJPG");
+    o.frame_payload_override = lunastack_test_minimal_color_jpeg();
     const std::string path = make(o, 2, "mjpg");
+
+    AviDecoder d;
+    d.open(path);
+    MT_CHECK(d.is_mjpeg());
+    MT_CHECK(d.color_id() == SerColorId::RGB);
+    MT_CHECK_EQ(d.frame_count(), 2);
+    FrameBuffer frame;
+    d.read_frame(1, frame);
+    MT_CHECK_EQ(frame.channels(), 3);
+    MT_CHECK_NEAR(frame.row(0, 0)[0], 128.0 / 255.0, 1e-7);
+    const stackcore::FrameStats stats = d.frame_stats(0);
+    MT_CHECK_EQ(static_cast<int>(stats.min_value), 128);
+    MT_CHECK_EQ(static_cast<int>(stats.max_value), 128);
+    std::remove(path.c_str());
+}
+
+MT_TEST(avi_MJPEGのグレースケールを1chとして読む) {
+    synthetic_avi::Options o;
+    o.width = 8;
+    o.height = 8;
+    o.bit_count = 8;
+    o.compression = synthetic_avi::fourcc("MJPG");
+    o.frame_payload_override = lunastack_test_minimal_gray_jpeg();
+    const std::string path = make(o, 1, "mjpg_gray");
+
+    AviDecoder d;
+    d.open(path);
+    MT_CHECK(d.color_id() == SerColorId::Mono);
+    MT_CHECK_EQ(d.planes(), 1);
+    MT_CHECK_EQ(d.header().bit_count, 8);
+    FrameBuffer frame;
+    d.read_frame(0, frame);
+    MT_CHECK_EQ(frame.channels(), 1);
+    std::remove(path.c_str());
+}
+
+MT_TEST(avi_未対応の圧縮形式は黙って読まずに拒否する) {
+    synthetic_avi::Options o;
+    o.bit_count = 24;
+    o.compression = synthetic_avi::fourcc("H264");
+    const std::string path = make(o, 2, "unsupported");
 
     AviDecoder d;
     MT_CHECK_THROWS(d.open(path));

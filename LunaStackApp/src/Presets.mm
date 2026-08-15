@@ -1,5 +1,7 @@
 #import "Presets.h"
 
+#import "Localization.h"
+
 @implementation Presets
 
 + (NSString*)directory {
@@ -35,7 +37,7 @@
 
 + (BOOL)saveSettings:(NSDictionary*)settings name:(NSString*)name error:(NSString**)error {
     if ([name length] == 0) {
-        if (error) *error = @"名前が空です";
+        if (error) *error = LSLocalizedString(@"名前が空です");
         return NO;
     }
     NSFileManager* fm = [NSFileManager defaultManager];
@@ -55,7 +57,7 @@
         return NO;
     }
     if (![data writeToFile:[self pathForName:name] atomically:YES]) {
-        if (error) *error = @"書き込めませんでした";
+        if (error) *error = LSLocalizedString(@"書き込めませんでした");
         return NO;
     }
     return YES;

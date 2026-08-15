@@ -10,7 +10,7 @@
 
 namespace stackcore {
 
-// AVI（非圧縮）の自前デコーダ。
+// AVI（非圧縮 / MJPEG）の自前デコーダ。
 //
 // なぜOS付属のデコーダ（AVFoundation）を使わないか:
 // 「同一入力・同一設定なら全OSバージョンで同一の品質」という要件があり、
@@ -22,7 +22,7 @@ namespace stackcore {
 //     movi が複数の RIFF 'AVIX' セグメントに分割される
 //   * 非圧縮 BI_RGB (8 / 24 / 32 bit) と、Y800 / GREY / Y8 / Y16 などの
 //     生画素 FourCC
-//   * MJPEG は未対応（後述の理由により自前デコーダが必要）
+//   * MJPG / JPEG / dmb1 の8bitベースラインJPEG
 class AviDecoder {
 public:
     struct Header {
@@ -51,6 +51,7 @@ public:
     int planes() const noexcept;
     int bytes_per_sample() const noexcept;
     int bit_depth() const noexcept;
+    bool is_mjpeg() const noexcept { return mjpeg_; }
 
     // パイプラインの他の段（デバイヤー等）と型を揃えるため、
     // 色形式の表現には SER の ColorID を流用する。
@@ -81,6 +82,7 @@ private:
     std::vector<FrameRef> frames_;
     SerColorId color_id_ = SerColorId::Mono;
     int video_stream_ = 0;
+    bool mjpeg_ = false;
 };
 
 }  // namespace stackcore

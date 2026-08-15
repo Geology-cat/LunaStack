@@ -11,6 +11,7 @@ add_executable(stackcore_tests
     src/test_stack.cpp
     src/test_frame_selector.cpp
     src/test_avi.cpp
+    src/test_jpeg.cpp
     src/test_resample.cpp
     src/test_zncc.cpp
     src/test_ap_placer.cpp
@@ -24,6 +25,13 @@ target_include_directories(stackcore_tests PRIVATE include)
 target_link_libraries(stackcore_tests PRIVATE stackcore)
 
 add_test(NAME stackcore_tests COMMAND stackcore_tests)
+
+add_test(NAME localization_strings_valid
+         COMMAND /usr/bin/plutil -lint
+                 ${CMAKE_SOURCE_DIR}/LunaStackApp/Resources/ja.lproj/Localizable.strings
+                 ${CMAKE_SOURCE_DIR}/LunaStackApp/Resources/ja.lproj/InfoPlist.strings
+                 ${CMAKE_SOURCE_DIR}/LunaStackApp/Resources/en.lproj/Localizable.strings
+                 ${CMAKE_SOURCE_DIR}/LunaStackApp/Resources/en.lproj/InfoPlist.strings)
 
 # ---- availabilityガードが実際に発火することの証明 ------------------------
 # このターゲットは「ビルドが失敗すること」が期待値。

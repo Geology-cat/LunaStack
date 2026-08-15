@@ -14,6 +14,21 @@ set_source_files_properties(${LUNASTACK_APP_ICON} PROPERTIES
     MACOSX_PACKAGE_LOCATION "Resources"
 )
 
+set(LUNASTACK_JA_LOCALIZATIONS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/ja.lproj/Localizable.strings"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/ja.lproj/InfoPlist.strings"
+)
+set(LUNASTACK_EN_LOCALIZATIONS
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/en.lproj/Localizable.strings"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Resources/en.lproj/InfoPlist.strings"
+)
+set_source_files_properties(${LUNASTACK_JA_LOCALIZATIONS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources/ja.lproj"
+)
+set_source_files_properties(${LUNASTACK_EN_LOCALIZATIONS} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources/en.lproj"
+)
+
 add_executable(LunaStackApp MACOSX_BUNDLE
     src/main.mm
     src/AppDelegate.mm
@@ -23,6 +38,8 @@ add_executable(LunaStackApp MACOSX_BUNDLE
     src/QueueItem.mm
     src/Presets.mm
     ${LUNASTACK_APP_ICON}
+    ${LUNASTACK_JA_LOCALIZATIONS}
+    ${LUNASTACK_EN_LOCALIZATIONS}
 )
 
 target_include_directories(LunaStackApp PRIVATE src)

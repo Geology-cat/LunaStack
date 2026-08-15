@@ -15,6 +15,7 @@ add_library(stackcore STATIC
     src/io/mapped_file.cpp
     src/io/ser_decoder.cpp
     src/io/avi_decoder.cpp
+    src/io/jpeg_decoder.cpp
     src/io/video_source.cpp
     src/io/sidecar.cpp
     src/post/wavelet.cpp

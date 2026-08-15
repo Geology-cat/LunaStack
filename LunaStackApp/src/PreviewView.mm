@@ -1,5 +1,7 @@
 #import "PreviewView.h"
 
+#import "Localization.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -327,7 +329,7 @@
     NSRectFill(bounds);
 
     if (!_image || _imageWidth == 0) {
-        NSString* message = @"動画を開いて［解析］を押してください";
+        NSString* message = LSLocalizedString(@"動画を開いて［解析］を押してください");
         NSMutableParagraphStyle* style =
             [[[NSMutableParagraphStyle alloc] init] autorelease];
         [style setAlignment:NSTextAlignmentCenter];

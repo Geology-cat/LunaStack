@@ -1,5 +1,6 @@
 #import "MainWindowController.h"
 
+#import "Localization.h"
 #import "Presets.h"
 #import "QueueItem.h"
 
@@ -410,6 +411,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self updateControlsEnabled];
     [self updateDrizzleEstimate];
     [self updateNamePreview];
+    LSLocalizeViewTree(content);
 }
 
 // --- 左ペイン: 入力キュー ＋ 品質グラフ ---
@@ -927,8 +929,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self addToSection:key view:head box:box];
 
     for (int j = 0; j < kWaveletLayers; ++j) {
-        NSString* title =
-            [NSString stringWithFormat:@"Layer %d（約%d px）", j + 1, 1 << (j + 1)];
+        NSString* title = [NSString stringWithFormat:
+                                        LSLocalizedString(@"Layer %d（約%d px）"),
+                                        j + 1, 1 << (j + 1)];
         [self addToSection:key view:MakeLabel(title) box:box];
 
         _sharpenSliders[j] = [self sliderMin:0.0 max:3.0 value:1.0
@@ -1251,11 +1254,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         const std::unique_ptr<stackcore::VideoSource> source =
             stackcore::open_video(std::string([[item path] UTF8String]),
                                   [self currentOpenOptions]);
-        [item setSubtitle:[NSString stringWithFormat:@"%dフレーム · %d×%d · %@",
+        [item setSubtitle:[NSString stringWithFormat:LSLocalizedString(@"%dフレーム · %d×%d · %@"),
                                                      source->frame_count(), source->width(),
                                                      source->height(),
-                                                     [NSString stringWithUTF8String:
-                                                                   source->format_name()]]];
+                                                     LSLocalizedString([NSString
+                                                         stringWithUTF8String:
+                                                             source->format_name()])]];
     } catch (const std::exception& e) {
         [item setState:QueueItemStateError];
         [item setMessage:[NSString stringWithUTF8String:e.what()]];
@@ -1476,7 +1480,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     (void)sender;
     if (_selectionUsesCount) {
         _apTopCountSetting = static_cast<int>([_apTopSlider doubleValue] + 0.5);
-        [_apTopValue setStringValue:[NSString stringWithFormat:@"%d 枚", _apTopCountSetting]];
+        [_apTopValue setStringValue:
+                         [NSString stringWithFormat:LSLocalizedString(@"%d 枚"),
+                                                    _apTopCountSetting]];
     } else {
         _apTopPercentSetting = [_apTopSlider doubleValue];
         [_apTopValue setStringValue:[NSString stringWithFormat:@"%.0f %%", _apTopPercentSetting]];
@@ -1504,12 +1510,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         // ファイルを開く前に枚数プリセットを選んでも値を1へ潰さない。
         const int maximum = available > 0 ? available : std::max(1, _apTopCountSetting);
         _apTopCountSetting = std::max(1, std::min(_apTopCountSetting, maximum));
-        [_apTopCaption setStringValue:@"AP別に採用するフレーム（枚数）"];
+        [_apTopCaption setStringValue:LSLocalizedString(@"AP別に採用するフレーム（枚数）")];
         [_apTopSlider setMinValue:1.0];
         [_apTopSlider setMaxValue:maximum];
         [_apTopSlider setDoubleValue:_apTopCountSetting];
     } else {
-        [_apTopCaption setStringValue:@"AP別に採用するフレーム（%）"];
+        [_apTopCaption setStringValue:LSLocalizedString(@"AP別に採用するフレーム（%）")];
         [_apTopSlider setMinValue:1.0];
         [_apTopSlider setMaxValue:100.0];
         [_apTopSlider setDoubleValue:_apTopPercentSetting];
@@ -1545,8 +1551,11 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         const int h = static_cast<int>(source->height() * scale);
         // 出力＋重みで float 2面ぶんを持つ。
         const double mb = static_cast<double>(w) * h * _sourceChannels * 4 * 2 / (1024.0 * 1024.0);
-        [_drizzleEstimate setStringValue:[NSString stringWithFormat:@"出力 %d×%d ／ 作業メモリ約 %.0f MB",
-                                                                    w, h, mb]];
+        [_drizzleEstimate
+            setStringValue:[NSString
+                               stringWithFormat:
+                                   LSLocalizedString(@"出力 %d×%d ／ 作業メモリ約 %.0f MB"),
+                               w, h, mb]];
     } catch (const std::exception&) {
         [_drizzleEstimate setStringValue:@""];
     }
@@ -1612,7 +1621,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_apEditCheck setEnabled:!globalOnly];
 
     // 「解析済み」であることを、押す前に分かるようにする（設計原則1.2）。
-    [_stackButton setTitle:analysisOk ? @"再スタック" : @"スタック"];
+    [_stackButton setTitle:LSLocalizedString(analysisOk ? @"再スタック" : @"スタック")];
     if (_currentIndex >= 0 && !_running) {
         QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
         if ([item state] != QueueItemStateError && [item state] != QueueItemStateStacked) {
@@ -1646,7 +1655,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)setBatchOutputDirectory:(NSString*)path {
     [_outputDirectory release];
     _outputDirectory = [path copy];
-    [_outputDirLabel setStringValue:path ? path : @"入力と同じフォルダ"];
+    [_outputDirLabel
+        setStringValue:path ? path : LSLocalizedString(@"入力と同じフォルダ")];
 }
 
 - (void)analyze:(id)sender {
@@ -1663,7 +1673,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     (void)sender;
     _stopQueue->store(true);
     _cancelFlag->store(true);
-    [_statusLabel setStringValue:@"中断しています…"];
+    [_statusLabel setStringValue:LSLocalizedString(@"中断しています…")];
 }
 
 - (void)beginJobWithStack:(BOOL)wantStack {
@@ -1691,7 +1701,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
     NSString* signature = [[self analysisSignature] copy];
     const BOOL reusing = (req.reuse != nullptr);
-    [_statusLabel setStringValue:reusing ? @"解析結果を使い回して加算します…" : @"開始しています…"];
+    [_statusLabel
+        setStringValue:LSLocalizedString(reusing ? @"解析結果を使い回して加算します…"
+                                                 : @"開始しています…")];
 
     std::atomic<bool>* cancelFlag = _cancelFlag;
     MainWindowController* controller = self;
@@ -1728,13 +1740,13 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self resetEta];
 
     if (result.cancelled) {
-        [_statusLabel setStringValue:@"中断しました"];
+        [_statusLabel setStringValue:LSLocalizedString(@"中断しました")];
         [self updateControlsEnabled];
         if (_onRunFinished) _onRunFinished();
         return;
     }
     if (!result.error.empty()) {
-        [_statusLabel setStringValue:@"失敗しました"];
+        [_statusLabel setStringValue:LSLocalizedString(@"失敗しました")];
         if (_currentIndex >= 0) {
             QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
             [item setState:QueueItemStateError];
@@ -1742,7 +1754,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             [_queueTable reloadData];
         }
         [self showError:[NSString stringWithUTF8String:result.error.c_str()]
-                  title:@"処理できませんでした"];
+                  title:LSLocalizedString(@"処理できませんでした")];
         [self updateControlsEnabled];
         if (_onRunFinished) _onRunFinished();
         return;
@@ -1768,14 +1780,15 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         [_inspectorTab setSelectedSegment:1];
         [self updateInspectorVisibility];
         [self applyWavelet];
-        [_statusLabel setStringValue:[NSString stringWithFormat:@"完了 — %d×%d",
+        [_statusLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"完了 — %d×%d"),
                                                                 _stacked->width(),
                                                                 _stacked->height()]];
-        [self notifyDone:[NSString stringWithFormat:@"スタックが完了しました（%d×%d）",
+        [self notifyDone:[NSString stringWithFormat:LSLocalizedString(@"スタックが完了しました（%d×%d）"),
                                                     _stacked->width(), _stacked->height()]];
     } else {
         [_statusLabel setStringValue:
-                          [NSString stringWithFormat:@"解析が終わりました — AP %d個 / %d フレーム",
+                          [NSString stringWithFormat:
+                                        LSLocalizedString(@"解析が終わりました — AP %d個 / %d フレーム"),
                                                      _analysis ? static_cast<int>(
                                                                      _analysis->points.size())
                                                                : 0,
@@ -1784,7 +1797,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             [_viewModeSegment setSelectedSegment:1];
             [_preview showFrameBuffer:*_referenceImage];
         }
-        [self notifyDone:@"解析が完了しました"];
+        [self notifyDone:LSLocalizedString(@"解析が完了しました")];
     }
     // **APオーバーレイの更新は _stacked を入れたあとに行う。**
     // オーバーレイの座標倍率はDrizzle倍率から決まるが、その判断に
@@ -1848,13 +1861,17 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)updateBanner {
     NSMutableArray* parts = [NSMutableArray array];
     if (_byteOrderSuspect) {
-        [parts addObject:@"バイトオーダーがヘッダの主張と違います。画像が破綻して見えるならStackで切り替えてください"];
+        [parts addObject:LSLocalizedString(
+                             @"バイトオーダーがヘッダの主張と違います。画像が破綻して見えるならStackで切り替えてください")];
     }
     if (_looksLikeShallowDepth) {
-        [parts addObject:@"16bitですが実測は12bit幅です。暗く写るならStackで「12bitとして扱う」を選んでください"];
+        [parts addObject:LSLocalizedString(
+                             @"16bitですが実測は12bit幅です。暗く写るならStackで「12bitとして扱う」を選んでください")];
     }
     if (_rejectedFrames > 0) {
-        [parts addObject:[NSString stringWithFormat:@"%d 枚を自動除外しました（視野外・追跡失敗）",
+        [parts addObject:[NSString
+                             stringWithFormat:
+                                 LSLocalizedString(@"%d 枚を自動除外しました（視野外・追跡失敗）"),
                                                     _rejectedFrames]];
     }
     [_bannerLabel setStringValue:[parts componentsJoinedByString:@" ／ "]];
@@ -1892,7 +1909,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             if (_referenceImage) {
                 [_preview showFrameBuffer:*_referenceImage];
             } else {
-                [_statusLabel setStringValue:@"参照画像はまだありません（解析すると作られます）"];
+                [_statusLabel
+                    setStringValue:LSLocalizedString(@"参照画像はまだありません（解析すると作られます）")];
                 [_viewModeSegment setSelectedSegment:0];
             }
             break;
@@ -1900,7 +1918,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
             if (_displayed) {
                 [_preview showFrameBuffer:*_displayed];
             } else {
-                [_statusLabel setStringValue:@"スタック結果はまだありません"];
+                [_statusLabel setStringValue:LSLocalizedString(@"スタック結果はまだありません")];
                 [_viewModeSegment setSelectedSegment:0];
             }
             break;
@@ -1916,7 +1934,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         [_preview clearAlignmentPoints];
         [_apCountLabel setStringValue:_manualPoints.empty()
                                           ? @""
-                                          : [NSString stringWithFormat:@"手動AP %zu 個（未解析）",
+                                          : [NSString stringWithFormat:
+                                                            LSLocalizedString(@"手動AP %zu 個（未解析）"),
                                                                        _manualPoints.size()]];
         return;
     }
@@ -1927,7 +1946,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
                           apSize:_analysis->ap_size
                    meanQualities:quality
                  coordinateScale:scale];
-    [_apCountLabel setStringValue:[NSString stringWithFormat:@"AP %zu 個 / %d px",
+    [_apCountLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"AP %zu 個 / %d px"),
                                                              _analysis->points.size(),
                                                              _analysis->ap_size]];
 }
@@ -1941,6 +1960,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 }
 
 - (void)reportStage:(NSString*)stage done:(int)done total:(int)total {
+    stage = LSLocalizedString(stage);
     const NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     if (!_etaStage || ![_etaStage isEqualToString:stage]) {
         // フェーズが変わったら測り直す。
@@ -1959,18 +1979,21 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     const NSTimeInterval elapsed = now - _etaStart;
     if (fraction > 0.02 && elapsed > 1.0) {
         const double remain = elapsed * (1.0 - fraction) / fraction;
-        eta = [NSString stringWithFormat:@"　残り約 %@", [self formatSeconds:remain]];
+        eta = [NSString stringWithFormat:LSLocalizedString(@"　残り約 %@"),
+                                         [self formatSeconds:remain]];
     }
     [_statusLabel setStringValue:[NSString stringWithFormat:@"%@  %d / %d（%.0f%%）%@", stage, done,
                                                             total, fraction * 100.0, eta]];
 }
 
 - (NSString*)formatSeconds:(double)seconds {
-    if (seconds < 60.0) return [NSString stringWithFormat:@"%.0f秒", seconds];
+    if (seconds < 60.0)
+        return [NSString stringWithFormat:LSLocalizedString(@"%.0f秒"), seconds];
     const int m = static_cast<int>(seconds / 60.0);
     const int s = static_cast<int>(seconds - m * 60.0);
-    if (m < 60) return [NSString stringWithFormat:@"%d分%02d秒", m, s];
-    return [NSString stringWithFormat:@"%d時間%d分", m / 60, m % 60];
+    if (m < 60)
+        return [NSString stringWithFormat:LSLocalizedString(@"%d分%02d秒"), m, s];
+    return [NSString stringWithFormat:LSLocalizedString(@"%d時間%d分"), m / 60, m % 60];
 }
 
 - (void)notifyDone:(NSString*)text {
@@ -2091,7 +2114,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
     [self rebuildReferenceImage];
     [self showFrames:_analysis->frames];
-    [_statusLabel setStringValue:@"解析済みの結果を読み込みました。すぐに再スタックできます"];
+    [_statusLabel
+        setStringValue:LSLocalizedString(@"解析済みの結果を読み込みました。すぐに再スタックできます")];
 }
 
 // ---- プリセット -----------------------------------------------------------
@@ -2196,7 +2220,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)reloadPresets {
     [_presetPopup removeAllItems];
-    [_presetPopup addItemWithTitle:@"プリセット…"];
+    [_presetPopup addItemWithTitle:LSLocalizedString(@"プリセット…")];
     for (NSString* name in [Presets names]) [_presetPopup addItemWithTitle:name];
 }
 
@@ -2205,7 +2229,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     if ([_presetPopup indexOfSelectedItem] <= 0) return;
     NSDictionary* d = [Presets loadSettingsNamed:[_presetPopup titleOfSelectedItem]];
     if (!d) {
-        [self showError:@"プリセットを読めませんでした" title:@"プリセット"];
+        [self showError:LSLocalizedString(@"プリセットを読めませんでした")
+                  title:LSLocalizedString(@"プリセット")];
         return;
     }
     [self applySettingsDictionary:d];
@@ -2215,12 +2240,12 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)savePreset:(id)sender {
     (void)sender;
     NSAlert* alert = [[[NSAlert alloc] init] autorelease];
-    [alert setMessageText:@"プリセットの名前"];
-    [alert addButtonWithTitle:@"保存"];
-    [alert addButtonWithTitle:@"やめる"];
+    [alert setMessageText:LSLocalizedString(@"プリセットの名前")];
+    [alert addButtonWithTitle:LSLocalizedString(@"保存")];
+    [alert addButtonWithTitle:LSLocalizedString(@"やめる")];
     NSTextField* field =
         [[[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 240, 24)] autorelease];
-    [field setStringValue:@"マイ設定"];
+    [field setStringValue:LSLocalizedString(@"マイ設定")];
     [alert setAccessoryView:field];
     if ([alert runModal] != NSAlertFirstButtonReturn) return;
 
@@ -2228,11 +2253,14 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     if (![Presets saveSettings:[self settingsDictionary]
                           name:[field stringValue]
                          error:&error]) {
-        [self showError:error ? error : @"保存できませんでした" title:@"プリセット"];
+        [self showError:error ? error : LSLocalizedString(@"保存できませんでした")
+                  title:LSLocalizedString(@"プリセット")];
         return;
     }
     [self reloadPresets];
-    [_statusLabel setStringValue:[NSString stringWithFormat:@"プリセット「%@」を保存しました",
+    [_statusLabel setStringValue:[NSString
+                                     stringWithFormat:
+                                         LSLocalizedString(@"プリセット「%@」を保存しました"),
                                                             [field stringValue]]];
 }
 
@@ -2381,7 +2409,8 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     int size = apSizes[[_apSizePopup indexOfSelectedItem]];
     if (size == 0) size = 64;  // 自動のときは表示だけ暫定値で描く
     [_preview setAlignmentPoints:_manualPoints apSize:size meanQualities:none coordinateScale:1.0];
-    [_apCountLabel setStringValue:[NSString stringWithFormat:@"手動AP %zu 個（未解析）",
+    [_apCountLabel setStringValue:[NSString stringWithFormat:
+                                                        LSLocalizedString(@"手動AP %zu 個（未解析）"),
                                                              _manualPoints.size()]];
     [self updateControlsEnabled];
 }
@@ -2409,8 +2438,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [_analysisSignature release];
     _analysisSignature = nil;
     [_preview clearAlignmentPoints];
-    [_apCountLabel setStringValue:@"AP 0 個（手動）"];
-    [_statusLabel setStringValue:@"APをすべて消しました。プレビューをクリックして置き直せます"];
+    [_apCountLabel setStringValue:LSLocalizedString(@"AP 0 個（手動）")];
+    [_statusLabel
+        setStringValue:LSLocalizedString(@"APをすべて消しました。プレビューをクリックして置き直せます")];
     [self updateControlsEnabled];
 }
 
@@ -2545,7 +2575,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 - (void)resetOutputDirectory:(id)sender {
     (void)sender;
     [self setBatchOutputDirectory:nil];
-    [_outputDirLabel setStringValue:@"入力と同じフォルダ"];
+    [_outputDirLabel setStringValue:LSLocalizedString(@"入力と同じフォルダ")];
 }
 
 - (void)save:(id)sender {
@@ -2563,10 +2593,11 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
     try {
         write_output_image(std::string([[url path] UTF8String]), *_displayed, format);
-        [_statusLabel setStringValue:[NSString stringWithFormat:@"保存しました: %@",
+        [_statusLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"保存しました: %@"),
                                                                 [[url path] lastPathComponent]]];
     } catch (const std::exception& e) {
-        [self showError:[NSString stringWithUTF8String:e.what()] title:@"保存できませんでした"];
+        [self showError:[NSString stringWithUTF8String:e.what()]
+                  title:LSLocalizedString(@"保存できませんでした")];
     }
 }
 
@@ -2605,7 +2636,7 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     if ([targets count] == 0) {
         _running = NO;
         _batchRunning = NO;
-        [_statusLabel setStringValue:@"すべて処理済みです"];
+        [_statusLabel setStringValue:LSLocalizedString(@"すべて処理済みです")];
         [self updateControlsEnabled];
         if (_onRunFinished) _onRunFinished();
         return;
@@ -2705,7 +2736,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     [self resetEta];
     [_queueTable selectRowIndexes:[NSIndexSet indexSetWithIndex:index] byExtendingSelection:NO];
     _currentIndex = static_cast<NSInteger>(index);
-    [_statusLabel setStringValue:[NSString stringWithFormat:@"[%lu/%lu] %@ を処理しています…",
+    [_statusLabel setStringValue:[NSString
+                                     stringWithFormat:
+                                         LSLocalizedString(@"[%lu/%lu] %@ を処理しています…"),
                                                             (unsigned long)position,
                                                             (unsigned long)count,
                                                             [[_items[index] path]
@@ -2720,13 +2753,14 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     QueueItem* item = _items[index];
     if (cancelled) {
         [item setState:QueueItemStatePending];
-        [item setMessage:@"中断しました"];
+        [item setMessage:LSLocalizedString(@"中断しました")];
     } else if ([error length] > 0) {
         [item setState:QueueItemStateError];
         [item setMessage:error];
     } else {
         [item setState:QueueItemStateStacked];
-        [item setMessage:[NSString stringWithFormat:@"→ %@", [outPath lastPathComponent]]];
+        [item setMessage:[NSString stringWithFormat:LSLocalizedString(@"→ %@"),
+                                                    [outPath lastPathComponent]]];
     }
     [_queueTable reloadData];
 }
@@ -2745,7 +2779,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
         else ++pending;
     }
     NSString* text =
-        [NSString stringWithFormat:@"バッチ終了 — 完了 %d / 失敗 %d / 残り %d", done, failed, pending];
+        [NSString stringWithFormat:
+                      LSLocalizedString(@"バッチ終了 — 完了 %d / 失敗 %d / 残り %d"),
+                      done, failed, pending];
     [_statusLabel setStringValue:text];
     [self notifyDone:text];
     [self updateControlsEnabled];
@@ -2756,9 +2792,9 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
 
 - (void)showError:(NSString*)message title:(NSString*)title {
     NSAlert* alert = [[[NSAlert alloc] init] autorelease];
-    [alert setMessageText:title];
+    [alert setMessageText:LSLocalizedString(title)];
     [alert setInformativeText:message];
-    [alert addButtonWithTitle:@"OK"];
+    [alert addButtonWithTitle:LSLocalizedString(@"OK")];
     [alert runModal];
 }
 

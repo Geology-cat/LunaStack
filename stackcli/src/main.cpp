@@ -199,14 +199,14 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image) {
 void print_usage() {
     std::printf(
         "LunaStack CLI %s — 月・惑星スタッキングエンジン\n"
-        "入力: SER v3 / AVI（非圧縮）。どちらも自前デコーダで読む\n"
+        "入力: SER v3 / AVI（非圧縮・MJPEG）。どちらも自前デコーダで読む\n"
         "\n"
         "使い方:\n"
         "  stackcli info <file.ser|file.avi> [オプション]\n"
         "      ヘッダと実測値を表示する（デコーダの診断用）\n"
         "\n"
-        "  stackcli extract <file.ser|file.avi> -f <番号> -o <出力.tif> [オプション]\n"
-        "      指定フレームをTIFFに書き出す\n"
+        "  stackcli extract <file.ser|file.avi> -f <番号> -o <出力.tif|png> [オプション]\n"
+        "      指定フレームをTIFFまたはPNGに書き出す\n"
         "\n"
         "  stackcli stack <file.ser|file.avi> -o <出力.tif> [オプション]\n"
         "      グローバルアライメント＋品質選択＋単純平均スタック (M1)\n"
@@ -391,7 +391,11 @@ int command_info_avi(const Options& opts) {
                 stackcore::to_string(decoder.color_id()), decoder.bit_depth());
     std::printf("  格納の向き    : %s (biHeight %s)\n", h.top_down ? "上から下" : "下から上",
                 h.top_down ? "負またはFourCC形式" : "正");
-    std::printf("  1行のバイト数 : %zu\n", h.row_bytes);
+    if (decoder.is_mjpeg()) {
+        std::printf("  1行のバイト数 : 該当なし（フレーム単位のJPEG圧縮）\n");
+    } else {
+        std::printf("  1行のバイト数 : %zu\n", h.row_bytes);
+    }
     std::printf("  フレーム数    : %d\n", decoder.frame_count());
     std::printf("  フレームレート: %.3f fps\n", h.fps);
     std::printf("  1フレーム     : %s\n",

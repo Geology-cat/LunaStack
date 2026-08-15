@@ -1,5 +1,7 @@
 #import "QueueItem.h"
 
+#import "Localization.h"
+
 @implementation QueueItem
 
 @synthesize path = _path;
@@ -26,14 +28,14 @@
 - (NSString*)stateSymbol {
     switch (_state) {
         case QueueItemStateAnalyzed:
-            return @"解析済";
+            return LSLocalizedString(@"解析済");
         case QueueItemStateStacked:
-            return @"完了";
+            return LSLocalizedString(@"完了");
         case QueueItemStateError:
-            return @"失敗";
+            return LSLocalizedString(@"失敗");
         case QueueItemStatePending:
         default:
-            return @"未処理";
+            return LSLocalizedString(@"未処理");
     }
 }
 

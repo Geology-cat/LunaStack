@@ -1,0 +1,157 @@
+/* Menus */
+"LunaStack について" = "About LunaStack";
+"LunaStack を隠す" = "Hide LunaStack";
+"LunaStack を終了" = "Quit LunaStack";
+"ファイル" = "File";
+"開く…" = "Open…";
+"書き出し…" = "Export…";
+"処理" = "Process";
+"解析" = "Analyze";
+"スタック" = "Stack";
+"すべて処理" = "Process All";
+"中断" = "Cancel";
+"ウインドウ" = "Window";
+"しまう" = "Minimize";
+
+/* Input queue and preview */
+"入力キュー" = "Input Queue";
+"追加…" = "Add…";
+"削除" = "Remove";
+"品質グラフ" = "Quality Graph";
+"時系列" = "Timeline";
+"品質順" = "Quality Order";
+"横線をドラッグすると参照フレームの割合が変わります" = "Drag the line to change the reference-frame percentage";
+"解析するとここに品質が出ます" = "Frame quality appears here after analysis";
+"上位 %.0f%%" = "Top %.0f%%";
+"フレーム" = "Frame";
+"参照" = "Reference";
+"結果" = "Result";
+"全体" = "Fit";
+"等倍" = "100%";
+"2倍" = "2×";
+"4倍" = "4×";
+"AP表示" = "Show APs";
+"品質で色分け" = "Color by Quality";
+"AP編集" = "Edit APs";
+"動画を開いて［解析］を押してください" = "Open a video, then click Analyze";
+"解析済" = "Analyzed";
+"完了" = "Done";
+"失敗" = "Failed";
+"未処理" = "Pending";
+"AVI (非圧縮)" = "AVI (Uncompressed)";
+
+/* Workflow and alignment */
+"1. 解析・スタック" = "1. Analyze & Stack";
+"2. 仕上げ・書き出し" = "2. Finish & Export";
+"対象モード" = "Target Mode";
+"自動" = "Auto";
+"惑星" = "Planet";
+"月・太陽" = "Moon / Sun";
+"AP サイズ" = "AP Size";
+"探索半径" = "Search Radius";
+"AP配置" = "AP Placement";
+"自動配置に戻す" = "Reset to Auto";
+"すべて消去" = "Clear All";
+"参照フレーム（品質上位 %）" = "Reference Frames (Top Quality %)";
+"参照の反復精密化（2パス）" = "Iterative Reference Refinement (2 Passes)";
+
+/* Quality and stacking */
+"品質指標" = "Quality Metric";
+"勾配エネルギー" = "Gradient Energy";
+"周波数帯パワー比" = "Frequency-Band Power Ratio";
+"選択方式" = "Selection Mode";
+"割合" = "Percentage";
+"枚数" = "Frame Count";
+"AP別に採用するフレーム（%）" = "Frames Used per AP (%)";
+"AP別に採用するフレーム（枚数）" = "Frames Used per AP (Count)";
+"これだけを変えた再スタックは解析をやり直しません" = "Changing only this value does not repeat analysis";
+"MAP局所アライメント（推奨）" = "MAP Local Alignment (Recommended)";
+"グローバルのみ（高速）" = "Global Only (Fast)";
+"輝度正規化" = "Brightness Normalization";
+"加算方式" = "Stacking Method";
+"単純平均" = "Mean";
+"品質重み付き平均" = "Quality-Weighted Mean";
+"σクリップ" = "Sigma Clipping";
+"低メモリモード（2GB上限）" = "Low-Memory Mode (2 GB Limit)";
+"バイトオーダー（SERのみ）" = "Byte Order (SER Only)";
+"自動判定" = "Auto Detect";
+"little を使う" = "Use Little-Endian";
+"big を使う" = "Use Big-Endian";
+"ビット深度の解釈" = "Bit-Depth Interpretation";
+"ヘッダに従う" = "Use Header";
+"12bit として扱う" = "Treat as 12-bit";
+"14bit として扱う" = "Treat as 14-bit";
+
+/* Drizzle and wavelet */
+"Drizzleが効くのは撮像がアンダーサンプリングの場合だけです。すでにオーバーサンプリング気味なら、倍率を上げても解像度は上がらず、ファイルサイズと処理時間だけが増えます。" = "Drizzle improves detail only when the capture is undersampled. If it is already oversampled, a higher scale only increases file size and processing time.";
+"上=Sharpen / 下=Denoise（結果に即反映）" = "Top: Sharpen / Bottom: Denoise (Applied Immediately)";
+"Layer %d（約%d px）" = "Layer %d (about %d px)";
+"表示を明るくする（保存には影響しません）" = "Brighten Preview (Does Not Affect Export)";
+"すべてリセット" = "Reset All";
+"プリセット…" = "Preset…";
+"保存…" = "Save…";
+
+/* Export and status */
+"形式" = "Format";
+"出力先" = "Destination";
+"入力と同じフォルダ" = "Same Folder as Input";
+"選ぶ…" = "Choose…";
+"入力と同じ" = "Same as Input";
+"ファイル名" = "File Name";
+"名前を付けて書き出し…" = "Export As…";
+"動画を追加してください" = "Add a Video";
+"再スタック" = "Restack";
+"中断しています…" = "Cancelling…";
+"解析結果を使い回して加算します…" = "Stacking with Existing Analysis…";
+"開始しています…" = "Starting…";
+"中断しました" = "Cancelled";
+"失敗しました" = "Failed";
+"処理できませんでした" = "Processing Failed";
+"解析が完了しました" = "Analysis Complete";
+"参照画像はまだありません（解析すると作られます）" = "No reference image yet (created during analysis)";
+"スタック結果はまだありません" = "No stack result yet";
+"解析済みの結果を読み込みました。すぐに再スタックできます" = "Loaded saved analysis. You can restack immediately.";
+"APをすべて消しました。プレビューをクリックして置き直せます" = "All APs were cleared. Click the preview to place new APs.";
+"すべて処理済みです" = "All Items Are Already Processed";
+"保存できませんでした" = "Could Not Export";
+"プリセットを読めませんでした" = "Could Not Load Preset";
+"プリセット" = "Preset";
+"プリセットの名前" = "Preset Name";
+"保存" = "Save";
+"やめる" = "Cancel";
+"マイ設定" = "My Settings";
+"名前が空です" = "The name is empty";
+"書き込めませんでした" = "Could not write the file";
+
+/* Dynamic messages */
+"%dフレーム · %d×%d · %@" = "%d frames · %d×%d · %@";
+"%d 枚" = "%d frames";
+"出力 %d×%d ／ 作業メモリ約 %.0f MB" = "Output %d×%d / Working Memory about %.0f MB";
+"完了 — %d×%d" = "Done — %d×%d";
+"スタックが完了しました（%d×%d）" = "Stacking complete (%d×%d)";
+"解析が終わりました — AP %d個 / %d フレーム" = "Analysis complete — %d APs / %d frames";
+"バイトオーダーがヘッダの主張と違います。画像が破綻して見えるならStackで切り替えてください" = "The detected byte order differs from the header. If the image looks corrupt, change it under Stack.";
+"16bitですが実測は12bit幅です。暗く写るならStackで「12bitとして扱う」を選んでください" = "The file is marked 16-bit, but the measured range is 12-bit. If it looks dark, choose Treat as 12-bit under Stack.";
+"%d 枚を自動除外しました（視野外・追跡失敗）" = "%d frames were automatically rejected (out of view or tracking failure)";
+"手動AP %zu 個（未解析）" = "%zu manual APs (not analyzed)";
+"AP %zu 個 / %d px" = "%zu APs / %d px";
+"AP 0 個（手動）" = "0 APs (manual)";
+"　残り約 %@" = "  About %@ remaining";
+"%.0f秒" = "%.0f sec";
+"%d分%02d秒" = "%d min %02d sec";
+"%d時間%d分" = "%d hr %d min";
+"プリセット「%@」を保存しました" = "Saved preset “%@”";
+"保存しました: %@" = "Exported: %@";
+"[%lu/%lu] %@ を処理しています…" = "[%lu/%lu] Processing %@…";
+"バッチ終了 — 完了 %d / 失敗 %d / 残り %d" = "Batch Finished — %d Done / %d Failed / %d Remaining";
+"→ %@" = "→ %@";
+"OK" = "OK";
+
+/* Progress stages */
+"品質評価" = "Quality Evaluation";
+"アライメント" = "Alignment";
+"参照画像の生成" = "Building Reference";
+"局所アライメント" = "Local Alignment";
+"局所アライメント(2回目)" = "Local Alignment (Pass 2)";
+"窓合成スタック" = "Windowed Stacking";
+"窓合成スタック(2回目)" = "Windowed Stacking (Pass 2)";

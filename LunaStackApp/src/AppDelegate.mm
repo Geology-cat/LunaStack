@@ -1,5 +1,6 @@
 #import "AppDelegate.h"
 
+#import "Localization.h"
 #import "MainWindowController.h"
 
 @implementation AppDelegate {
@@ -148,37 +149,54 @@
     NSMenuItem* appItem = [[[NSMenuItem alloc] init] autorelease];
     [mainMenu addItem:appItem];
     NSMenu* appMenu = [[[NSMenu alloc] init] autorelease];
-    [appMenu addItemWithTitle:@"LunaStack について"
+    [appMenu addItemWithTitle:LSLocalizedString(@"LunaStack について")
                        action:@selector(orderFrontStandardAboutPanel:)
                 keyEquivalent:@""];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"LunaStack を隠す" action:@selector(hide:) keyEquivalent:@"h"];
+    [appMenu addItemWithTitle:LSLocalizedString(@"LunaStack を隠す")
+                       action:@selector(hide:)
+                keyEquivalent:@"h"];
     [appMenu addItem:[NSMenuItem separatorItem]];
-    [appMenu addItemWithTitle:@"LunaStack を終了" action:@selector(terminate:) keyEquivalent:@"q"];
+    [appMenu addItemWithTitle:LSLocalizedString(@"LunaStack を終了")
+                       action:@selector(terminate:)
+                keyEquivalent:@"q"];
     [appItem setSubmenu:appMenu];
 
     NSMenuItem* fileItem = [[[NSMenuItem alloc] init] autorelease];
     [mainMenu addItem:fileItem];
-    NSMenu* fileMenu = [[[NSMenu alloc] initWithTitle:@"ファイル"] autorelease];
-    [fileMenu addItemWithTitle:@"開く…" action:@selector(openDocument:) keyEquivalent:@"o"];
-    [fileMenu addItemWithTitle:@"書き出し…" action:@selector(save:) keyEquivalent:@"s"];
+    NSMenu* fileMenu = [[[NSMenu alloc] initWithTitle:LSLocalizedString(@"ファイル")] autorelease];
+    [fileMenu addItemWithTitle:LSLocalizedString(@"開く…")
+                        action:@selector(openDocument:)
+                 keyEquivalent:@"o"];
+    [fileMenu addItemWithTitle:LSLocalizedString(@"書き出し…")
+                        action:@selector(save:)
+                 keyEquivalent:@"s"];
     [fileItem setSubmenu:fileMenu];
 
     NSMenuItem* processItem = [[[NSMenuItem alloc] init] autorelease];
     [mainMenu addItem:processItem];
-    NSMenu* processMenu = [[[NSMenu alloc] initWithTitle:@"処理"] autorelease];
-    [processMenu addItemWithTitle:@"解析" action:@selector(analyze:) keyEquivalent:@"e"];
-    [processMenu addItemWithTitle:@"スタック" action:@selector(run:) keyEquivalent:@"r"];
-    [processMenu addItemWithTitle:@"すべて処理" action:@selector(batch:) keyEquivalent:@"b"];
+    NSMenu* processMenu = [[[NSMenu alloc] initWithTitle:LSLocalizedString(@"処理")] autorelease];
+    [processMenu addItemWithTitle:LSLocalizedString(@"解析")
+                           action:@selector(analyze:)
+                    keyEquivalent:@"e"];
+    [processMenu addItemWithTitle:LSLocalizedString(@"スタック")
+                           action:@selector(run:)
+                    keyEquivalent:@"r"];
+    [processMenu addItemWithTitle:LSLocalizedString(@"すべて処理")
+                           action:@selector(batch:)
+                    keyEquivalent:@"b"];
     [processMenu addItem:[NSMenuItem separatorItem]];
-    [processMenu addItemWithTitle:@"中断" action:@selector(cancel:) keyEquivalent:@"."];
+    [processMenu addItemWithTitle:LSLocalizedString(@"中断")
+                           action:@selector(cancel:)
+                    keyEquivalent:@"."];
     [processItem setSubmenu:processMenu];
 
     NSMenuItem* windowItem = [[[NSMenuItem alloc] init] autorelease];
     [mainMenu addItem:windowItem];
-    NSMenu* windowMenu = [[[NSMenu alloc] initWithTitle:@"ウインドウ"] autorelease];
-    [windowMenu addItemWithTitle:@"しまう" action:@selector(performMiniaturize:)
-                   keyEquivalent:@"m"];
+    NSMenu* windowMenu =
+        [[[NSMenu alloc] initWithTitle:LSLocalizedString(@"ウインドウ")] autorelease];
+    [windowMenu addItemWithTitle:LSLocalizedString(@"しまう") action:@selector(performMiniaturize:)
+                    keyEquivalent:@"m"];
     [windowItem setSubmenu:windowMenu];
     [NSApp setWindowsMenu:windowMenu];
 

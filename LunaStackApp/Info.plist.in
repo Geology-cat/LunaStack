@@ -12,6 +12,11 @@
     <string>6.0</string>
     <key>CFBundleName</key>
     <string>${MACOSX_BUNDLE_BUNDLE_NAME}</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>ja</string>
+        <string>en</string>
+    </array>
     <key>CFBundleIconFile</key>
     <string>LunaStack.icns</string>
     <key>CFBundlePackageType</key>

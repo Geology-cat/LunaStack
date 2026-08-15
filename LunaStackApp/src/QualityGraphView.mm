@@ -1,5 +1,7 @@
 #import "QualityGraphView.h"
 
+#import "Localization.h"
+
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -128,7 +130,7 @@
             NSFontAttributeName : [NSFont systemFontOfSize:11.0],
             NSParagraphStyleAttributeName : style
         };
-        [@"解析するとここに品質が出ます"
+        [LSLocalizedString(@"解析するとここに品質が出ます")
             drawInRect:NSMakeRect(bounds.origin.x, NSMidY(bounds) - 8.0, bounds.size.width, 16.0)
         withAttributes:attrs];
         return;
@@ -208,7 +210,8 @@
     [line setLineWidth:1.5];
     [line stroke];
 
-    NSString* label = [NSString stringWithFormat:@"上位 %.0f%%", _cutPercent];
+    NSString* label =
+        [NSString stringWithFormat:LSLocalizedString(@"上位 %.0f%%"), _cutPercent];
     NSDictionary* attrs = @{
         NSForegroundColorAttributeName : [NSColor systemOrangeColor],
         NSFontAttributeName : [NSFont systemFontOfSize:10.0]

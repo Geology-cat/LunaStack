@@ -81,7 +81,9 @@ public:
         decoder_.read_frame(index, out);
     }
     FrameStats frame_stats(int index) const override { return decoder_.frame_stats(index); }
-    const char* format_name() const override { return "AVI (非圧縮)"; }
+    const char* format_name() const override {
+        return decoder_.is_mjpeg() ? "AVI (MJPEG)" : "AVI (非圧縮)";
+    }
     void set_low_memory(bool on) override {
         low_memory_ = on;
         decoder_.set_reclaim_budget(on ? 256u * 1024u * 1024u : 0u);
@@ -89,6 +91,11 @@ public:
     bool supports_concurrent_reads() const override { return !low_memory_; }
 
     std::string describe() const override {
+        if (decoder_.is_mjpeg()) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "MJPEG, %.2f fps", decoder_.header().fps);
+            return std::string(buf);
+        }
         char buf[160];
         std::snprintf(buf, sizeof(buf), "%s, %s, %.2f fps, 1行 %zu バイト",
                       decoder_.header().compression_name.c_str(),

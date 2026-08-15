@@ -32,6 +32,8 @@ struct Options {
     bool pad_rows = true;           // 行をDWORD境界に切り上げる
     bool group_in_rec = false;      // フレームを 'rec ' でまとめる
     int frames_per_segment = 0;     // >0 で OpenDML の複数RIFFに分割する
+    // 圧縮形式のテスト用。空でなければ全フレームにこのペイロードを使う。
+    std::vector<std::uint8_t> frame_payload_override;
 };
 
 inline std::uint32_t fourcc(const char* s) {
@@ -118,7 +120,9 @@ inline std::size_t row_bytes_of(const Options& o) {
 inline std::vector<std::uint8_t> build(const Options& o, int frame_count) {
     using namespace detail;
     const std::size_t row_bytes = row_bytes_of(o);
-    const std::size_t frame_size = row_bytes * static_cast<std::size_t>(o.height);
+    const std::size_t frame_size = o.frame_payload_override.empty()
+                                       ? row_bytes * static_cast<std::size_t>(o.height)
+                                       : o.frame_payload_override.size();
     // 読み手が上から下として扱うべきか。デコーダと同じ規約で書く。
     const bool top_down = o.negative_height || o.compression != 0;
 
@@ -194,8 +198,10 @@ inline std::vector<std::uint8_t> build(const Options& o, int frame_count) {
             const std::size_t movi_begin = v.size();
             put_cc(v, "movi");
             for (int i = 0; i < n; ++i) {
-                const std::vector<std::uint8_t> payload =
-                    frame_payload(o, written + i, row_bytes, top_down);
+                const std::vector<std::uint8_t> payload = o.frame_payload_override.empty()
+                                                              ? frame_payload(o, written + i,
+                                                                              row_bytes, top_down)
+                                                              : o.frame_payload_override;
                 put_cc(v, "00dc");
                 put_u32(v, static_cast<std::uint32_t>(payload.size()));
                 v.insert(v.end(), payload.begin(), payload.end());
@@ -217,8 +223,10 @@ inline std::vector<std::uint8_t> build(const Options& o, int frame_count) {
                 const std::size_t rec_begin = v.size();
                 put_cc(v, "rec ");
                 for (int i = 0; i < n; ++i) {
-                    const std::vector<std::uint8_t> payload =
-                        frame_payload(o, written + i, row_bytes, top_down);
+                    const std::vector<std::uint8_t> payload = o.frame_payload_override.empty()
+                                                                  ? frame_payload(o, written + i,
+                                                                                  row_bytes, top_down)
+                                                                  : o.frame_payload_override;
                     put_cc(v, "00dc");
                     put_u32(v, static_cast<std::uint32_t>(payload.size()));
                     v.insert(v.end(), payload.begin(), payload.end());
@@ -227,8 +235,10 @@ inline std::vector<std::uint8_t> build(const Options& o, int frame_count) {
                 patch_u32(v, rec_size_at, static_cast<std::uint32_t>(v.size() - rec_begin));
             } else {
                 for (int i = 0; i < n; ++i) {
-                    const std::vector<std::uint8_t> payload =
-                        frame_payload(o, written + i, row_bytes, top_down);
+                    const std::vector<std::uint8_t> payload = o.frame_payload_override.empty()
+                                                                  ? frame_payload(o, written + i,
+                                                                                  row_bytes, top_down)
+                                                                  : o.frame_payload_override;
                     put_cc(v, "00dc");
                     put_u32(v, static_cast<std::uint32_t>(payload.size()));
                     v.insert(v.end(), payload.begin(), payload.end());
