@@ -36,6 +36,9 @@ namespace {
 
 // ウェーブレットのレイヤー数。仕様書 §4.10 の既定。
 constexpr int kWaveletLayers = 6;
+// Sirilは係数99まで許すが、スライダーは実画像で扱いやすく、過強調しにくい範囲にする。
+// 20でも従来上限3の6倍以上あり、木星では16,8,3まで効果を確認している。
+constexpr double kWaveletGuiSharpenMaximum = 20.0;
 
 enum class OutputFormat { Tiff16, TiffFloat32, FitsFloat32, Png16 };
 
@@ -1071,8 +1074,11 @@ alignmentSignature:(NSString*)alignmentSignature;
     [compareNote setPreferredMaxLayoutWidth:270.0];
     [self addToSection:key view:compareNote box:box];
 
-    NSTextField* head = MakeLabel(@"上：細部強調（1.00＝変化なし） / 下：ノイズ低減");
+    NSTextField* head =
+        MakeLabel(@"上：細部強調（1.00＝変化なし、8以上は強め） / 下：ノイズ低減");
     [head setTextColor:[NSColor secondaryLabelColor]];
+    [[head cell] setWraps:YES];
+    [head setPreferredMaxLayoutWidth:270.0];
     [self addToSection:key view:head box:box];
 
     for (int j = 0; j < kWaveletLayers; ++j) {
@@ -1081,7 +1087,7 @@ alignmentSignature:(NSString*)alignmentSignature;
                                         j + 1, 1 << (j + 1)];
         [self addToSection:key view:MakeLabel(title) box:box];
 
-        _sharpenSliders[j] = [self sliderMin:0.0 max:3.0 value:1.0
+        _sharpenSliders[j] = [self sliderMin:0.0 max:kWaveletGuiSharpenMaximum value:1.0
                                       action:@selector(waveletChanged:)];
         _sharpenValues[j] = MakeLabel(@"1.00");
         [self addToSection:key

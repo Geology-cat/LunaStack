@@ -135,6 +135,15 @@ void WaveletSharpener::synthesize(const std::vector<WaveletLayerParams>& params,
     if (static_cast<int>(params.size()) != layers_) {
         throw std::invalid_argument("ウェーブレット: パラメータ数がレイヤー数と一致しません");
     }
+    for (const WaveletLayerParams& p : params) {
+        if (!std::isfinite(p.sharpen) || p.sharpen < 0.0 ||
+            p.sharpen > kWaveletSharpenMaximum) {
+            throw std::invalid_argument("ウェーブレット: Sharpen係数は0〜99の有限値です");
+        }
+        if (!std::isfinite(p.denoise) || p.denoise < 0.0 || p.denoise > 1.0) {
+            throw std::invalid_argument("ウェーブレット: Denoiseは0〜1の有限値です");
+        }
+    }
 
     if (out.width() != width_ || out.height() != height_ || out.channels() != channels_) {
         out.reset(width_, height_, channels_);

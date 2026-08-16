@@ -6,9 +6,13 @@
 
 namespace stackcore {
 
+// SirilのB3スプライン再構成係数と同じ範囲。
+// GUIは誤操作による極端な過強調を避けるため、これより狭い実用範囲を表示してよい。
+inline constexpr double kWaveletSharpenMaximum = 99.0;
+
 // レイヤーごとの後処理パラメータ（仕様書 §4.10）。
 struct WaveletLayerParams {
-    // Sharpen係数 g_j（0〜3）。1.0でそのまま、大きくするとその周波数帯を強調する。
+    // Sharpen係数 g_j（0〜99）。1.0でそのまま、大きくするとその周波数帯を強調する。
     double sharpen = 1.0;
     // Denoise（soft-threshold、0〜1）。
     // しきい値はレイヤー自身のノイズ推定に対する比で効かせるので、

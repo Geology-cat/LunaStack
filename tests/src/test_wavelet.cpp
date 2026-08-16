@@ -2,6 +2,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <vector>
 
 #include "microtest.hpp"
@@ -163,6 +164,33 @@ MT_TEST(wavelet_係数を上げると高周波が増える) {
     }
 }
 
+MT_TEST(wavelet_拡張した実用域は従来上限より強く効く) {
+    const FrameBuffer src = make_image(96, 96, 1, 0.0, 17);
+    WaveletSharpener w;
+    w.analyze(src, 6);
+
+    std::vector<WaveletLayerParams> old_limit = flat_params(6, 1.0, 0.0);
+    old_limit[0].sharpen = 3.0;
+    old_limit[1].sharpen = 2.0;
+
+    std::vector<WaveletLayerParams> expanded = flat_params(6, 1.0, 0.0);
+    expanded[0].sharpen = 16.0;
+    expanded[1].sharpen = 8.0;
+    expanded[2].sharpen = 3.0;
+
+    FrameBuffer old_out, expanded_out;
+    w.synthesize(old_limit, old_out);
+    w.synthesize(expanded, expanded_out);
+
+    const double old_power = high_frequency_power(old_out);
+    const double expanded_power = high_frequency_power(expanded_out);
+    std::printf("           高周波の量: 従来域=%.5f → 拡張域=%.5f\n",
+                old_power, expanded_power);
+    if (!(expanded_power > old_power * 2.0)) {
+        microtest::fail("拡張したSharpen範囲が従来上限より十分に強くない");
+    }
+}
+
 MT_TEST(wavelet_係数0にするとその帯域が消える) {
     const FrameBuffer src = make_image(96, 96, 1, 0.0, 9);
     WaveletSharpener w;
@@ -315,6 +343,27 @@ MT_TEST(wavelet_パラメータ数が合わなければ例外) {
     w.analyze(src, 4);
     FrameBuffer out;
     MT_CHECK_THROWS(w.synthesize(flat_params(3, 1.0, 0.0), out));
+}
+
+MT_TEST(wavelet_範囲外または非有限のパラメータは拒否する) {
+    const FrameBuffer src = make_image(32, 32, 1, 0.0, 3);
+    WaveletSharpener w;
+    w.analyze(src, 2);
+    FrameBuffer out;
+
+    auto p = flat_params(2, 1.0, 0.0);
+    p[0].sharpen = -0.01;
+    MT_CHECK_THROWS(w.synthesize(p, out));
+    p[0].sharpen = stackcore::kWaveletSharpenMaximum + 0.01;
+    MT_CHECK_THROWS(w.synthesize(p, out));
+    p[0].sharpen = std::numeric_limits<double>::quiet_NaN();
+    MT_CHECK_THROWS(w.synthesize(p, out));
+
+    p = flat_params(2, 1.0, 0.0);
+    p[1].denoise = 1.01;
+    MT_CHECK_THROWS(w.synthesize(p, out));
+    p[1].denoise = std::numeric_limits<double>::infinity();
+    MT_CHECK_THROWS(w.synthesize(p, out));
 }
 
 MT_TEST(wavelet_analyzeを呼ばずにsynthesizeすると例外) {

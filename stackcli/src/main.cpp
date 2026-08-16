@@ -173,6 +173,19 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image) {
             std::fprintf(stderr, "エラー: --sharpen / --denoise はカンマ区切りの数値です\n");
             return false;
         }
+        for (double value : sharpen) {
+            if (!std::isfinite(value) || value < 0.0 ||
+                value > stackcore::kWaveletSharpenMaximum) {
+                std::fprintf(stderr, "エラー: --sharpen は0〜99の有限値です\n");
+                return false;
+            }
+        }
+        for (double value : denoise) {
+            if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
+                std::fprintf(stderr, "エラー: --denoise は0〜1の有限値です\n");
+                return false;
+            }
+        }
 
         stackcore::WaveletSharpener w;
         w.analyze(image, opts.wavelet_layers);
@@ -257,7 +270,7 @@ void print_usage() {
         "  --pixfrac <値>            入力画素を縮めてから落とす割合 (既定: 0.9)\n"
         "\n"
         "後処理のオプション (stack / mapstack 共通、仕様書 §4.10):\n"
-        "  --sharpen <値,値,...>     ウェーブレットのレイヤー別Sharpen係数 (0〜3、既定1.0)\n"
+        "  --sharpen <値,値,...>     ウェーブレットのレイヤー別Sharpen係数 (0〜99、既定1.0)\n"
         "                            細かいレイヤーから順に指定する。例: --sharpen 1.6,1.3,1.1\n"
         "  --denoise <値,値,...>     レイヤー別Denoise (0〜1、既定0)。例: --denoise 0.5,0.3\n"
         "  --wavelet-layers <N>      分解レイヤー数 (既定: 6)\n"

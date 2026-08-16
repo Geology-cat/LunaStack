@@ -105,7 +105,7 @@
 "上=Sharpen / 下=Denoise（結果に即反映）" = "Top: Sharpen / Bottom: Denoise (Applied Immediately)";
 "ウェーブレット効果をプレビュー" = "Preview Wavelet Effect";
 "ON/OFFは比較表示のみです。書き出しには設定中の効果を適用します。" = "ON/OFF changes only the comparison preview. Export always applies the current settings.";
-"上：細部強調（1.00＝変化なし） / 下：ノイズ低減" = "Top: Detail Enhancement (1.00 = unchanged) / Bottom: Noise Reduction";
+"上：細部強調（1.00＝変化なし、8以上は強め） / 下：ノイズ低減" = "Top: Detail Enhancement (1.00 = unchanged; 8+ is strong) / Bottom: Noise Reduction";
 "Layer %d（約%d px）" = "Layer %d (about %d px)";
 "表示を明るくする（保存には影響しません）" = "Brighten Preview (Does Not Affect Export)";
 "すべてリセット" = "Reset All";
