@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -27,11 +28,15 @@ struct IfdEntry {
     std::uint32_t value;  // 4バイトに収まらない場合はファイル内オフセット
 };
 
-constexpr int kNumEntries = 11;
 
 }  // namespace
 
 void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat format) {
+    write_tiff(path, image, format, ImageMetadata());
+}
+
+void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat format,
+                const ImageMetadata& metadata) {
     if (image.empty()) {
         throw std::invalid_argument("TIFF: 空の画像は書き出せません");
     }
@@ -78,9 +83,27 @@ void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat fo
         }
     }
 
+    // 付加する文字列タグ（ASCII、NUL終端）。空のメタデータなら何も足さない。
+    std::string description = metadata.description;
+    for (const std::string& line : metadata.history) {
+        if (!description.empty()) description += "\n";
+        description += line;
+    }
+    std::string datetime;
+    if (!metadata.date_obs.empty() && metadata.date_obs.size() >= 19) {
+        // "YYYY-MM-DDTHH:MM:SS" → "YYYY:MM:DD HH:MM:SS"
+        datetime = metadata.date_obs.substr(0, 19);
+        datetime[4] = ':';
+        datetime[7] = ':';
+        datetime[10] = ' ';
+    }
+    const int num_entries = 11 + (description.empty() ? 0 : 1) +
+                            (metadata.software.empty() ? 0 : 1) + (datetime.empty() ? 0 : 1);
+
     const std::uint32_t data_offset = 8;
     const std::uint32_t ifd_offset = data_offset + static_cast<std::uint32_t>(data_bytes);
-    const std::uint32_t extra_offset = ifd_offset + 2u + 12u * kNumEntries + 4u;
+    const std::uint32_t extra_offset =
+        ifd_offset + 2u + 12u * static_cast<std::uint32_t>(num_entries) + 4u;
 
     // SHORT が3個だと4バイトのvalueフィールドに収まらないためIFDの後ろに置く。
     std::vector<std::uint8_t> extra;
@@ -95,30 +118,48 @@ void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat fo
         format_value = extra_offset + static_cast<std::uint32_t>(extra.size());
         for (int i = 0; i < n; ++i) put16(extra, sample_format);
     }
+    // ASCIIの値を置き、IFDエントリを返す。4バイト以下ならエントリ内に直接入れる。
+    const auto ascii_entry = [&](std::uint16_t tag, const std::string& text) {
+        IfdEntry e{tag, 2, static_cast<std::uint32_t>(text.size() + 1), 0};
+        if (text.size() + 1 <= 4) {
+            std::uint32_t v = 0;
+            for (std::size_t i = 0; i < text.size(); ++i) v |= static_cast<std::uint32_t>(static_cast<unsigned char>(text[i])) << (8 * i);
+            e.value = v;
+        } else {
+            e.value = extra_offset + static_cast<std::uint32_t>(extra.size());
+            extra.insert(extra.end(), text.begin(), text.end());
+            extra.push_back(0);
+            if (extra.size() % 2) extra.push_back(0);  // 値の位置は偶数に揃える（TIFFの推奨）
+        }
+        return e;
+    };
 
     // タグは昇順に並べる必要がある。
-    const IfdEntry entries[kNumEntries] = {
+    std::vector<IfdEntry> entries = {
         {256, 4, 1, static_cast<std::uint32_t>(w)},                  // ImageWidth
         {257, 4, 1, static_cast<std::uint32_t>(h)},                  // ImageLength
         {258, 3, static_cast<std::uint32_t>(n), bits_value},         // BitsPerSample
         {259, 3, 1, 1},                                              // Compression = なし
         {262, 3, 1, static_cast<std::uint32_t>(n == 1 ? 1 : 2)},     // Photometric
-        {273, 4, 1, data_offset},                                    // StripOffsets
-        {277, 3, 1, static_cast<std::uint32_t>(n)},                  // SamplesPerPixel
-        {278, 4, 1, static_cast<std::uint32_t>(h)},                  // RowsPerStrip
-        {279, 4, 1, static_cast<std::uint32_t>(data_bytes)},         // StripByteCounts
-        {284, 3, 1, 1},                                              // PlanarConfiguration = chunky
-        {339, 3, static_cast<std::uint32_t>(n), format_value},       // SampleFormat
     };
+    if (!description.empty()) entries.push_back(ascii_entry(270, description));  // ImageDescription
+    entries.push_back({273, 4, 1, data_offset});                                 // StripOffsets
+    entries.push_back({277, 3, 1, static_cast<std::uint32_t>(n)});               // SamplesPerPixel
+    entries.push_back({278, 4, 1, static_cast<std::uint32_t>(h)});               // RowsPerStrip
+    entries.push_back({279, 4, 1, static_cast<std::uint32_t>(data_bytes)});      // StripByteCounts
+    entries.push_back({284, 3, 1, 1});                                           // PlanarConfiguration
+    if (!metadata.software.empty()) entries.push_back(ascii_entry(305, metadata.software));
+    if (!datetime.empty()) entries.push_back(ascii_entry(306, datetime));        // DateTime
+    entries.push_back({339, 3, static_cast<std::uint32_t>(n), format_value});    // SampleFormat
 
     std::vector<std::uint8_t> out;
-    out.reserve(8 + data_bytes + 2 + 12 * kNumEntries + 4 + extra.size());
+    out.reserve(8 + data_bytes + 2 + 12 * entries.size() + 4 + extra.size());
     out.push_back('I');
     out.push_back('I');
     put16(out, 42);
     put32(out, ifd_offset);
     out.insert(out.end(), pixels.begin(), pixels.end());
-    put16(out, static_cast<std::uint16_t>(kNumEntries));
+    put16(out, static_cast<std::uint16_t>(entries.size()));
     for (const IfdEntry& e : entries) {
         put16(out, e.tag);
         put16(out, e.type);

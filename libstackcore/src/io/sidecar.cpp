@@ -235,4 +235,62 @@ bool matches_source(const AnalysisData& d, std::int64_t source_size, int frames,
     return true;
 }
 
+namespace {
+const char kQualityMagic[12] = {'L', 'U', 'N', 'A', 'S', 'T', 'K', 'Q', 'U', 'A', 'L', '1'};
+constexpr std::uint32_t kQualityVersion = 1;
+}  // namespace
+
+void save_quality_cache(const std::string& path, const QualityCache& c) {
+    Writer w(path);
+    w.raw(kQualityMagic, sizeof(kQualityMagic));
+    w.u32(kQualityVersion);
+    w.i64(c.source_size);
+    w.i32(c.source_frames);
+    w.i32(c.width);
+    w.i32(c.height);
+    w.i32(c.channels);
+    w.i32(c.report.reference_index);
+    w.f64(c.report.reference_mean);
+    w.u32(static_cast<std::uint32_t>(c.report.frames.size()));
+    for (const FrameInfo& f : c.report.frames) {
+        w.i32(f.index);
+        w.f64(f.quality);
+        w.f64(f.mean);
+    }
+}
+
+void load_quality_cache(const std::string& path, QualityCache& c) {
+    Reader r(path);
+    char magic[12];
+    r.raw(magic, sizeof(magic));
+    if (std::memcmp(magic, kQualityMagic, sizeof(magic)) != 0) {
+        throw std::runtime_error("品質キャッシュではありません");
+    }
+    const std::uint32_t version = r.u32();
+    if (version != kQualityVersion) throw std::runtime_error("品質キャッシュの版が違います");
+    c.source_size = r.i64();
+    c.source_frames = r.i32();
+    c.width = r.i32();
+    c.height = r.i32();
+    c.channels = r.i32();
+    c.report = GlobalStageReport();
+    c.report.reference_index = r.i32();
+    c.report.reference_mean = r.f64();
+    const std::uint32_t count = r.u32();
+    if (count > 100000000u) throw std::runtime_error("品質キャッシュが壊れています");
+    c.report.frames.resize(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        FrameInfo& f = c.report.frames[i];
+        f.index = r.i32();
+        f.quality = r.f64();
+        f.mean = r.f64();
+        f.accepted = true;
+        f.reason = RejectReason::None;
+    }
+    if (c.report.reference_index < 0 ||
+        c.report.reference_index >= static_cast<int>(c.report.frames.size())) {
+        throw std::runtime_error("品質キャッシュの参照フレームが範囲外です");
+    }
+}
+
 }  // namespace stackcore

@@ -1,6 +1,7 @@
 add_library(stackcore STATIC
     src/image/frame_buffer.cpp
     src/image/debayer.cpp
+    src/image/calibration.cpp
     src/image/quality.cpp
     src/image/resample.cpp
     src/registration/phase_correlate.cpp
@@ -17,8 +18,12 @@ add_library(stackcore STATIC
     src/io/avi_decoder.cpp
     src/io/jpeg_decoder.cpp
     src/io/video_source.cpp
+    src/io/inflate.cpp
+    src/io/image_reader.cpp
+    src/io/metadata.cpp
     src/io/sidecar.cpp
     src/post/wavelet.cpp
+    src/post/finishing.cpp
     src/pipeline/global_stage.cpp
     src/pipeline/map_pipeline.cpp
     src/io/tiff_writer.cpp

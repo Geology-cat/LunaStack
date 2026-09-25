@@ -93,6 +93,11 @@ float normalized_sample(float value) {
 }  // namespace
 
 void write_fits_float32(const std::string& path, const FrameBuffer& image) {
+    write_fits_float32(path, image, ImageMetadata());
+}
+
+void write_fits_float32(const std::string& path, const FrameBuffer& image,
+                        const ImageMetadata& metadata) {
     if (image.empty()) throw std::invalid_argument("FITS: 空の画像は書き出せません");
     if (image.channels() != 1 && image.channels() != 3) {
         throw std::invalid_argument("FITS: 1ch または 3ch のみ対応しています (指定: " +
@@ -113,6 +118,55 @@ void write_fits_float32(const std::string& path, const FrameBuffer& image) {
     cards.push_back(value_card("ORIGIN", "'LunaStack'", "software that created this file"));
     cards.push_back(text_card("COMMENT", "Pixel samples are normalized to the [0,1] range."));
     cards.push_back(text_card("COMMENT", "For RGB cubes, channel order is red, green, blue."));
+    if (!metadata.empty()) {
+        // FITSの文字列値は引用符で囲み、中の引用符は2つ重ねる。ASCII以外は '?' にする
+        // （FITSヘッダはASCIIのみ。日本語の説明はTIFF/PNG側で保持する）。
+        const auto quoted = [](const std::string& text) {
+            std::string q = "'";
+            for (unsigned char ch : text) {
+                if (ch == '\'') q += "''";
+                else q += (ch >= 32 && ch < 127) ? static_cast<char>(ch) : '?';
+                if (q.size() >= 68) break;
+            }
+            while (q.size() < 9) q += ' ';  // 規格は8文字以上を推奨
+            return q + "'";
+        };
+        const auto string_card = [&](const std::string& key, const std::string& text,
+                                     const std::string& comment) {
+            // 長い文字列は20文字の右寄せに収まらないので、10桁目から左寄せで書く。
+            std::string card(kCardSize, ' ');
+            std::copy(key.begin(), key.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(8, key.size())), card.begin());
+            card[8] = '=';
+            const std::string value = quoted(text);
+            std::string rest = value;
+            if (!comment.empty() && value.size() + 3 + comment.size() <= kCardSize - 10) rest += " / " + comment;
+            std::copy(rest.begin(), rest.begin() + static_cast<std::ptrdiff_t>(std::min(kCardSize - 10, rest.size())), card.begin() + 10);
+            return card;
+        };
+        cards.push_back(string_card("ROWORDER", "TOP-DOWN", "first row is the top of the image"));
+        if (!metadata.date_obs.empty()) {
+            cards.push_back(string_card("DATE-OBS", metadata.date_obs, "UTC mid-time of stacked frames"));
+        }
+        if (!metadata.object.empty()) cards.push_back(string_card("OBJECT", metadata.object, ""));
+        if (metadata.frames_combined > 0) {
+            cards.push_back(value_card("NCOMBINE", std::to_string(metadata.frames_combined),
+                                       "number of frames combined"));
+        }
+        if (!metadata.software.empty()) {
+            cards.push_back(string_card("CREATOR", metadata.software, "software"));
+        }
+        const auto history = [&](const std::string& text) {
+            std::string ascii;
+            for (unsigned char ch : text) ascii += (ch >= 32 && ch < 127) ? static_cast<char>(ch) : '?';
+            // 1カードに72文字。長い行は折り返す。
+            for (std::size_t i = 0; i < ascii.size() || i == 0; i += 70) {
+                cards.push_back(text_card("HISTORY", ascii.substr(i, 70)));
+                if (ascii.empty()) break;
+            }
+        };
+        if (!metadata.description.empty()) history(metadata.description);
+        for (const std::string& line : metadata.history) history(line);
+    }
     cards.push_back(text_card("END", ""));
 
     std::string header;

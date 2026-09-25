@@ -3,7 +3,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "stackcore/calibration.hpp"
+#include "stackcore/debayer.hpp"
 #include "stackcore/frame_buffer.hpp"
 #include "stackcore/ser_decoder.hpp"
 
@@ -58,14 +61,52 @@ public:
     // 通常の読み取り専用mmapは安全だが、低メモリモードでは読み進める途中で
     // マッピングを張り直すため、並列読み取りを禁止しなければならない。
     virtual bool supports_concurrent_reads() const { return true; }
+
+    // Bayer入力をどの方式でデバイヤーするか（read_prepared_frame が使う）。
+    virtual DebayerMethod debayer_method() const { return DebayerMethod::Bilinear; }
+
+    // このソースでのフレーム番号 → 元のファイルでのフレーム番号。
+    // フレーム範囲を指定したときに、画面には元の番号を出すために使う。
+    virtual int original_index(int index) const { return index; }
 };
 
 struct OpenOptions {
     ByteOrder endian = ByteOrder::Auto;  // SERのみ意味を持つ
     int bit_depth_override = 0;          // SERのみ意味を持つ
+
+    // ---- 入力の前処理（すべて既定値なら元のソースをそのまま返す） ----
+    // 使うフレームの範囲 [frame_start, frame_end)。frame_end が 0 なら最後まで。
+    int frame_start = 0;
+    int frame_end = 0;
+    // 色形式の手動指定。ヘッダが Bayer を名乗らないモノクロ扱いのファイル
+    // （静止画やPIPP出力など）や、ヘッダの配列が誤っているファイルへの対処。
+    bool override_color = false;
+    SerColorId color_override = SerColorId::Mono;
+    DebayerMethod debayer = DebayerMethod::Bilinear;
+    // ダーク・フラット補正。null なら補正しない。
+    std::shared_ptr<const CalibrationFrames> calibration;
+    // 静止画連番。空でなければ path の代わりにこれらのファイルを順に読む。
+    // path がフォルダのときは、その直下の静止画を自然順に並べて使う。
+    std::vector<std::string> sequence_files;
+
+    bool has_preprocessing() const {
+        return frame_start != 0 || frame_end != 0 || override_color ||
+               debayer != DebayerMethod::Bilinear || (calibration && !calibration->empty());
+    }
 };
 
 // 拡張子と中身から形式を判定して開く。失敗時は std::runtime_error を投げる。
+//
+// **入力はすべてここを通すこと。** 前処理（範囲・補正・色形式）を掛けた
+// ソースを返すので、ここを迂回すると一部の画面だけ補正されていない、という
+// 食い違いが起きる。前処理がすべて既定値なら元のソースをそのまま返し、
+// 出力はv0.2系とバイト単位で一致する。
 std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptions& options);
+
+// 前処理を掛けない素のソースを開く（マスターダーク・フラットの作成用）。
+std::unique_ptr<VideoSource> open_raw_video(const std::string& path, const OpenOptions& options);
+
+// path がフォルダか（静止画連番として開く対象か）。
+bool is_directory_path(const std::string& path);
 
 }  // namespace stackcore

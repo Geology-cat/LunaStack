@@ -90,7 +90,7 @@ const FrameBuffer* read_prepared_frame(const VideoSource& source, int index, boo
     source.read_frame(index, cfa);
     const SerColorId color = source.color_id();
     if (!raw_cfa && is_bayer(color) && is_supported_bayer(color)) {
-        debayer_bilinear(cfa, color, rgb);
+        debayer(cfa, color, source.debayer_method(), rgb);
         return &rgb;
     }
     return &cfa;

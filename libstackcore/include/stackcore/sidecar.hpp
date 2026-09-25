@@ -58,4 +58,21 @@ void load_sidecar(const std::string& path, AnalysisData& data);
 bool matches_source(const AnalysisData& data, std::int64_t source_size, int frames, int width,
                     int height, int channels, std::string& message);
 
+// 品質評価の結果のキャッシュ（`.lstkq`）。
+//
+// 品質評価は全フレームを読むので、長い動画では数分かかる。アライメントの前に
+// アプリを閉じたり中断したりしても、次に開いたとき品質評価からやり直さずに済むよう
+// 結果だけを別ファイルに残す。照合の考え方はサイドカーと同じ。
+struct QualityCache {
+    std::int64_t source_size = 0;
+    int source_frames = 0;
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    GlobalStageReport report;  // frames の index / quality / mean と参照フレーム
+};
+
+void save_quality_cache(const std::string& path, const QualityCache& cache);
+void load_quality_cache(const std::string& path, QualityCache& cache);
+
 }  // namespace stackcore

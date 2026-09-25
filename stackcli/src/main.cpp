@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,10 @@
 #include "stackcore/sidecar.hpp"
 #include "stackcore/drizzle.hpp"
 #include "stackcore/wavelet.hpp"
+#include "stackcore/calibration.hpp"
+#include "stackcore/finishing.hpp"
+#include "stackcore/image_reader.hpp"
+#include "stackcore/metadata.hpp"
 
 namespace {
 
@@ -43,7 +48,7 @@ using stackcore::SerColorId;
 using stackcore::SerDecoder;
 using stackcore::VideoSource;
 
-const char* const kVersion = "0.8.0 (段階処理・32bit FITS出力)";
+const char* const kVersion = "0.9.0 (静止画連番・キャリブレーション・仕上げ工程)";
 
 struct Options {
     std::string command;
@@ -91,6 +96,27 @@ struct Options {
     // Drizzle（M5）
     double drizzle = 1.0;
     double pixfrac = 0.9;
+
+    // 入力の前処理
+    int frame_start = 0;           // 1始まりで受け取り、0始まりで持つ
+    int frame_end = 0;             // 排他的。0で最後まで
+    std::string bayer;             // 空で指定なし / mono / rggb / grbg / gbrg / bggr
+    stackcore::DebayerMethod debayer = stackcore::DebayerMethod::Bilinear;
+    std::string dark;              // マスターダークにする動画・静止画
+    std::string flat;              // マスターフラットにする動画・静止画
+
+    // 仕上げ（追加分）
+    std::string channel_align;     // "auto" または "rdx,rdy,bdx,bdy"
+    std::string white_balance;     // "auto" または "r,g,b"
+    double saturation = 1.0;
+    double dering = 0.0;
+    int rotate = 0;                // 0/90/180/270（時計回り）
+    std::string flip;              // h / v / hv
+    std::string crop;              // "auto[:余白]" または "x,y,w,h"
+
+    // 書き出しファイルに処理条件と撮影時刻を記録する
+    bool metadata = false;
+    std::string object;
 };
 
 bool ends_with_ci(const std::string& value, const char* suffix) {
@@ -117,21 +143,91 @@ const char* output_format_name(const Options& opts) {
     return opts.as_float ? "32bit float TIFF" : "16bit TIFF";
 }
 
-void write_output_image(const Options& opts, const FrameBuffer& image) {
+void write_output_image(const Options& opts, const FrameBuffer& image,
+                        const stackcore::ImageMetadata& metadata = stackcore::ImageMetadata()) {
     if (output_is_fits(opts)) {
-        stackcore::write_fits_float32(opts.output, image);
+        stackcore::write_fits_float32(opts.output, image, metadata);
         return;
     }
     if (output_is_png(opts)) {
         if (opts.as_float) {
             throw std::invalid_argument("PNGと--floatは同時に指定できません（PNGは16bit整数です）");
         }
-        stackcore::write_png16(opts.output, image);
+        stackcore::write_png16(opts.output, image, metadata);
         return;
     }
     const stackcore::TiffFormat format =
         opts.as_float ? stackcore::TiffFormat::Float32 : stackcore::TiffFormat::UInt16;
-    stackcore::write_tiff(opts.output, image, format);
+    stackcore::write_tiff(opts.output, image, format, metadata);
+}
+
+// カンマ区切りの数値を読む。個数が合わなければ false。
+bool parse_numbers(const std::string& text, std::size_t count, std::vector<double>& out) {
+    out.clear();
+    std::size_t start = 0;
+    while (start <= text.size()) {
+        const std::size_t comma = text.find(',', start);
+        const std::string part = text.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
+        char* end = nullptr;
+        const double v = std::strtod(part.c_str(), &end);
+        if (part.empty() || end == part.c_str() || *end != '\0' || !std::isfinite(v)) return false;
+        out.push_back(v);
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return out.size() == count;
+}
+
+// 入力の開き方（前処理を含む）。extract / stack / mapstack で共通に使う。
+// ダーク・フラットはここでマスターを作る。
+stackcore::OpenOptions make_open_options(const Options& opts) {
+    stackcore::OpenOptions o;
+    o.endian = opts.endian;
+    o.bit_depth_override = opts.bit_depth;
+    o.frame_start = opts.frame_start;
+    o.frame_end = opts.frame_end;
+    o.debayer = opts.debayer;
+    if (!opts.bayer.empty()) {
+        o.override_color = true;
+        const std::string& b = opts.bayer;
+        if (b == "mono") o.color_override = SerColorId::Mono;
+        else if (b == "rggb") o.color_override = SerColorId::BayerRGGB;
+        else if (b == "grbg") o.color_override = SerColorId::BayerGRBG;
+        else if (b == "gbrg") o.color_override = SerColorId::BayerGBRG;
+        else if (b == "bggr") o.color_override = SerColorId::BayerBGGR;
+        else throw std::invalid_argument("--bayer は mono|rggb|grbg|gbrg|bggr です");
+    }
+    if (!opts.dark.empty() || !opts.flat.empty()) {
+        stackcore::OpenOptions raw;
+        raw.endian = opts.endian;
+        raw.bit_depth_override = opts.bit_depth;
+        auto cal = std::make_shared<stackcore::CalibrationFrames>();
+        const auto progress = [](int done, int total) {
+            if (done == total || done % 50 == 0) {
+                std::printf("\r  マスター作成 %d/%d   ", done, total);
+                std::fflush(stdout);
+            }
+            return true;
+        };
+        if (!opts.dark.empty()) {
+            std::printf("[マスターダーク] %s\n", opts.dark.c_str());
+            cal->dark = stackcore::build_master_frame(*stackcore::open_raw_video(opts.dark, raw), progress);
+            std::printf("\n");
+        }
+        if (!opts.flat.empty()) {
+            std::printf("[マスターフラット] %s\n", opts.flat.c_str());
+            const FrameBuffer master = stackcore::build_master_frame(*stackcore::open_raw_video(opts.flat, raw), progress);
+            std::printf("\n");
+            // フラットの正規化はライト側の色配列に合わせる。
+            const SerColorId color = o.override_color
+                                         ? o.color_override
+                                         : stackcore::open_raw_video(opts.input, raw)->color_id();
+            cal->flat = stackcore::normalize_flat(master, color);
+        }
+        cal->identity = opts.dark + "|" + opts.flat;
+        o.calibration = cal;
+    }
+    return o;
 }
 
 // "1.5,1.3,1.0" のような文字列をレイヤーごとの値に直す。
@@ -159,13 +255,13 @@ bool parse_layer_values(const std::string& text, int layers, double fill,
     return true;
 }
 
-// スタック結果に後処理を掛ける（仕様書 §4.10）。
+// スタック結果に後処理（仕上げ）を掛ける（仕様書 §4.10）。
+// GUIと同じ FinishingPipeline を通すので、同じ設定なら同じ画像になる。
 // 何も指定がなければ何もしない。
-bool apply_post_processing(const Options& opts, FrameBuffer& image) {
+bool apply_post_processing(const Options& opts, FrameBuffer& image,
+                           std::vector<std::string>* history = nullptr) {
+    stackcore::FinishingSettings fs;
     const bool want_wavelet = !opts.sharpen.empty() || !opts.denoise.empty();
-    const bool want_stretch = opts.stretch_black >= 0.0;
-    if (!want_wavelet && !want_stretch) return true;
-
     if (want_wavelet) {
         std::vector<double> sharpen, denoise;
         if (!parse_layer_values(opts.sharpen, opts.wavelet_layers, 1.0, sharpen) ||
@@ -186,34 +282,132 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image) {
                 return false;
             }
         }
-
-        stackcore::WaveletSharpener w;
-        w.analyze(image, opts.wavelet_layers);
-
-        std::vector<stackcore::WaveletLayerParams> params(
-            static_cast<std::size_t>(opts.wavelet_layers));
+        fs.wavelet.resize(static_cast<std::size_t>(opts.wavelet_layers));
         std::printf("\n[ウェーブレット後処理] %d レイヤー\n", opts.wavelet_layers);
         for (int j = 0; j < opts.wavelet_layers; ++j) {
-            params[static_cast<std::size_t>(j)].sharpen = sharpen[static_cast<std::size_t>(j)];
-            params[static_cast<std::size_t>(j)].denoise = denoise[static_cast<std::size_t>(j)];
-            std::printf("  レイヤー%d (約%dpx): sharpen %.2f / denoise %.2f / ノイズσ %.5f\n",
-                        j, 1 << (j + 1), sharpen[static_cast<std::size_t>(j)],
-                        denoise[static_cast<std::size_t>(j)], w.layer_noise(j));
+            fs.wavelet[static_cast<std::size_t>(j)].sharpen = sharpen[static_cast<std::size_t>(j)];
+            fs.wavelet[static_cast<std::size_t>(j)].denoise = denoise[static_cast<std::size_t>(j)];
+            std::printf("  レイヤー%d (約%dpx): sharpen %.2f / denoise %.2f\n", j, 1 << (j + 1),
+                        sharpen[static_cast<std::size_t>(j)], denoise[static_cast<std::size_t>(j)]);
         }
-
-        FrameBuffer out;
-        w.synthesize(params, out);
-        out.set_source_bit_depth(image.source_bit_depth());
-        image = std::move(out);
     }
+    if (!(opts.dering >= 0.0 && opts.dering <= 1.0)) {
+        std::fprintf(stderr, "エラー: --dering は0〜1です\n");
+        return false;
+    }
+    fs.dering = opts.dering;
 
-    if (want_stretch) {
-        FrameBuffer out;
-        stackcore::stretch_histogram(image, opts.stretch_black, opts.stretch_white,
-                                     opts.stretch_gamma, out);
+    if (!opts.channel_align.empty()) {
+        if (image.channels() != 3) {
+            std::fprintf(stderr, "注意: --channel-align はカラー画像にだけ効きます\n");
+        } else if (opts.channel_align == "auto") {
+            fs.channels = stackcore::estimate_channel_offsets(image);
+        } else {
+            std::vector<double> v;
+            if (!parse_numbers(opts.channel_align, 4, v)) {
+                std::fprintf(stderr, "エラー: --channel-align は auto か rdx,rdy,bdx,bdy です\n");
+                return false;
+            }
+            fs.channels.red_dx = v[0];
+            fs.channels.red_dy = v[1];
+            fs.channels.blue_dx = v[2];
+            fs.channels.blue_dy = v[3];
+        }
+        std::printf("\n[RGBチャンネル合わせ] R (%.2f, %.2f) / B (%.2f, %.2f) px\n",
+                    fs.channels.red_dx, fs.channels.red_dy, fs.channels.blue_dx,
+                    fs.channels.blue_dy);
+    }
+    if (!opts.white_balance.empty() && image.channels() == 3) {
+        if (opts.white_balance == "auto") {
+            // 自動推定はチャンネル合わせの後の画像で行う（GUIと同じ）。
+            FrameBuffer aligned;
+            stackcore::shift_channels(image, fs.channels, aligned);
+            stackcore::estimate_white_balance(aligned, fs.color.gain);
+        } else {
+            std::vector<double> v;
+            if (!parse_numbers(opts.white_balance, 3, v)) {
+                std::fprintf(stderr, "エラー: --wb は auto か r,g,b です\n");
+                return false;
+            }
+            for (int c = 0; c < 3; ++c) fs.color.gain[c] = v[static_cast<std::size_t>(c)];
+        }
+        std::printf("\n[ホワイトバランス] R %.3f / G %.3f / B %.3f\n", fs.color.gain[0],
+                    fs.color.gain[1], fs.color.gain[2]);
+    }
+    fs.color.saturation = opts.saturation;
+
+    if (opts.stretch_black >= 0.0) {
+        fs.stretch = true;
+        fs.black = opts.stretch_black;
+        fs.white = opts.stretch_white;
+        fs.gamma = opts.stretch_gamma;
         std::printf("\n[ヒストグラムストレッチ] 黒点 %.3f / 白点 %.3f / ガンマ %.2f\n",
                     opts.stretch_black, opts.stretch_white, opts.stretch_gamma);
-        image = std::move(out);
+    }
+
+    if (opts.rotate % 90 != 0) {
+        std::fprintf(stderr, "エラー: --rotate は 0/90/180/270 です\n");
+        return false;
+    }
+    fs.geometry.rotate_quarter_turns = ((opts.rotate / 90) % 4 + 4) % 4;
+    fs.geometry.flip_horizontal = opts.flip.find('h') != std::string::npos;
+    fs.geometry.flip_vertical = opts.flip.find('v') != std::string::npos;
+    if (!opts.crop.empty()) {
+        fs.geometry.crop = true;
+        if (opts.crop.compare(0, 4, "auto") == 0) {
+            int margin = 16;
+            if (opts.crop.size() > 5 && opts.crop[4] == ':') margin = std::atoi(opts.crop.c_str() + 5);
+            stackcore::detect_object_bounds(image, margin, fs.geometry.crop_x, fs.geometry.crop_y,
+                                            fs.geometry.crop_width, fs.geometry.crop_height);
+        } else {
+            std::vector<double> v;
+            if (!parse_numbers(opts.crop, 4, v)) {
+                std::fprintf(stderr, "エラー: --crop は auto[:余白] か x,y,w,h です\n");
+                return false;
+            }
+            fs.geometry.crop_x = static_cast<int>(v[0]);
+            fs.geometry.crop_y = static_cast<int>(v[1]);
+            fs.geometry.crop_width = static_cast<int>(v[2]);
+            fs.geometry.crop_height = static_cast<int>(v[3]);
+        }
+        std::printf("\n[クロップ] x %d / y %d / %d×%d\n", fs.geometry.crop_x, fs.geometry.crop_y,
+                    fs.geometry.crop_width, fs.geometry.crop_height);
+    }
+
+    if (fs.identity()) return true;
+
+    stackcore::FinishingPipeline pipeline;
+    auto input = std::make_shared<FrameBuffer>(std::move(image));
+    pipeline.set_input(input, opts.wavelet_layers);
+    FrameBuffer out;
+    pipeline.render(fs, out);
+    image = std::move(out);
+
+    if (history) {
+        char buf[256];
+        if (!fs.wavelet.empty()) {
+            std::string s = "wavelet sharpen";
+            for (const auto& p : fs.wavelet) {
+                std::snprintf(buf, sizeof(buf), " %.2f", p.sharpen);
+                s += buf;
+            }
+            s += " denoise";
+            for (const auto& p : fs.wavelet) {
+                std::snprintf(buf, sizeof(buf), " %.2f", p.denoise);
+                s += buf;
+            }
+            history->push_back(s);
+        }
+        if (fs.channels.any()) {
+            std::snprintf(buf, sizeof(buf), "channel align R %.2f,%.2f B %.2f,%.2f",
+                          fs.channels.red_dx, fs.channels.red_dy, fs.channels.blue_dx,
+                          fs.channels.blue_dy);
+            history->push_back(buf);
+        }
+        if (fs.dering > 0.0) {
+            std::snprintf(buf, sizeof(buf), "dering %.2f", fs.dering);
+            history->push_back(buf);
+        }
     }
     return true;
 }
@@ -221,7 +415,8 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image) {
 void print_usage() {
     std::printf(
         "LunaStack CLI %s — 月・惑星スタッキングエンジン\n"
-        "入力: SER v3 / AVI（非圧縮・MJPEG）。どちらも自前デコーダで読む\n"
+        "入力: SER v3 / AVI（非圧縮・MJPEG）/ 静止画連番のフォルダ（TIFF・PNG・FITS・JPEG）\n"
+        "      いずれもOSのデコーダを使わず自前で読む\n"
         "\n"
         "使い方:\n"
         "  stackcli info <file.ser|file.avi> [オプション]\n"
@@ -275,6 +470,26 @@ void print_usage() {
         "  --denoise <値,値,...>     レイヤー別Denoise (0〜1、既定0)。例: --denoise 0.5,0.3\n"
         "  --wavelet-layers <N>      分解レイヤー数 (既定: 6)\n"
         "  --stretch <黒,白,ガンマ>  ヒストグラムストレッチ。例: --stretch 0.0,0.35,1.8\n"
+        "\n"
+        "入力の前処理 (extract / stack / mapstack 共通):\n"
+        "  --frames <開始:終了>      使うフレームの範囲（1始まり、終了を含む。例 101:600）\n"
+        "  --bayer mono|rggb|grbg|gbrg|bggr\n"
+        "                            色形式を手動で指定する（ヘッダの誤りや静止画向け）\n"
+        "  --debayer bilinear|mhc    デバイヤー方式（既定: bilinear。mhcは偽色が少ない）\n"
+        "  --dark <動画|静止画|フォルダ>   マスターダークにする素材（全フレームを平均）\n"
+        "  --flat <動画|静止画|フォルダ>   マスターフラットにする素材（色の位相ごとに正規化）\n"
+        "\n"
+        "仕上げの追加オプション (stack / mapstack 共通):\n"
+        "  --channel-align auto|rdx,rdy,bdx,bdy\n"
+        "                            RGBチャンネルのずれ（大気分散）を補正する\n"
+        "  --wb auto|r,g,b           ホワイトバランス（autoは対象の灰色仮説）\n"
+        "  --saturation <値>         彩度（1.0で変化なし）\n"
+        "  --dering <0〜1>           ウェーブレット強調の輪郭の外の暗い輪を抑える\n"
+        "  --rotate 0|90|180|270     時計回りに回転する\n"
+        "  --flip h|v|hv             回転のあとで左右・上下を反転する\n"
+        "  --crop auto[:余白]|x,y,w,h 対象の周りを切り抜く（座標は回転前）\n"
+        "  --metadata                処理条件と撮影時刻（SERのタイムスタンプ）をファイルに記録する\n"
+        "  --object <名前>           対象名（FITSのOBJECT等）\n"
         "\n"
         "stack のオプション:\n"
         "  --top <割合>              品質上位何%%を加算するか (既定: 25)\n"
@@ -439,6 +654,21 @@ int command_info_avi(const Options& opts) {
     return 0;
 }
 
+int command_info_sequence(const Options& opts) {
+    const std::unique_ptr<VideoSource> source =
+        stackcore::open_video(opts.input, make_open_options(opts));
+    std::printf("入力: %s\n", opts.input.c_str());
+    std::printf("  形式        : %s（%s）\n", source->format_name(), source->describe().c_str());
+    std::printf("  画像サイズ  : %d x %d\n", source->width(), source->height());
+    std::printf("  カラー形式  : %s\n", stackcore::to_string(source->color_id()));
+    std::printf("  ビット深度  : %d bit\n", source->bit_depth());
+    std::printf("  フレーム数  : %d\n", source->frame_count());
+    FrameBuffer frame;
+    source->read_frame(0, frame);
+    print_histogram(frame);
+    return 0;
+}
+
 int command_info(const Options& opts) {
     SerDecoder decoder;
     decoder.open(opts.input, opts.endian);
@@ -522,9 +752,7 @@ int command_extract(const Options& opts) {
         return 2;
     }
 
-    stackcore::OpenOptions open_opts;
-    open_opts.endian = opts.endian;
-    open_opts.bit_depth_override = opts.bit_depth;
+    const stackcore::OpenOptions open_opts = make_open_options(opts);
     const std::unique_ptr<VideoSource> source = stackcore::open_video(opts.input, open_opts);
 
     if (opts.frame < 0 || opts.frame >= source->frame_count()) {
@@ -543,7 +771,7 @@ int command_extract(const Options& opts) {
     FrameBuffer rgb;
     const FrameBuffer* to_write = &frame;
     if (want_debayer) {
-        stackcore::debayer_bilinear(frame, color, rgb);
+        stackcore::debayer(frame, color, source->debayer_method(), rgb);
         to_write = &rgb;
     } else if (!opts.raw_cfa && stackcore::is_bayer(color)) {
         std::fprintf(stderr,
@@ -570,15 +798,10 @@ int command_extract(const Options& opts) {
 // SERから1フレーム読み、必要ならデバイヤーする。
 // 結果が入っているバッファ（cfa か rgb のどちらか）を返す。
 // バッファは呼び出し側で使い回してもらうため、毎フレーム確保しなおさない。
+// エンジンと同じ読み込み経路（デバイヤー方式・キャリブレーションを含む）。
 const FrameBuffer* read_prepared(const VideoSource& source, int index, bool raw_cfa,
                                  FrameBuffer& cfa, FrameBuffer& rgb) {
-    source.read_frame(index, cfa);
-    const SerColorId color = source.color_id();
-    if (!raw_cfa && stackcore::is_bayer(color) && stackcore::is_supported_bayer(color)) {
-        stackcore::debayer_bilinear(cfa, color, rgb);
-        return &rgb;
-    }
-    return &cfa;
+    return stackcore::read_prepared_frame(source, index, raw_cfa, cfa, rgb);
 }
 
 struct FrameMeta {
@@ -600,6 +823,23 @@ void print_progress(const char* label, int done, int total) {
     std::fflush(stdout);
 }
 
+// 書き出しに添える情報（--metadata のときだけ）。現在時刻は入れない。
+stackcore::ImageMetadata make_metadata(const Options& opts, const VideoSource& source,
+                                       const std::vector<int>& used, int frames_combined,
+                                       const std::string& summary,
+                                       const std::vector<std::string>& history) {
+    stackcore::ImageMetadata m;
+    if (!opts.metadata) return m;
+    m.software = std::string("LunaStack CLI ") + kVersion;
+    m.description = summary;
+    m.object = opts.object;
+    m.frames_combined = frames_combined;
+    std::int64_t ticks = 0;
+    if (stackcore::mid_timestamp(source, used, ticks)) m.date_obs = stackcore::ticks_to_iso8601(ticks);
+    m.history = history;
+    return m;
+}
+
 int command_stack(const Options& opts) {
     if (opts.output.empty()) {
         std::fprintf(stderr, "エラー: 出力ファイルを -o で指定してください\n");
@@ -615,9 +855,7 @@ int command_stack(const Options& opts) {
         return 2;
     }
 
-    stackcore::OpenOptions open_opts;
-    open_opts.endian = opts.endian;
-    open_opts.bit_depth_override = opts.bit_depth;
+    const stackcore::OpenOptions open_opts = make_open_options(opts);
     const std::unique_ptr<VideoSource> source = stackcore::open_video(opts.input, open_opts);
     if (opts.low_memory) source->set_low_memory(true);
 
@@ -837,9 +1075,16 @@ int command_stack(const Options& opts) {
         result.set_source_bit_depth(reference->source_bit_depth());
     }
 
-    if (!apply_post_processing(opts, result)) return 2;
+    std::vector<std::string> history;
+    if (!apply_post_processing(opts, result, &history)) return 2;
 
-    write_output_image(opts, result);
+    std::vector<int> used;
+    for (const FrameMeta& m : usable) used.push_back(m.index);
+    char summary[160];
+    std::snprintf(summary, sizeof(summary), "global stack top %.1f%% (%d frames)",
+                  opts.top_percent, keep);
+    write_output_image(opts, result,
+                       make_metadata(opts, *source, used, keep, summary, history));
 
     std::printf("\n書き出しました: %s\n", opts.output.c_str());
     std::printf("  画像          : %d x %d x %dch (%s)\n", result.width(), result.height(),
@@ -864,9 +1109,7 @@ int command_mapstack(const Options& opts) {
         return 2;
     }
 
-    stackcore::OpenOptions open_opts;
-    open_opts.endian = opts.endian;
-    open_opts.bit_depth_override = opts.bit_depth;
+    const stackcore::OpenOptions open_opts = make_open_options(opts);
     const std::unique_ptr<VideoSource> source = stackcore::open_video(opts.input, open_opts);
     if (opts.low_memory) source->set_low_memory(true);
 
@@ -1033,9 +1276,18 @@ int command_mapstack(const Options& opts) {
     // FrameBuffer はコピーできない（アラインメント確保を持つため）ので
     // 後処理はその場で掛ける。
     FrameBuffer final_image = std::move(result);
-    if (!apply_post_processing(opts, final_image)) return 2;
+    std::vector<std::string> history;
+    if (!apply_post_processing(opts, final_image, &history)) return 2;
 
-    write_output_image(opts, final_image);
+    std::vector<int> used;
+    for (const stackcore::FrameInfo& f : report.global.frames) {
+        if (f.accepted) used.push_back(f.index);
+    }
+    char summary[200];
+    std::snprintf(summary, sizeof(summary), "MAP stack AP %d px x %d, %d frames per AP, %s, drizzle %.1f",
+                  report.ap_size, report.ap_count, report.frames_per_ap, stack_mode, opts.drizzle);
+    write_output_image(opts, final_image,
+                       make_metadata(opts, *source, used, report.frames_per_ap, summary, history));
 
     std::printf("\n書き出しました: %s\n", opts.output.c_str());
     std::printf("  画像          : %d x %d x %dch (%s)\n", final_image.width(),
@@ -1252,6 +1504,54 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "エラー: --limit には1以上の整数を指定してください\n");
                 return 2;
             }
+        } else if (arg == "--frames" && has_next) {
+            // "開始:終了"（1始まり、終了を含む）。どちらかを省略できる（"100:" / ":500"）。
+            const std::string range = argv[++i];
+            const std::size_t colon = range.find(':');
+            if (colon == std::string::npos) {
+                std::fprintf(stderr, "エラー: --frames は 開始:終了 です（例 1:500）\n");
+                return 2;
+            }
+            const std::string a = range.substr(0, colon), b = range.substr(colon + 1);
+            opts.frame_start = a.empty() ? 0 : std::atoi(a.c_str()) - 1;
+            opts.frame_end = b.empty() ? 0 : std::atoi(b.c_str());
+            if (opts.frame_start < 0 || (opts.frame_end != 0 && opts.frame_end <= opts.frame_start)) {
+                std::fprintf(stderr, "エラー: --frames の範囲が不正です\n");
+                return 2;
+            }
+        } else if (arg == "--bayer" && has_next) {
+            opts.bayer = argv[++i];
+            for (char& ch : opts.bayer) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        } else if (arg == "--debayer" && has_next) {
+            const std::string m = argv[++i];
+            if (m == "bilinear") opts.debayer = stackcore::DebayerMethod::Bilinear;
+            else if (m == "mhc") opts.debayer = stackcore::DebayerMethod::MalvarHeCutler;
+            else {
+                std::fprintf(stderr, "エラー: --debayer は bilinear|mhc です\n");
+                return 2;
+            }
+        } else if (arg == "--dark" && has_next) {
+            opts.dark = argv[++i];
+        } else if (arg == "--flat" && has_next) {
+            opts.flat = argv[++i];
+        } else if (arg == "--channel-align" && has_next) {
+            opts.channel_align = argv[++i];
+        } else if (arg == "--wb" && has_next) {
+            opts.white_balance = argv[++i];
+        } else if (arg == "--saturation" && has_next) {
+            opts.saturation = std::atof(argv[++i]);
+        } else if (arg == "--dering" && has_next) {
+            opts.dering = std::atof(argv[++i]);
+        } else if (arg == "--rotate" && has_next) {
+            opts.rotate = std::atoi(argv[++i]);
+        } else if (arg == "--flip" && has_next) {
+            opts.flip = argv[++i];
+        } else if (arg == "--crop" && has_next) {
+            opts.crop = argv[++i];
+        } else if (arg == "--metadata") {
+            opts.metadata = true;
+        } else if (arg == "--object" && has_next) {
+            opts.object = argv[++i];
         } else if (arg == "--float") {
             opts.as_float = true;
         } else if (arg == "--raw-cfa") {
@@ -1274,6 +1574,10 @@ int main(int argc, char** argv) {
     }
 
     try {
+        if (opts.command == "info" &&
+            (stackcore::is_directory_path(opts.input) || stackcore::is_supported_image_path(opts.input))) {
+            return command_info_sequence(opts);
+        }
         if (opts.command == "info") {
             // SERとして開ければSER用の詳しい表示、そうでなければAVIとして試す。
             // 拡張子だけで決めないのは、拡張子が実態と食い違うファイルがあるため。

@@ -3,6 +3,7 @@
 #include <string>
 
 #include "stackcore/frame_buffer.hpp"
+#include "stackcore/metadata.hpp"
 
 namespace stackcore {
 
@@ -16,5 +17,10 @@ namespace stackcore {
 // PixInsightの浮動小数点FITS既定範囲に合わせ、非有限値は0、範囲外は[0,1]へ
 // クランプする。これにより読み込み時の範囲確認ダイアログを避ける。
 void write_fits_float32(const std::string& path, const FrameBuffer& image);
+
+// メタデータ付き（DATE-OBS / OBJECT / NCOMBINE / CREATOR / ROWORDER / HISTORY）。
+// 空なら上と同じバイト列になる。
+void write_fits_float32(const std::string& path, const FrameBuffer& image,
+                        const ImageMetadata& metadata);
 
 }  // namespace stackcore

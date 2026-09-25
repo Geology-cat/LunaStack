@@ -20,10 +20,16 @@ add_executable(stackcore_tests
     src/test_map_pipeline.cpp
     src/test_wavelet.cpp
     src/test_drizzle.cpp
+    src/test_image_reader.cpp
+    src/test_preprocess.cpp
+    src/test_finishing.cpp
 )
 
 target_include_directories(stackcore_tests PRIVATE include)
 target_link_libraries(stackcore_tests PRIVATE stackcore)
+# 他のソフトが書いた試験画像（tests/data）の場所。
+target_compile_definitions(stackcore_tests PRIVATE
+    LUNASTACK_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
 
 add_test(NAME stackcore_tests COMMAND stackcore_tests)
 

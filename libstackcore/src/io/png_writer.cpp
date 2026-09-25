@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -69,6 +71,11 @@ struct Adler32 {
 }  // namespace
 
 void write_png16(const std::string& path, const FrameBuffer& image) {
+    write_png16(path, image, ImageMetadata());
+}
+
+void write_png16(const std::string& path, const FrameBuffer& image,
+                 const ImageMetadata& metadata) {
     if (image.empty()) throw std::invalid_argument("PNG: 空の画像は書き出せません");
     const int width = image.width();
     const int height = image.height();
@@ -96,6 +103,29 @@ void write_png16(const std::string& path, const FrameBuffer& image) {
         ihdr.push_back(0);                          // filter
         ihdr.push_back(0);                          // interlace
         write_chunk(fp, "IHDR", ihdr);
+
+        // tEXt は Latin-1 と定められているが、日本語を含みうる説明はUTF-8のまま
+        // iTXt で書く。キーワードはPNG仕様の既定語を使う。
+        const auto text_chunk = [&](const char* keyword, const std::string& text) {
+            if (text.empty()) return;
+            std::vector<std::uint8_t> body(keyword, keyword + std::strlen(keyword));
+            body.push_back(0);  // キーワード終端
+            body.push_back(0);  // 圧縮なし
+            body.push_back(0);  // 圧縮方式
+            body.push_back(0);  // 言語タグ（空）
+            body.push_back(0);  // 翻訳キーワード（空）
+            body.insert(body.end(), text.begin(), text.end());
+            write_chunk(fp, "iTXt", body);
+        };
+        std::string description = metadata.description;
+        for (const std::string& line : metadata.history) {
+            if (!description.empty()) description += "\n";
+            description += line;
+        }
+        text_chunk("Software", metadata.software);
+        text_chunk("Description", description);
+        text_chunk("Creation Time", metadata.date_obs);
+        text_chunk("Title", metadata.object);
 
         const std::uint64_t row_bytes =
             1u + static_cast<std::uint64_t>(width) * channels * 2u;

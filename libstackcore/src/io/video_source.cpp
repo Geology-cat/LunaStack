@@ -1,10 +1,14 @@
 #include "stackcore/video_source.hpp"
 
+#include <sys/stat.h>
+
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
 #include "stackcore/avi_decoder.hpp"
+#include "stackcore/image_reader.hpp"
 
 namespace stackcore {
 namespace {
@@ -109,6 +113,155 @@ private:
     bool low_memory_ = false;
 };
 
+// 静止画連番。1ファイル＝1フレームとして扱う。
+//
+// 寸法と色形式は先頭の1枚で決め、以降の画像が食い違えば読んだ時点で例外にする
+// （黙って縮めたり切り捨てたりすると、どのフレームが壊れていたか分からなくなる）。
+class ImageSequenceSource : public VideoSource {
+public:
+    explicit ImageSequenceSource(const std::vector<std::string>& files) : files_(files) {
+        if (files_.empty()) throw std::runtime_error("静止画連番: 画像がありません");
+        info_ = probe_image_file(files_[0]);
+        if (info_.channels != 1 && info_.channels != 3) {
+            throw std::runtime_error("静止画連番: 1chまたは3chの画像のみ対応しています");
+        }
+    }
+
+    int width() const override { return info_.width; }
+    int height() const override { return info_.height; }
+    int frame_count() const override { return static_cast<int>(files_.size()); }
+    SerColorId color_id() const override { return info_.color; }
+    int bit_depth() const override { return std::min(16, info_.bit_depth); }
+    bool has_timestamps() const override { return false; }
+    std::int64_t timestamp_ticks(int) const override { return 0; }
+
+    void read_frame(int index, FrameBuffer& out) const override {
+        if (index < 0 || index >= frame_count()) {
+            throw std::out_of_range("静止画連番: フレーム番号が範囲外です");
+        }
+        ImageFileInfo info;
+        read_image_file(files_[static_cast<std::size_t>(index)], out, info);
+        if (info.width != info_.width || info.height != info_.height ||
+            info.channels != info_.channels) {
+            throw std::runtime_error("静止画連番: 寸法が先頭の画像と違います: " +
+                                     files_[static_cast<std::size_t>(index)]);
+        }
+        out.set_source_bit_depth(bit_depth());
+    }
+
+    FrameStats frame_stats(int index) const override {
+        FrameBuffer frame;
+        read_frame(index, frame);
+        const double scale = static_cast<double>((1u << std::min(16, info_.bit_depth)) - 1u);
+        FrameStats stats;
+        double lo = 1.0, hi = 0.0, sum = 0.0;
+        std::size_t n = 0;
+        for (int c = 0; c < frame.channels(); ++c) {
+            for (int y = 0; y < frame.height(); ++y) {
+                const float* row = frame.row(c, y);
+                for (int x = 0; x < frame.width(); ++x) {
+                    lo = std::min(lo, static_cast<double>(row[x]));
+                    hi = std::max(hi, static_cast<double>(row[x]));
+                    sum += row[x];
+                    ++n;
+                }
+            }
+        }
+        stats.min_value = static_cast<std::uint32_t>(lo * scale + 0.5);
+        stats.max_value = static_cast<std::uint32_t>(hi * scale + 0.5);
+        stats.mean_value = n > 0 ? sum / n * scale : 0.0;
+        return stats;
+    }
+
+    std::string describe() const override {
+        return std::to_string(files_.size()) + "枚の" + info_.format + "（" +
+               std::to_string(info_.bit_depth) + "bit）";
+    }
+    const char* format_name() const override { return "静止画連番"; }
+
+private:
+    std::vector<std::string> files_;
+    ImageFileInfo info_;
+};
+
+// 前処理（フレーム範囲・色形式の指定・デバイヤー方式・ダーク/フラット補正）を
+// 掛けるラッパー。パイプラインは前処理の存在を知らなくてよい。
+class PreparedSource : public VideoSource {
+public:
+    PreparedSource(std::unique_ptr<VideoSource> base, const OpenOptions& o)
+        : base_(std::move(base)), options_(o) {
+        const int total = base_->frame_count();
+        start_ = std::max(0, o.frame_start);
+        const int end = o.frame_end > 0 ? std::min(o.frame_end, total) : total;
+        if (start_ >= end) {
+            throw std::runtime_error("フレーム範囲が空です（" + std::to_string(o.frame_start) +
+                                     "〜" + std::to_string(o.frame_end) + " / 全" +
+                                     std::to_string(total) + "フレーム）");
+        }
+        count_ = end - start_;
+        if (o.override_color) {
+            if (o.color_override != SerColorId::Mono && !is_supported_bayer(o.color_override)) {
+                throw std::runtime_error("色形式の指定はモノクロか RGGB/GRBG/GBRG/BGGR のみです");
+            }
+            if (base_->color_id() == SerColorId::RGB || base_->color_id() == SerColorId::BGR) {
+                throw std::runtime_error("カラー（RGB）の入力にはBayer配列を指定できません");
+            }
+        }
+        if (o.calibration && !o.calibration->empty()) {
+            const auto check = [&](const FrameBuffer& f, const char* name) {
+                if (!f.empty() && (f.width() != base_->width() || f.height() != base_->height())) {
+                    throw std::runtime_error(std::string("キャリブレーション: ") + name +
+                                             "の寸法（" + std::to_string(f.width()) + "×" +
+                                             std::to_string(f.height()) + "）が入力と違います");
+                }
+            };
+            check(o.calibration->dark, "ダーク");
+            check(o.calibration->flat, "フラット");
+        }
+    }
+
+    int width() const override { return base_->width(); }
+    int height() const override { return base_->height(); }
+    int frame_count() const override { return count_; }
+    SerColorId color_id() const override {
+        return options_.override_color ? options_.color_override : base_->color_id();
+    }
+    int bit_depth() const override { return base_->bit_depth(); }
+    bool has_timestamps() const override { return base_->has_timestamps(); }
+    std::int64_t timestamp_ticks(int index) const override {
+        return base_->timestamp_ticks(start_ + index);
+    }
+    void read_frame(int index, FrameBuffer& out) const override {
+        if (index < 0 || index >= count_) {
+            throw std::out_of_range("フレーム番号が範囲外です");
+        }
+        base_->read_frame(start_ + index, out);
+        if (options_.calibration) apply_calibration(out, *options_.calibration);
+    }
+    FrameStats frame_stats(int index) const override { return base_->frame_stats(start_ + index); }
+    std::string describe() const override {
+        std::string s = base_->describe();
+        if (start_ != 0 || count_ != base_->frame_count()) {
+            s += " / 範囲 " + std::to_string(start_ + 1) + "〜" + std::to_string(start_ + count_);
+        }
+        if (options_.calibration && !options_.calibration->dark.empty()) s += " / ダーク補正";
+        if (options_.calibration && !options_.calibration->flat.empty()) s += " / フラット補正";
+        return s;
+    }
+    const char* format_name() const override { return base_->format_name(); }
+    bool byte_order_suspect() const override { return base_->byte_order_suspect(); }
+    void set_low_memory(bool on) override { base_->set_low_memory(on); }
+    bool supports_concurrent_reads() const override { return base_->supports_concurrent_reads(); }
+    DebayerMethod debayer_method() const override { return options_.debayer; }
+    int original_index(int index) const override { return base_->original_index(start_ + index); }
+
+private:
+    std::unique_ptr<VideoSource> base_;
+    OpenOptions options_;
+    int start_ = 0;
+    int count_ = 0;
+};
+
 bool ends_with_ci(const std::string& s, const char* suffix) {
     const std::size_t n = std::strlen(suffix);
     if (s.size() < n) return false;
@@ -124,7 +277,7 @@ bool ends_with_ci(const std::string& s, const char* suffix) {
 
 }  // namespace
 
-std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptions& options) {
+static std::unique_ptr<VideoSource> open_container(const std::string& path, const OpenOptions& options) {
     // 拡張子で見当をつけるが、それだけで決めない。
     // 拡張子が違っていても中身で開ければ開く（キャプチャソフトによっては
     // SERを .avi として保存する事故がある）。
@@ -154,6 +307,32 @@ std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptio
     } catch (const std::exception&) {
         throw std::runtime_error(first_error);
     }
+}
+
+bool is_directory_path(const std::string& path) {
+    struct stat st;
+    return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+std::unique_ptr<VideoSource> open_raw_video(const std::string& path, const OpenOptions& options) {
+    if (!options.sequence_files.empty()) {
+        return std::unique_ptr<VideoSource>(new ImageSequenceSource(options.sequence_files));
+    }
+    if (is_directory_path(path)) {
+        return std::unique_ptr<VideoSource>(new ImageSequenceSource(list_image_sequence(path)));
+    }
+    if (is_supported_image_path(path)) {
+        // 静止画1枚も「1フレームの連番」として開ける（ダーク・フラットの原本など）。
+        return std::unique_ptr<VideoSource>(
+            new ImageSequenceSource(std::vector<std::string>(1, path)));
+    }
+    return open_container(path, options);
+}
+
+std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptions& options) {
+    std::unique_ptr<VideoSource> base = open_raw_video(path, options);
+    if (!options.has_preprocessing()) return base;
+    return std::unique_ptr<VideoSource>(new PreparedSource(std::move(base), options));
 }
 
 }  // namespace stackcore
