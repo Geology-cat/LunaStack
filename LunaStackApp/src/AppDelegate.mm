@@ -68,8 +68,11 @@
         }
     }
 
-    // 自己検証の起動では、利用者の前回の設定とキューを読み込まない（結果が変わるため）。
-    if (!snapshotPath) [_controller restoreSession];
+    // 起動するたびに入力キュー・設定・仕上げはすべて初期状態から始める。
+    // 以前の版（0.3.0の初期）が起動間に保存していた値は、残っていても使わずに消す。
+    for (NSString* key in @[ @"lastSettings", @"queueItems", @"darkPath", @"flatPath" ]) {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
+    }
 
     // **フレーム数の制限はファイルを開く前に設定する。**
     // 開いた時点でサイドカーの照合が走り、そこには制限値も含まれる。
@@ -128,6 +131,7 @@
                 else [controller startStackOnly];
                 return;
             }
+            if (selfTest) [self check:[controller selfCheckApHiddenAfterStack]];
             if (apCheck || selfTest) {
                 // 描画とクリックの座標変換が食い違っていないかを見る。
                 [self check:[controller selfCheckApHitTest]];
@@ -141,6 +145,7 @@
                 [controller setFinishingForTesting:[NSString stringWithUTF8String:finishText]];
             }
             if (selfTest) [self check:[controller selfCheckFinishingMatchesExport]];
+            if (selfTest) [self check:[controller selfCheckWaveletPreviewToggle]];
             if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];
@@ -160,6 +165,8 @@
             if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];
             [self writeSnapshotTo:path];
             if (selfTest) {
+                // 最後に［クリア］が設定まで初期値に戻すことを確かめる（画面は撮ったあと）。
+                [self check:[controller selfCheckClearResetsEverything]];
                 NSLog(@"GUI自己検証: %@", _selfTestFailed ? @"失敗" : @"合格");
                 exit(_selfTestFailed ? 1 : 0);
             }

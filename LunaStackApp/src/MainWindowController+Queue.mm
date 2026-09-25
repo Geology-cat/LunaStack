@@ -236,7 +236,6 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
                                                    skipped]];
     }
     [self updateControlsEnabled];
-    [self saveQueueState];
 }
 
 // ヘッダだけ読んで副題を埋める。中身の妥当性はここで分かる。
@@ -436,7 +435,6 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         [_statusLabel setStringValue:LSLocalizedString(@"動画を追加してください")];
     }
     [self updateControlsEnabled];
-    [self saveQueueState];
 }
 
 // 次の素材をすぐに処理できる空の作業状態へ戻す。
@@ -502,13 +500,17 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     [self updateControlsEnabled];
 }
 
+// ［クリア］: 入力キュー・処理結果に加えて、すべての設定と仕上げのつまみを初期値に戻す。
+// 元動画・解析キャッシュ・書き出し済みファイル・プリセットには触れない。
 - (void)clearWorkspace:(id)sender {
     (void)sender;
-    if (_running || [_items count] == 0) return;
+    if (_running) return;
     [_items removeAllObjects];
     [_queueTable reloadData];
     [self resetWorkspaceForNewProcessing];
-    [self saveQueueState];
+    [self resetAllSettingsToDefaults];
+    [_statusLabel
+        setStringValue:LSLocalizedString(@"クリアしました（設定も初期値に戻しました）— 新しい動画を追加してください")];
 }
 
 - (void)clearForTesting {
@@ -623,52 +625,6 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
 - (void)clearRecent:(id)sender {
     (void)sender;
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"recentInputs"];
-}
-
-// キューの中身を次回の起動へ引き継ぐ。解析結果はサイドカーから戻るので、パスだけでよい。
-- (void)saveQueueState {
-    if (getenv("LUNASTACK_SNAPSHOT")) return;  // 自己検証の起動で利用者のキューを上書きしない
-    NSMutableArray* list = [NSMutableArray array];
-    for (QueueItem* item in _items) {
-        [list addObject:@{
-            @"path" : [item path],
-            @"sequence" : @([item isSequence]),
-            @"files" : [item sequenceFiles] ? [item sequenceFiles] : @[]
-        }];
-    }
-    [[NSUserDefaults standardUserDefaults] setObject:list forKey:@"queueItems"];
-}
-
-- (void)restoreQueueState {
-    NSArray* list = [[NSUserDefaults standardUserDefaults] arrayForKey:@"queueItems"];
-    if ([list count] == 0) return;
-    NSFileManager* fm = [NSFileManager defaultManager];
-    for (NSDictionary* d in list) {
-        if (![d isKindOfClass:[NSDictionary class]]) continue;
-        NSString* path = d[@"path"];
-        if (![path isKindOfClass:[NSString class]] || ![fm fileExistsAtPath:path]) continue;
-        QueueItem* item;
-        if ([d[@"sequence"] boolValue]) {
-            NSMutableArray* files = [NSMutableArray array];
-            for (NSString* f in d[@"files"]) {
-                if ([f isKindOfClass:[NSString class]] && [fm fileExistsAtPath:f]) [files addObject:f];
-            }
-            if ([d[@"files"] count] > 0 && [files count] == 0) continue;
-            item = [QueueItem sequenceItemWithDirectory:path files:files];
-        } else {
-            item = [QueueItem itemWithPath:path];
-        }
-        BOOL duplicate = NO;
-        for (QueueItem* existing in _items) {
-            if ([existing isSameInputAs:item]) duplicate = YES;
-        }
-        if (duplicate) continue;
-        [self fillHeaderInfo:item];
-        [_items addObject:item];
-    }
-    [_queueTable reloadData];
-    if ([_items count] > 0 && _currentIndex < 0) [self selectQueueIndex:0];
-    [self updateControlsEnabled];
 }
 
 @end

@@ -59,6 +59,7 @@
     [window setDelegate:self];
     [self buildInterface];
     [self reloadPresets];
+    _defaultSettings = [[self settingsDictionary] retain];
     return self;
 }
 
@@ -75,15 +76,10 @@
     [_darkPath release];
     [_flatPath release];
     [_openedInputSignature release];
+    [_defaultSettings release];
     [_onRunFinished release];
     dispatch_release(_finishQueue);
     [super dealloc];
-}
-
-// 起動時に前回の設定とキューを戻す（U5）。自己検証の起動では呼ばない。
-- (void)restoreSession {
-    [self restorePersistedSettings];
-    [self restoreQueueState];
 }
 
 // ---- 終了・中断の確認 -------------------------------------------------------
@@ -124,16 +120,12 @@
         }
         return NO;
     }
-    [self persistSettings];
-    [self saveQueueState];
     return YES;
 }
 
 // アプリの終了要求（⌘Q）。処理中なら確認し、中断が済んでから終了する。
 - (NSApplicationTerminateReply)applicationShouldTerminate {
     if (!_running) {
-        [self persistSettings];
-        [self saveQueueState];
         return NSTerminateNow;
     }
     if ([self confirmStopForReason:LSLocalizedString(

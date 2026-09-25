@@ -110,7 +110,8 @@
     NSTextField* _drizzleEstimate;
 
     // 仕上げ・出力タブ
-    NSButton* _waveletPreviewCheck;
+    NSButton* _waveletPreviewCheck;      // 仕上げ全体の効果をプレビュー
+    NSButton* _waveletOnlyPreviewCheck;  // ウェーブレットの効果だけをプレビュー
     NSTextField* _channelFields[4];  // R dx, R dy, B dx, B dy
     NSSlider* _sharpenSliders[kWaveletLayers];
     NSTextField* _sharpenValues[kWaveletLayers];
@@ -228,7 +229,9 @@
     double _apTopPercentSetting;
     int _apTopCountSetting;
     BOOL _frameOrderByQuality;
-    BOOL _restoringSettings;  // 設定の復元中（保存・無効化の連鎖を止める）
+    BOOL _restoringSettings;  // 設定の復元中（無効化の連鎖を止める）
+    // 起動直後の設定一式（［クリア］で戻す初期値）。
+    NSDictionary* _defaultSettings;
 
     // 残り時間の推定。フェーズが変わったら測り直す。
     NSString* _etaStage;
@@ -272,8 +275,6 @@
 - (NSArray*)recentPaths;
 - (void)openRecent:(id)sender;
 - (void)clearRecent:(id)sender;
-- (void)saveQueueState;
-- (void)restoreQueueState;
 - (void)openDocument:(id)sender;
 
 // ---- 設定（+Settings） ----
@@ -293,8 +294,6 @@
 - (NSDictionary*)settingsDictionary;
 - (void)applySettingsDictionary:(NSDictionary*)d;
 - (void)applySettingsDictionary:(NSDictionary*)d includePostProcessing:(BOOL)includePost;
-- (void)persistSettings;
-- (void)restorePersistedSettings;
 - (void)reloadPresets;
 - (NSString*)sidecarPath;
 - (NSString*)sidecarSettingsPath;
@@ -304,6 +303,7 @@
 - (void)saveQualityCacheForCurrent;
 - (BOOL)loadQualityCacheForCurrent;
 - (void)invalidateCalibration;
+- (void)resetAllSettingsToDefaults;
 - (void)analysisSettingChanged:(id)sender;
 - (void)inputInterpretationChanged:(id)sender;
 - (void)topChanged:(id)sender;
@@ -380,6 +380,10 @@
 
 // ---- 仕上げ・書き出し（+Finishing） ----
 - (stackcore::FinishingSettings)currentFinishingSettings;
+- (stackcore::FinishingSettings)previewFinishingSettings;
+- (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNowWithSettings:(const stackcore::FinishingSettings&)settings;
+- (void)waveletOnlyPreviewChanged:(id)sender;
+- (void)buildCompareSection:(NSStackView*)box;
 - (void)resetFinishingForNewStack;
 - (void)applyWavelet;
 - (void)requestFinishingRender:(BOOL)draft;

@@ -76,7 +76,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     // 読み方が変われば1枚目の見え方も変わる。開き直して確かめられるようにする。
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
     [self updateControlsEnabled];
-    [self persistSettings];
 }
 
 - (stackcore::MapStackSettings)currentSettings {
@@ -201,7 +200,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     [self refreshCutLabel];
     [self updateControlsEnabled];
     [self updateNamePreview];
-    [self persistSettings];
 }
 
 - (void)advancedFieldChanged:(id)sender {
@@ -234,7 +232,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
         [_statusLabel setStringValue:LSLocalizedString(
                                          @"参照フレームの割合を変えたので、アライメントのやり直しが必要です")];
     }
-    if (!_restoringSettings) [self persistSettings];
 }
 
 - (void)apTopChanged:(id)sender {
@@ -249,7 +246,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
         [_apTopValue setStringValue:[NSString stringWithFormat:@"%.0f %%", _apTopPercentSetting]];
     }
     [self updateControlsEnabled];
-    if (!_restoringSettings) [self persistSettings];
 }
 
 - (void)selectionModeChanged:(id)sender {
@@ -262,7 +258,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     _selectionUsesCount = [_selectionModeSegment selectedSegment] == 1;
     [self refreshSelectionControl];
     [self updateControlsEnabled];
-    [self persistSettings];
 }
 
 - (void)refreshSelectionControl {
@@ -291,7 +286,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     [_searchRadiusValue setStringValue:[NSString stringWithFormat:@"±%.0f",
                                                                  [_searchRadiusSlider doubleValue]]];
     [self updateControlsEnabled];
-    if (!_restoringSettings) [self persistSettings];
 }
 
 - (void)drizzleChanged:(id)sender {
@@ -299,7 +293,6 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     [_pixfracValue setStringValue:[NSString stringWithFormat:@"%.2f", [_pixfracSlider doubleValue]]];
     [self updateDrizzleEstimate];
     [self updateControlsEnabled];
-    if (!_restoringSettings) [self persistSettings];
 }
 
 - (void)updateDrizzleEstimate {
@@ -351,7 +344,7 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     [_qualityButton setEnabled:hasFile && !_running];
     [_alignButton setEnabled:hasFile && qualityOk && !_running];
     [_stackButton setEnabled:hasFile && alignmentOk && !_running];
-    [_clearButton setEnabled:([_items count] > 0) && !_running];
+    [_clearButton setEnabled:!_running];
     [_cancelButton setEnabled:_running];
     [_saveButton setEnabled:(_stacked != nullptr) && !_running];
     [_exportButton setEnabled:(_stacked != nullptr) && !_running];
@@ -506,7 +499,7 @@ static void SetText(NSTextField* field, id value) {
     SetCheck(_refineCheck, d[@"refine"]);
     if (d[@"apTopPercent"]) _apTopPercentSetting = [d[@"apTopPercent"] doubleValue];
     if (d[@"apTopCount"]) _apTopCountSetting = [d[@"apTopCount"] intValue];
-    _selectionUsesCount = d[@"selectionMode"] && [d[@"selectionMode"] integerValue] == 1;
+    if (d[@"selectionMode"]) _selectionUsesCount = [d[@"selectionMode"] integerValue] == 1;
     [_selectionModeSegment setSelectedSegment:_selectionUsesCount ? 1 : 0];
     SetCheck(_normalizeCheck, d[@"normalizeBrightness"]);
     SelectIndex(_stackModePopup, d[@"stackMode"]);
@@ -582,37 +575,40 @@ static void SetText(NSTextField* field, id value) {
     [self updateControlsEnabled];
 }
 
-// つまみの状態を次回の起動へ引き継ぐ（U5）。
-- (void)persistSettings {
-    if (_restoringSettings || getenv("LUNASTACK_SNAPSHOT")) return;
-    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-    [defaults setObject:[self settingsDictionary] forKey:@"lastSettings"];
-    [defaults setObject:_darkPath ? _darkPath : @"" forKey:@"darkPath"];
-    [defaults setObject:_flatPath ? _flatPath : @"" forKey:@"flatPath"];
-}
-
-- (void)restorePersistedSettings {
-    NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-    NSMutableDictionary* d = [[[defaults dictionaryForKey:@"lastSettings"] mutableCopy] autorelease];
-    // フレーム範囲はファイルごとのものなので、次の起動へは持ち越さない。
-    [d removeObjectForKey:@"rangeStart"];
-    [d removeObjectForKey:@"rangeEnd"];
-    if (d) [self applySettingsDictionary:d includePostProcessing:YES];
-    NSFileManager* fm = [NSFileManager defaultManager];
-    NSString* dark = [defaults stringForKey:@"darkPath"];
-    NSString* flat = [defaults stringForKey:@"flatPath"];
-    if ([dark length] > 0 && [fm fileExistsAtPath:dark]) {
-        [_darkPath release];
-        _darkPath = [dark copy];
-        _calibrationDirty = YES;
-    }
-    if ([flat length] > 0 && [fm fileExistsAtPath:flat]) {
-        [_flatPath release];
-        _flatPath = [flat copy];
-        _calibrationDirty = YES;
-    }
-    [_darkLabel setStringValue:_darkPath ? [_darkPath lastPathComponent] : LSLocalizedString(@"なし")];
-    [_flatLabel setStringValue:_flatPath ? [_flatPath lastPathComponent] : LSLocalizedString(@"なし")];
+// すべての設定を起動直後の状態に戻す（［クリア］）。
+- (void)resetAllSettingsToDefaults {
+    if (_defaultSettings) [self applySettingsDictionary:_defaultSettings includePostProcessing:YES];
+    // 辞書に入っていない状態も初期に戻す。
+    _rotationTurns = 0;
+    _cropRect = NSZeroRect;
+    [_cropCheck setState:NSControlStateValueOff];
+    [_cropMarginField setStringValue:@"16"];
+    [_waveletPreviewCheck setState:NSControlStateValueOn];
+    [_waveletOnlyPreviewCheck setState:NSControlStateValueOn];
+    [_linkedCheck setState:NSControlStateValueOff];
+    [_lowMemoryCheck setState:NSControlStateValueOff];
+    [_darkPath release];
+    _darkPath = nil;
+    [_flatPath release];
+    _flatPath = nil;
+    _calibration.reset();
+    _calibrationDirty = NO;
+    [_darkLabel setStringValue:LSLocalizedString(@"なし")];
+    [_flatLabel setStringValue:LSLocalizedString(@"なし")];
+    [_presetPopup selectItemAtIndex:0];
+    [_apEditCheck setState:NSControlStateValueOff];
+    [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOn];
+    [[_displayMenu itemAtIndex:2] setState:NSControlStateValueOff];
+    [[_displayMenu itemAtIndex:3] setState:NSControlStateValueOn];
+    [_preview setDisplayStretch:YES];
+    [self apDisplayChanged:nil];
+    [_zoomControl setSelectedSegment:0];
+    [_preview setZoom:0.0];
+    [_graphMode setSelectedSegment:0];
+    [_frameOrderSegment setSelectedSegment:0];
+    [self updateFinishingValueLabels];
+    [self refreshCutLabel];
+    [self updateControlsEnabled];
 }
 
 // ---- ダーク・フラット ---------------------------------------------------------
@@ -633,7 +629,6 @@ static void SetText(NSTextField* field, id value) {
     _calibrationDirty = (_darkPath != nil || _flatPath != nil);
     [_darkLabel setStringValue:_darkPath ? [_darkPath lastPathComponent] : LSLocalizedString(@"なし")];
     [_flatLabel setStringValue:_flatPath ? [_flatPath lastPathComponent] : LSLocalizedString(@"なし")];
-    [self persistSettings];
     // 補正が変われば品質評価からやり直し（指紋に入っているので自動的に無効になる）。
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
     [self updateControlsEnabled];
@@ -738,8 +733,19 @@ static void SetText(NSTextField* field, id value) {
     NSData* data = [NSData dataWithContentsOfFile:[self sidecarSettingsPath]];
     id meta = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
     if (![meta isKindOfClass:[NSDictionary class]]) return;
-    NSDictionary* settings = meta[@"settings"];
-    if (![settings isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary* recordedSettings = meta[@"settings"];
+    if (![recordedSettings isKindOfClass:[NSDictionary class]]) return;
+    // 戻すのは、解析結果を使い回すのに必要な項目（アライメントの条件と入力の読み方）だけ。
+    // Drizzle倍率・加算方式・採用率・書き出し形式などは解析と無関係なので、いまの値
+    // （起動直後なら初期値）のままにする。
+    NSMutableDictionary* settings = [NSMutableDictionary dictionary];
+    for (NSString* key in @[ @"method", @"mode", @"apSize", @"searchRadius", @"qualityMetric",
+                             @"referenceTopPercent", @"refine", @"normalizeBrightness", @"endian",
+                             @"bitDepth", @"bayer", @"debayer", @"rawCfa", @"rangeStart", @"rangeEnd",
+                             @"outlierK", @"minSimilarity", @"maxShift", @"minScore", @"apGradient",
+                             @"apLevel" ]) {
+        if (recordedSettings[key]) settings[key] = recordedSettings[key];
+    }
     // 補正の素材が今と違えば、この解析結果は使えない。
     NSString* dark = meta[@"darkPath"];
     NSString* flat = meta[@"flatPath"];
@@ -924,7 +930,6 @@ static void SetText(NSTextField* field, id value) {
         return;
     }
     [self applySettingsDictionary:d];
-    [self persistSettings];
     [self updateControlsEnabled];
 }
 

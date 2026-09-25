@@ -81,6 +81,33 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
     return s;
 }
 
+// 画面に出す仕上げ。「ウェーブレットの効果をプレビュー」がOFFなら、ウェーブレットと
+// 輪抑制だけを外して描く（書き出しは常に currentFinishingSettings を使う）。
+- (stackcore::FinishingSettings)previewFinishingSettings {
+    stackcore::FinishingSettings s = [self currentFinishingSettings];
+    if ([_waveletOnlyPreviewCheck state] != NSControlStateValueOn) {
+        s.wavelet.assign(kWaveletLayers, stackcore::WaveletLayerParams());
+        s.dering = 0.0;
+    }
+    return s;
+}
+
+- (void)waveletOnlyPreviewChanged:(id)sender {
+    (void)sender;
+    if (!_stacked) return;
+    const BOOL on = [_waveletOnlyPreviewCheck state] == NSControlStateValueOn;
+    // 仕上げ全体をOFFにしていると違いが見えないので、比べるときは全体をONにする。
+    if ([_waveletPreviewCheck state] != NSControlStateValueOn) {
+        [_waveletPreviewCheck setState:NSControlStateValueOn];
+    }
+    [_viewModeSegment setSelectedSegment:2];
+    _displayed.reset();
+    [self requestFinishingRender:NO];
+    [self updateFrameInfoLabel];
+    [_statusLabel setStringValue:LSLocalizedString(on ? @"ウェーブレットの効果ありのプレビュー"
+                                                     : @"ウェーブレットの効果なしのプレビュー（ほかの仕上げは掛けたまま）")];
+}
+
 // 新しいスタックを始める・入力を変えるときに、前の結果と描画待ちを捨てる。
 - (void)resetFinishingForNewStack {
     ++_renderGeneration;
@@ -106,7 +133,7 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 // draft が YES なら、大きな画像では縮小版で先に追従する（UI設計書 §4.5）。
 - (void)requestFinishingRender:(BOOL)draft {
     if (!_finishing || !_stacked) return;
-    const stackcore::FinishingSettings settings = [self currentFinishingSettings];
+    const stackcore::FinishingSettings settings = [self previewFinishingSettings];
     const long generation = ++_renderGeneration;
     const bool useDraft = draft && static_cast<double>(_stacked->width()) * _stacked->height() > kDraftPixels;
 
@@ -170,8 +197,12 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 
 // 仕上げを同期して描く（書き出しと自己検証用）。
 - (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNow {
+    return [self renderFinishingNowWithSettings:[self currentFinishingSettings]];
+}
+
+- (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNowWithSettings:
+    (const stackcore::FinishingSettings&)settings {
     if (!_finishing) return nullptr;
-    const stackcore::FinishingSettings settings = [self currentFinishingSettings];
     std::shared_ptr<stackcore::FinishingPipeline> pipeline = _finishing;
     auto out = std::make_shared<stackcore::FrameBuffer>();
     __block std::string error;
@@ -265,14 +296,12 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
     }
     [self updateFinishingValueLabels];
     [self requestFinishingRender:[self sliderIsDragging]];
-    if (!_restoringSettings && ![self sliderIsDragging]) [self persistSettings];
 }
 
 - (void)finishingChanged:(id)sender {
     (void)sender;
     [self updateFinishingValueLabels];
     [self requestFinishingRender:[self sliderIsDragging]];
-    if (!_restoringSettings && ![self sliderIsDragging]) [self persistSettings];
 }
 
 - (void)waveletPreviewChanged:(id)sender {
@@ -532,7 +561,6 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 - (void)formatChanged:(id)sender {
     (void)sender;
     [self updateNamePreview];
-    if (!_restoringSettings) [self persistSettings];
 }
 
 // 書き出しに添える情報（F6）。現在時刻は入れない（決定論性、仕様書 §7.1）。

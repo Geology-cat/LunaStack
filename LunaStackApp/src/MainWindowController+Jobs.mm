@@ -405,6 +405,10 @@
         _finishing = std::make_shared<stackcore::FinishingPipeline>();
         _finishing->set_input(_stacked, kWaveletLayers);
         [_viewModeSegment setSelectedSegment:2];
+        // スタック結果を見るときは位置合わせ領域の枠を消す（仕上げの見た目を枠が邪魔する）。
+        // 表示メニューからいつでも戻せる。
+        [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOff];
+        [self apDisplayChanged:nil];
         // 結果が出たら次の工程（仕上げ・書き出し）のタブへ進める。
         // 「スタックし終わったのに次に何をするのか分からない」を防ぐ。
         [self selectInspectorTab:3];
@@ -427,6 +431,9 @@
             [_viewModeSegment setSelectedSegment:1];
             [_preview showSharedFrame:_referenceImage];
         }
+        // アライメントの直後は、置いた位置合わせ領域を参照画像の上で確かめられるようにする。
+        [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOn];
+        [self apDisplayChanged:nil];
         [self notifyDone:LSLocalizedString(@"アライメントが完了しました。次はスタックです")];
     }
     // **APオーバーレイの更新は _stacked を入れたあとに行う。**

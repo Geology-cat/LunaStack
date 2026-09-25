@@ -374,3 +374,14 @@
 "マスターフラット作成" = "Building Master Flat";
 "1.5×" = "1.5×";
 "投影する画素の幅（pixfrac）" = "Drop size (pixfrac)";
+
+/* v0.3.1: 起動時の初期化・クリアでの初期化・プレビューの比較 */
+"クリアしました（設定も初期値に戻しました）— 新しい動画を追加してください" = "Cleared (settings were reset too) — add a new video";
+"入力キューと処理結果を消去し、すべての設定と仕上げを初期値に戻します。元動画・解析キャッシュ・書き出し済みファイル・プリセットは残ります" = "Clears the queue and results and resets all settings and finishing. Source videos, analysis caches, exported files and presets are kept";
+"プレビューの比較" = "Preview Comparison";
+"仕上げ全体の効果をプレビュー" = "Preview all finishing";
+"OFFでスタックそのままを表示します。ON/OFFは比較表示のみで、書き出しには設定中の仕上げをすべて適用します。" = "OFF shows the raw stack. ON/OFF only changes the preview; exports always apply all current finishing.";
+"ウェーブレットの効果をプレビュー" = "Preview wavelet effect";
+"OFFでウェーブレットを掛ける前の画像を表示します（書き出しには設定中の効果を適用します）" = "OFF shows the image before wavelets (exports still apply the current wavelet settings)";
+"ウェーブレットの効果ありのプレビュー" = "Preview with wavelets";
+"ウェーブレットの効果なしのプレビュー（ほかの仕上げは掛けたまま）" = "Preview without wavelets (other finishing still applied)";

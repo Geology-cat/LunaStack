@@ -143,7 +143,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     _clearButton = [self buttonWithTitle:@"クリア" action:@selector(clearWorkspace:)];
     [_clearButton
         setToolTip:LSLocalizedString(
-                       @"入力キューと処理結果を消去します。元動画・解析キャッシュ・書き出し済みファイル・設定は残ります")];
+                       @"入力キューと処理結果を消去し、すべての設定と仕上げを初期値に戻します。元動画・解析キャッシュ・書き出し済みファイル・プリセットは残ります")];
     [buttons addArrangedSubview:_clearButton];
     [pane addSubview:buttons];
 
@@ -441,6 +441,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [self buildAlignmentAdvancedSection:box];
     [self buildStackSection:box];
     [self buildDrizzleSection:box];
+    [self buildCompareSection:box];
     [self buildChannelSection:box];
     [self buildWaveletSection:box];
     [self buildColorSection:box];
@@ -853,17 +854,22 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
 // ---- 仕上げ・出力タブ ------------------------------------------------------
 
-- (void)buildChannelSection:(NSStackView*)box {
-    NSString* key = @"channel";
-    [self beginSection:@"RGBチャンネル合わせ（大気分散）" key:key inBox:box];
-
-    _waveletPreviewCheck = [self checkboxWithTitle:@"仕上げの効果をプレビュー" state:YES];
+// 仕上げの効果あり/なしの比較。どの仕上げ欄を開いていても見えるよう、タブの先頭に置く。
+- (void)buildCompareSection:(NSStackView*)box {
+    NSString* key = @"compare";
+    [self beginSection:@"プレビューの比較" key:key inBox:box];
+    _waveletPreviewCheck = [self checkboxWithTitle:@"仕上げ全体の効果をプレビュー" state:YES];
     [_waveletPreviewCheck setTarget:self];
     [_waveletPreviewCheck setAction:@selector(waveletPreviewChanged:)];
     [self addToSection:key view:_waveletPreviewCheck box:box];
     [self addToSection:key
-                  view:[self noteLabel:@"ON/OFFは比較表示のみです。書き出しには設定中の仕上げをすべて適用します。"]
+                  view:[self noteLabel:@"OFFでスタックそのままを表示します。ON/OFFは比較表示のみで、書き出しには設定中の仕上げをすべて適用します。"]
                    box:box];
+}
+
+- (void)buildChannelSection:(NSStackView*)box {
+    NSString* key = @"channel";
+    [self beginSection:@"RGBチャンネル合わせ（大気分散）" key:key inBox:box];
 
     NSString* names[4] = {@"R x", @"R y", @"B x", @"B y"};
     for (int i = 0; i < 4; ++i) {
@@ -890,6 +896,13 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 - (void)buildWaveletSection:(NSStackView*)box {
     NSString* key = @"wavelet";
     [self beginSection:@"ウェーブレット仕上げ" key:key inBox:box];
+
+    // ウェーブレットだけの効果あり/なし（色・向きなどほかの仕上げは掛けたまま比べる）。
+    _waveletOnlyPreviewCheck = [self checkboxWithTitle:@"ウェーブレットの効果をプレビュー" state:YES];
+    [_waveletOnlyPreviewCheck setTarget:self];
+    [_waveletOnlyPreviewCheck setAction:@selector(waveletOnlyPreviewChanged:)];
+    [_waveletOnlyPreviewCheck setToolTip:LSLocalizedString(@"OFFでウェーブレットを掛ける前の画像を表示します（書き出しには設定中の効果を適用します）")];
+    [self addToSection:key view:_waveletOnlyPreviewCheck box:box];
 
     [self addToSection:key
                   view:[self noteLabel:@"強調：1.00＝変化なし、8以上は強め ／ ノイズ：大きいほど強く低減"]

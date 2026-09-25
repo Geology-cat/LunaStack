@@ -247,9 +247,88 @@
     return ok;
 }
 
+// 「ウェーブレットの効果をプレビュー」のON/OFFで表示が変わり、OFFのときは
+// ウェーブレットを外した仕上げと同じ画素になるか。書き出しはOFFでも効果を含むか。
+- (BOOL)selfCheckWaveletPreviewToggle {
+    if (!_stacked || !_finishing) return NO;
+    [_sharpenSliders[0] setDoubleValue:4.0];
+    [self updateFinishingValueLabels];
+    [_waveletOnlyPreviewCheck setState:NSControlStateValueOn];
+    std::shared_ptr<stackcore::FrameBuffer> on = [self renderFinishingNowWithSettings:[self previewFinishingSettings]];
+    [_waveletOnlyPreviewCheck setState:NSControlStateValueOff];
+    std::shared_ptr<stackcore::FrameBuffer> off = [self renderFinishingNowWithSettings:[self previewFinishingSettings]];
+    stackcore::FinishingSettings none = [self currentFinishingSettings];
+    none.wavelet.assign(kWaveletLayers, stackcore::WaveletLayerParams());
+    none.dering = 0.0;
+    std::shared_ptr<stackcore::FrameBuffer> expected = [self renderFinishingNowWithSettings:none];
+    std::shared_ptr<stackcore::FrameBuffer> exported = [self renderFinishingNow];
+    const auto same = [](const stackcore::FrameBuffer& a, const stackcore::FrameBuffer& b) {
+        if (a.width() != b.width() || a.height() != b.height() || a.channels() != b.channels()) return false;
+        for (int c = 0; c < a.channels(); ++c) {
+            for (int y = 0; y < a.height(); ++y) {
+                if (std::memcmp(a.row(c, y), b.row(c, y), sizeof(float) * a.width()) != 0) return false;
+            }
+        }
+        return true;
+    };
+    const BOOL ok = !same(*on, *off) && same(*off, *expected) && same(*on, *exported);
+    [_waveletOnlyPreviewCheck setState:NSControlStateValueOn];
+    [_sharpenSliders[0] setDoubleValue:1.0];
+    [self updateFinishingValueLabels];
+    NSLog(@"ウェーブレット切り替えの自己検証: %@", ok ? @"ON/OFFで表示が変わり、書き出しには効果が入る" : @"想定と違う");
+    return ok;
+}
+
+// スタック結果を表示した直後は、位置合わせ領域の枠が消えているか。
+- (BOOL)selfCheckApHiddenAfterStack {
+    const BOOL ok = [[_displayMenu itemAtIndex:1] state] == NSControlStateValueOff &&
+                    [_viewModeSegment selectedSegment] == 2;
+    NSLog(@"枠の自己検証: スタック結果の表示で位置合わせ領域の枠が%@", ok ? @"消えている" : @"残っている");
+    return ok;
+}
+
+// ［クリア］で入力キュー・設定・仕上げのつまみがすべて起動直後の状態に戻るか。
+- (BOOL)selfCheckClearResetsEverything {
+    // いろいろ動かしてから消す。
+    [_sharpenSliders[0] setDoubleValue:7.5];
+    [_denoiseSliders[1] setDoubleValue:0.4];
+    [_gainSliders[0] setDoubleValue:1.3];
+    [_saturationSlider setDoubleValue:1.6];
+    [_deringSlider setDoubleValue:0.7];
+    [_toneCheck setState:NSControlStateValueOn];
+    [_blackSlider setDoubleValue:0.1];
+    [_channelFields[1] setStringValue:@"1.25"];
+    [_topSlider setDoubleValue:40.0];
+    [_drizzleSegment setSelectedSegment:3];
+    [_bayerPopup selectItemAtIndex:2];
+    [_rangeStartField setStringValue:@"3"];
+    [_minScoreField setStringValue:@"0.3"];
+    [_formatPopup selectItemAtIndex:2];
+    [_objectField setStringValue:@"Mars"];
+    _rotationTurns = 2;
+    [_flipHCheck setState:NSControlStateValueOn];
+    [_waveletOnlyPreviewCheck setState:NSControlStateValueOff];
+    [self clearWorkspace:nil];
+
+    BOOL ok = [_items count] == 0 && _rotationTurns == 0 && _cropRect.size.width == 0 &&
+              !_darkPath && !_flatPath && !_stacked &&
+              [_waveletOnlyPreviewCheck state] == NSControlStateValueOn &&
+              [_waveletPreviewCheck state] == NSControlStateValueOn;
+    NSDictionary* now = [self settingsDictionary];
+    for (NSString* key in _defaultSettings) {
+        if (![[now[key] description] isEqualToString:[_defaultSettings[key] description]]) {
+            NSLog(@"クリアの自己検証: %@ が初期値に戻りません（%@ → %@）", key, _defaultSettings[key], now[key]);
+            ok = NO;
+        }
+    }
+    NSLog(@"クリアの自己検証: %@", ok ? @"すべて初期値" : @"初期値に戻らない項目あり");
+    return ok;
+}
+
 - (void)waitForFinishingForTesting {
     if (!_finishing) return;
-    std::shared_ptr<stackcore::FrameBuffer> out = [self renderFinishingNow];
+    std::shared_ptr<stackcore::FrameBuffer> out =
+        [self renderFinishingNowWithSettings:[self previewFinishingSettings]];
     _displayed = out;
     ++_renderGeneration;  // 途中の非同期描画で上書きさせない
     if ([_viewModeSegment selectedSegment] == 2) [self showFinishedOrStacked];
