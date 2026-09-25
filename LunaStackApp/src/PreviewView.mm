@@ -47,6 +47,11 @@ constexpr double kMaxZoom = 32.0;
     NSPoint _panOrigin;
 
     NSTrackingArea* _tracking;
+
+    BOOL _fixedStretch;
+    float _fixedLo;
+    float _fixedHi;
+    float _fixedGamma;
 }
 
 @synthesize zoom = _zoom;
@@ -76,6 +81,10 @@ constexpr double kMaxZoom = 32.0;
         _panning = NO;
         _cropOverlay = NSZeroRect;
         _tracking = nil;
+        _fixedStretch = NO;
+        _fixedLo = 0.0f;
+        _fixedHi = 1.0f;
+        _fixedGamma = 0.75f;
     }
     return self;
 }
@@ -148,6 +157,21 @@ constexpr double kMaxZoom = 32.0;
     if (_source) [self rebuildImage];
 }
 
+- (void)setFixedStretchLow:(float)lo high:(float)hi gamma:(float)gamma {
+    const BOOL changed = !_fixedStretch || lo != _fixedLo || hi != _fixedHi || gamma != _fixedGamma;
+    _fixedStretch = YES;
+    _fixedLo = lo;
+    _fixedHi = hi > lo ? hi : lo + 1e-6f;
+    _fixedGamma = gamma > 0.0f ? gamma : 1.0f;
+    if (changed && _source) [self rebuildImage];
+}
+
+- (void)clearFixedStretch {
+    if (!_fixedStretch) return;
+    _fixedStretch = NO;
+    if (_source) [self rebuildImage];
+}
+
 - (void)showFrameBuffer:(const stackcore::FrameBuffer&)frame {
     if (frame.empty()) {
         [self clearImage];
@@ -192,7 +216,12 @@ constexpr double kMaxZoom = 32.0;
     // 表示用のストレッチ係数。全チャンネル共通にしないと色が転ぶ。
     // 行ごとの最小・最大を並列に求めてから畳む（結果は実行順によらない）。
     float lo = 0.0f, hi = 1.0f;
-    if (_displayStretch) {
+    float displayGamma = 0.75f;
+    if (_displayStretch && _fixedStretch) {
+        lo = _fixedLo;
+        hi = _fixedHi;
+        displayGamma = _fixedGamma;
+    } else if (_displayStretch) {
         std::vector<float> row_lo(static_cast<std::size_t>(h), 1.0f);
         std::vector<float> row_hi(static_cast<std::size_t>(h), 0.0f);
         float* rlo = row_lo.data();
@@ -231,7 +260,7 @@ constexpr double kMaxZoom = 32.0;
     for (int i = 0; i <= kLutSize; ++i) {
         const float t = static_cast<float>(i) / kLutSize;
         lut[static_cast<std::size_t>(i)] =
-            static_cast<unsigned char>((stretch ? std::pow(t, 0.75f) : t) * 255.0f + 0.5f);
+            static_cast<unsigned char>((stretch ? std::pow(t, displayGamma) : t) * 255.0f + 0.5f);
     }
     const unsigned char* table = lut.data();
     std::vector<unsigned char> pixels(static_cast<std::size_t>(w) * h * 4);

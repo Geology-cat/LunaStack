@@ -317,7 +317,7 @@
 "履歴を消去" = "Clear Menu";
 "左右反転" = "Flip horizontally";
 "強さ" = "Amount";
-"強調" = "Sharpen";
+"強調" = "Sharp";
 "強調：1.00＝変化なし、8以上は強め ／ ノイズ：大きいほど強く低減" = "Sharpen: 1.00 = no change, 8 or more is strong / Noise: higher = stronger reduction";
 "彩度" = "Saturation";
 "惑星の縁の赤・青のにじみ（大気の分散）を、R・BをGに重ねて取り除きます。単位は画素です。" = "Removes red/blue fringes at the planet's edge (atmospheric dispersion) by aligning R and B to G. Units are pixels.";
@@ -385,3 +385,10 @@
 "OFFでウェーブレットを掛ける前の画像を表示します（書き出しには設定中の効果を適用します）" = "OFF shows the image before wavelets (exports still apply the current wavelet settings)";
 "ウェーブレットの効果ありのプレビュー" = "Preview with wavelets";
 "ウェーブレットの効果なしのプレビュー（ほかの仕上げは掛けたまま）" = "Preview without wavelets (other finishing still applied)";
+
+/* v0.3.2: ウェーブレットの±ボタン・数値入力・レイヤーごとのリセット */
+"－/＋で細かく調整できます（押し続けると連続して変わります）。数値欄に直接入力もできます。" = "Use −/+ for fine steps (hold to repeat). You can also type a value.";
+"初期値に戻す" = "Reset";
+"このレイヤーを強調1.00・ノイズ0.00に戻します" = "Resets this layer to sharpen 1.00 and noise 0.00";
+"少し下げる（押し続けると連続）" = "Decrease slightly (hold to repeat)";
+"少し上げる（押し続けると連続）" = "Increase slightly (hold to repeat)";

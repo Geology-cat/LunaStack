@@ -39,6 +39,36 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
     return out;
 }
 
+// 下書きを元の大きさに戻す（双線形）。表示専用なので精度より連続性を取る。
+std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& src, int w, int h) {
+    if (src.empty() || w <= 0 || h <= 0) return std::make_shared<stackcore::FrameBuffer>();
+    auto out = std::make_shared<stackcore::FrameBuffer>(w, h, src.channels());
+    const double sx = static_cast<double>(src.width()) / w;
+    const double sy = static_cast<double>(src.height()) / h;
+    for (int c = 0; c < src.channels(); ++c) {
+        for (int y = 0; y < h; ++y) {
+            const double fy = std::max(0.0, (y + 0.5) * sy - 0.5);
+            const int y0 = std::min(src.height() - 1, static_cast<int>(fy));
+            const int y1 = std::min(src.height() - 1, y0 + 1);
+            const float ty = static_cast<float>(fy - y0);
+            const float* r0 = src.row(c, y0);
+            const float* r1 = src.row(c, y1);
+            float* d = out->row(c, y);
+            for (int x = 0; x < w; ++x) {
+                const double fx = std::max(0.0, (x + 0.5) * sx - 0.5);
+                const int x0 = std::min(src.width() - 1, static_cast<int>(fx));
+                const int x1 = std::min(src.width() - 1, x0 + 1);
+                const float tx = static_cast<float>(fx - x0);
+                const float top = r0[x0] + (r0[x1] - r0[x0]) * tx;
+                const float bottom = r1[x0] + (r1[x1] - r1[x0]) * tx;
+                d[x] = top + (bottom - top) * ty;
+            }
+        }
+    }
+    out->set_source_bit_depth(src.source_bit_depth());
+    return out;
+}
+
 }  // namespace
 
 @implementation MainWindowController (Finishing)
@@ -111,6 +141,10 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 // 新しいスタックを始める・入力を変えるときに、前の結果と描画待ちを捨てる。
 - (void)resetFinishingForNewStack {
     ++_renderGeneration;
+    _renderPending = NO;
+    _stackedDisplayLow = 0.0f;
+    _stackedDisplayHigh = 0.0f;
+    _lastFullRenderSeconds = 0.0;
     _stacked.reset();
     _displayed.reset();
     _finishing.reset();
@@ -129,13 +163,46 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
     [self requestFinishingRender:NO];
 }
 
-// 仕上げ済みの画像を作る。重い処理なので直列キューで行い、終わったものから最新だけを出す。
-// draft が YES なら、大きな画像では縮小版で先に追従する（UI設計書 §4.5）。
+// 仕上げ済みの画像を作る。重い処理なので直列キューで行う。
+//
+// **描画中に来た要求は捨てずに1つだけ控えておき、描き終わったらすぐ最新の設定で
+// 次を描く。** 以前は要求のたびに番号を進め、描き上がった時点で番号が古ければ
+// 結果を捨てていた。スライダーのドラッグでは描画より速く要求が来るので、
+// ドラッグ中の結果がすべて捨てられて画面が止まり、指を止めた瞬間に飛んでいた。
+// いまは「描いている間に動いた分」を次の1枚でまとめて描くので、描画の速さなりに
+// 途切れず追従する。
+//
+// draft が YES（ドラッグ中）で、画像が大きいか直前の描画が遅かったときは、
+// 半分の解像度で描いてから元の大きさに拡大して出す（UI設計書 §4.5）。
+// 大きさを変えずに出すので、等倍表示でも表示位置が飛ばない。
 - (void)requestFinishingRender:(BOOL)draft {
     if (!_finishing || !_stacked) return;
+    if (_renderInFlight) {
+        _renderPending = YES;
+        // ドラッグをやめたあとの要求（本解像度）は、下書きの要求で上書きしない。
+        _pendingDraft = _pendingDraft && draft;
+        return;
+    }
+    [self startFinishingRender:draft];
+}
+
+// 仕上げ後の大きさ（回転・切り抜き込み）。下書きを元の大きさへ戻すのに使う。
+- (NSSize)finishedSizeForSettings:(const stackcore::FinishingSettings&)s {
+    int w = _stacked->width(), h = _stacked->height();
+    if (s.geometry.crop) {
+        w = std::max(1, std::min(s.geometry.crop_width, w - std::max(0, s.geometry.crop_x)));
+        h = std::max(1, std::min(s.geometry.crop_height, h - std::max(0, s.geometry.crop_y)));
+    }
+    if (s.geometry.rotate_quarter_turns % 2 != 0) std::swap(w, h);
+    return NSMakeSize(w, h);
+}
+
+- (void)startFinishingRender:(BOOL)draft {
     const stackcore::FinishingSettings settings = [self previewFinishingSettings];
-    const long generation = ++_renderGeneration;
-    const bool useDraft = draft && static_cast<double>(_stacked->width()) * _stacked->height() > kDraftPixels;
+    const long generation = _renderGeneration;
+    const double pixels = static_cast<double>(_stacked->width()) * _stacked->height();
+    const bool useDraft = draft && (pixels > kDraftPixels || _lastFullRenderSeconds > 0.08);
+    const NSSize fullSize = [self finishedSizeForSettings:settings];
 
     std::shared_ptr<stackcore::FinishingPipeline> pipeline = _finishing;
     stackcore::FinishingSettings job = settings;
@@ -163,36 +230,86 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
         }
     }
 
+    _renderInFlight = YES;
+    _renderPending = NO;
+    _pendingDraft = YES;
     MainWindowController* controller = self;
+    const int fullW = static_cast<int>(fullSize.width), fullH = static_cast<int>(fullSize.height);
     dispatch_async(_finishQueue, ^{
+        const NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
         auto out = std::make_shared<stackcore::FrameBuffer>();
         std::string error;
         try {
             pipeline->render(job, *out);
+            if (useDraft) out = ScaleTo(*out, fullW, fullH);
         } catch (const std::exception& e) {
             error = e.what();
         }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [controller finishedRender:out generation:generation draft:useDraft error:error];
+        const double seconds = [NSDate timeIntervalSinceReferenceDate] - start;
+        // メインのランループへ直接渡す（共通モード）。スライダーのドラッグ追跡中や、
+        // 入れ子で回っているランループの中でも、描き上がった結果がすぐ届く。
+        CFRunLoopRef mainLoop = CFRunLoopGetMain();
+        CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{
+            [controller finishedRender:out generation:generation draft:useDraft seconds:seconds error:error];
         });
+        CFRunLoopWakeUp(mainLoop);
     });
 }
 
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
             generation:(long)generation
                  draft:(bool)draft
+               seconds:(double)seconds
                  error:(const std::string&)error {
-    if (generation != _renderGeneration) return;  // 後から新しい要求が来ている
-    if (!error.empty()) {
+    _renderInFlight = NO;
+    if (!draft) _lastFullRenderSeconds = seconds;
+    // 結果を捨てるのは、入力そのものが変わったとき（新しいスタック・クリア）だけ。
+    const BOOL current = generation == _renderGeneration;
+    if (current && !error.empty()) {
         [_statusLabel setStringValue:[NSString stringWithUTF8String:error.c_str()]];
+    } else if (current) {
+        if (!draft && !_renderPending) _displayed = out;
+        if ([_viewModeSegment selectedSegment] == 2 &&
+            [_waveletPreviewCheck state] == NSControlStateValueOn) {
+            ++_previewUpdates;
+            [self applyFinishingDisplayRange];
+            [_preview showSharedFrame:out];
+            [self updateApOverlay];
+        }
+    }
+    if (!_finishing || !_stacked) return;
+    if (_renderPending) {
+        // 描いている間にまた動いた。最新の設定ですぐ次を描く。
+        [self startFinishingRender:_pendingDraft];
+    } else if (draft) {
+        // 下書きのまま止まった（最後の要求が下書きだった）。本解像度で確定する。
+        [self startFinishingRender:NO];
+    }
+}
+
+// 仕上げの表示では、明るさの基準をスタック結果に固定する（強調するたびに明るさが揺れない）。
+// 黒点・白点を自分で調整しているときは、その結果をそのまま（線形に）見せる。
+- (void)applyFinishingDisplayRange {
+    if (!_stacked) return;
+    if ([_toneCheck state] == NSControlStateValueOn) {
+        [_preview setFixedStretchLow:0.0f high:1.0f gamma:1.0f];
         return;
     }
-    if (!draft) _displayed = out;
-    if ([_viewModeSegment selectedSegment] != 2) return;
-    if ([_waveletPreviewCheck state] == NSControlStateValueOn) {
-        [_preview showSharedFrame:out];
+    if (!(_stackedDisplayHigh > _stackedDisplayLow)) {
+        float lo = 1.0f, hi = 0.0f;
+        for (int c = 0; c < _stacked->channels(); ++c) {
+            for (int y = 0; y < _stacked->height(); ++y) {
+                const float* r = _stacked->row(c, y);
+                for (int x = 0; x < _stacked->width(); ++x) {
+                    lo = std::min(lo, r[x]);
+                    hi = std::max(hi, r[x]);
+                }
+            }
+        }
+        _stackedDisplayLow = lo;
+        _stackedDisplayHigh = hi > lo ? hi : lo + 1e-6f;
     }
-    [self updateApOverlay];
+    [_preview setFixedStretchLow:_stackedDisplayLow high:_stackedDisplayHigh gamma:0.75f];
 }
 
 // 仕上げを同期して描く（書き出しと自己検証用）。
@@ -221,6 +338,7 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 - (void)showFinishedOrStacked {
     if (!_stacked) return;
     const BOOL showEffect = [_waveletPreviewCheck state] == NSControlStateValueOn;
+    [self applyFinishingDisplayRange];
     if (showEffect && _displayed) {
         [_preview showSharedFrame:_displayed];
     } else {
@@ -239,14 +357,19 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
 }
 
 - (void)updateFinishingValueLabels {
-    for (int j = 0; j < kWaveletLayers; ++j) {
-        [_sharpenValues[j] setStringValue:[NSString stringWithFormat:@"%.2f", [_sharpenSliders[j] doubleValue]]];
-        [_denoiseValues[j] setStringValue:[NSString stringWithFormat:@"%.2f", [_denoiseSliders[j] doubleValue]]];
-        [_sharpenSliders[j] setEnabled:[_linkedCheck state] != NSControlStateValueOn];
+    // ±ボタン・数値欄つきのつまみ。入力中の数値欄は書き換えない（打っている途中で消えないように）。
+    const BOOL linked = [_linkedCheck state] == NSControlStateValueOn;
+    for (int i = 0; i < kAdjustCount; ++i) {
+        if (!_adjSliders[i]) continue;
+        if ([_adjFields[i] currentEditor] == nil) {
+            [_adjFields[i] setStringValue:[NSString stringWithFormat:@"%.2f", [_adjSliders[i] doubleValue]]];
+        }
+        // 連動中は各レイヤーの強調を直接動かせない（強さで一括して動かす）。
+        BOOL enabled = YES;
+        if (i < kAdjustLinked && i % 2 == 0) enabled = !linked;
+        if (i == kAdjustLinked) enabled = linked;
+        for (NSControl* c in @[ _adjSliders[i], _adjFields[i], _adjMinus[i], _adjPlus[i] ]) [c setEnabled:enabled];
     }
-    [_linkedSlider setEnabled:[_linkedCheck state] == NSControlStateValueOn];
-    [_linkedValue setStringValue:[NSString stringWithFormat:@"%.2f", [_linkedSlider doubleValue]]];
-    [_deringValue setStringValue:[NSString stringWithFormat:@"%.2f", [_deringSlider doubleValue]]];
     for (int c = 0; c < 3; ++c) {
         [_gainValues[c] setStringValue:[NSString stringWithFormat:@"%.3f", [_gainSliders[c] doubleValue]]];
     }
@@ -265,6 +388,87 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
                                                               _cropRect.origin.x, _cropRect.origin.y,
                                                               _cropRect.size.width, _cropRect.size.height]];
     }
+}
+
+// ---- ±ボタン・数値欄・レイヤーの初期化 -----------------------------------------
+
+// つまみ index の値を変えたあと、スライダーを動かしたのと同じ処理を通す。
+- (void)adjustableChanged:(int)index {
+    if (index == kAdjustDering) {
+        [self finishingChanged:_adjSliders[index]];
+    } else {
+        [self waveletChanged:_adjSliders[index]];
+    }
+}
+
+// 押し続けたときは、続けて押されている回数に応じて1回の変化を大きくする
+// （はじめは細かく、長く押せば速く動く）。
+- (void)stepAdjustable:(int)index direction:(int)direction {
+    if (index < 0 || index >= kAdjustCount || !_adjSliders[index]) return;
+    static NSTimeInterval lastTime = 0.0;
+    static int lastIndex = -1;
+    static int repeats = 0;
+    const NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
+    repeats = (index == lastIndex && now - lastTime < 0.2) ? repeats + 1 : 0;
+    lastTime = now;
+    lastIndex = index;
+    const double factor = repeats > 30 ? 10.0 : (repeats > 10 ? 4.0 : 1.0);
+    NSSlider* slider = _adjSliders[index];
+    const double step = _adjSteps[index] * factor;
+    // 刻みの格子に乗せる（0.05刻みなら 1.37 → 1.40 のように揃える）。
+    double v = std::round([slider doubleValue] / _adjSteps[index]) * _adjSteps[index] + direction * step;
+    v = std::max([slider minValue], std::min([slider maxValue], v));
+    [slider setDoubleValue:v];
+    [self adjustableChanged:index];
+}
+
+- (void)adjustMinus:(id)sender {
+    [self stepAdjustable:static_cast<int>([sender tag]) direction:-1];
+}
+
+- (void)adjustPlus:(id)sender {
+    [self stepAdjustable:static_cast<int>([sender tag]) direction:+1];
+}
+
+// 数値欄に直接入力した値を反映する。範囲外は収め、読めない値は元に戻す。
+- (void)adjustFieldChanged:(id)sender {
+    NSTextField* field = (NSTextField*)sender;
+    const int index = static_cast<int>([field tag]);
+    if (index < 0 || index >= kAdjustCount || !_adjSliders[index]) return;
+    NSSlider* slider = _adjSliders[index];
+    NSString* text = [[field stringValue] stringByTrimmingCharactersInSet:
+                                              [NSCharacterSet whitespaceCharacterSet]];
+    // 全角の数字・小数点も受け付ける。
+    NSMutableString* ascii = [NSMutableString stringWithString:text];
+    CFStringTransform((CFMutableStringRef)ascii, NULL, kCFStringTransformFullwidthHalfwidth, false);
+    NSScanner* scanner = [NSScanner scannerWithString:ascii];
+    double v = 0.0;
+    if (![scanner scanDouble:&v] || ![scanner isAtEnd] || !std::isfinite(v)) {
+        NSBeep();
+        [field setStringValue:[NSString stringWithFormat:@"%.2f", [slider doubleValue]]];
+        return;
+    }
+    v = std::max([slider minValue], std::min([slider maxValue], v));
+    if (v == [slider doubleValue]) {
+        [field setStringValue:[NSString stringWithFormat:@"%.2f", v]];
+        return;
+    }
+    [slider setDoubleValue:v];
+    [self adjustableChanged:index];
+    [field setStringValue:[NSString stringWithFormat:@"%.2f", v]];
+}
+
+// レイヤー1つを初期値（強調1.00・ノイズ0.00）に戻す。
+- (void)resetLayer:(id)sender {
+    const int j = static_cast<int>([sender tag]);
+    if (j < 0 || j >= kWaveletLayers) return;
+    if ([_linkedCheck state] == NSControlStateValueOn) {
+        // 連動中に1層だけ戻すと配分が崩れるので、連動を外してから戻す。
+        [_linkedCheck setState:NSControlStateValueOff];
+    }
+    [_sharpenSliders[j] setDoubleValue:1.0];
+    [_denoiseSliders[j] setDoubleValue:0.0];
+    [self waveletChanged:nil];
 }
 
 // 連動の配分（最後に連動を入れたときの「強調−1」の比）。

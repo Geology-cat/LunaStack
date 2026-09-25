@@ -30,6 +30,12 @@ constexpr int kWaveletLayers = 6;
 // 20でも従来上限3の6倍以上あり、木星では16,8,3まで効果を確認している。
 constexpr double kWaveletGuiSharpenMaximum = 20.0;
 
+// ウェーブレット欄の「±ボタンと数値欄つき」のつまみの番号。
+//   2j = レイヤー j の強調、2j+1 = レイヤー j のノイズ、以下は連動の強さ・輪抑制。
+constexpr int kAdjustLinked = kWaveletLayers * 2;
+constexpr int kAdjustDering = kWaveletLayers * 2 + 1;
+constexpr int kAdjustCount = kWaveletLayers * 2 + 2;
+
 // Drizzle倍率（セグメントの並び順）。
 constexpr int kDrizzleChoiceCount = 4;
 inline double LSDrizzleScaleAt(NSInteger index) {

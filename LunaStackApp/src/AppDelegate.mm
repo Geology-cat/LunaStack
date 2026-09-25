@@ -146,6 +146,8 @@
             }
             if (selfTest) [self check:[controller selfCheckFinishingMatchesExport]];
             if (selfTest) [self check:[controller selfCheckWaveletPreviewToggle]];
+            if (selfTest) [self check:[controller selfCheckContinuousPreview]];
+            if (selfTest) [self check:[controller selfCheckWaveletControls]];
             if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];

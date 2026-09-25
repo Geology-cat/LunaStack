@@ -279,6 +279,74 @@
     return ok;
 }
 
+// ±ボタン・数値欄・レイヤーの「初期値に戻す」が、つまみと仕上げの設定に正しく効くか。
+- (BOOL)selfCheckWaveletControls {
+    BOOL ok = YES;
+    const auto expect = [&ok](double got, double want, NSString* what) {
+        if (std::fabs(got - want) > 1e-9) {
+            NSLog(@"ウェーブレット操作の自己検証: %@ が %.4f（期待 %.4f）", what, got, want);
+            ok = NO;
+        }
+    };
+    [_linkedCheck setState:NSControlStateValueOff];
+    [self resetWavelet:nil];
+    [self adjustPlus:_adjPlus[0]];
+    expect([_sharpenSliders[0] doubleValue], 1.05, @"＋1回後の強調");
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.25]];
+    [self adjustMinus:_adjMinus[1]];  // ノイズは0より下がらない
+    expect([_denoiseSliders[0] doubleValue], 0.0, @"－後のノイズ（下限）");
+    [_sharpenValues[1] setStringValue:@"3.5"];
+    [self adjustFieldChanged:_sharpenValues[1]];
+    expect([_sharpenSliders[1] doubleValue], 3.5, @"数値入力した強調");
+    [_denoiseValues[1] setStringValue:@"０．４"];  // 全角でも読める
+    [self adjustFieldChanged:_denoiseValues[1]];
+    expect([_denoiseSliders[1] doubleValue], 0.4, @"全角で入力したノイズ");
+    [_sharpenValues[2] setStringValue:@"50"];  // 範囲外は上限に収める
+    [self adjustFieldChanged:_sharpenValues[2]];
+    expect([_sharpenSliders[2] doubleValue], kWaveletGuiSharpenMaximum, @"範囲外の入力");
+    [_sharpenValues[2] setStringValue:@"abc"];  // 読めない値は元のまま
+    [self adjustFieldChanged:_sharpenValues[2]];
+    expect([_sharpenSliders[2] doubleValue], kWaveletGuiSharpenMaximum, @"不正な入力");
+    const stackcore::FinishingSettings s = [self currentFinishingSettings];
+    expect(s.wavelet[1].sharpen, 3.5, @"仕上げの設定に入った強調");
+    expect(s.wavelet[1].denoise, 0.4, @"仕上げの設定に入ったノイズ");
+    [self resetLayer:_layerResetButtons[1]];
+    expect([_sharpenSliders[1] doubleValue], 1.0, @"初期値に戻した強調");
+    expect([_denoiseSliders[1] doubleValue], 0.0, @"初期値に戻したノイズ");
+    expect([_sharpenSliders[2] doubleValue], kWaveletGuiSharpenMaximum, @"ほかのレイヤー（戻さない）");
+    [self resetWavelet:nil];
+    [self waitForFinishingForTesting];
+    NSLog(@"ウェーブレット操作の自己検証: %@", ok ? @"問題なし" : @"問題あり");
+    return ok;
+}
+
+// スライダーをドラッグしている間も、プレビューが途切れずに更新され続けるか。
+// 60Hz相当で値を変えながら描画を要求し、その間に画面へ出た回数を数える。
+- (BOOL)selfCheckContinuousPreview {
+    if (!_stacked || !_finishing) return NO;
+    [_viewModeSegment setSelectedSegment:2];
+    [_waveletPreviewCheck setState:NSControlStateValueOn];
+    _previewUpdates = 0;
+    const int steps = 60;
+    for (int i = 0; i < steps; ++i) {
+        [_sharpenSliders[0] setDoubleValue:1.0 + 8.0 * i / steps];
+        [self updateFinishingValueLabels];
+        [self requestFinishingRender:YES];
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.0 / 60.0]];
+    }
+    const int duringDrag = _previewUpdates;
+    [self requestFinishingRender:NO];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
+    [_sharpenSliders[0] setDoubleValue:1.0];
+    [self updateFinishingValueLabels];
+    [self waitForFinishingForTesting];
+    // 1秒のドラッグで10回以上（＝おおむね10fps以上）描き直していれば「途切れない」とみなす。
+    const BOOL ok = duringDrag >= 10;
+    NSLog(@"連続プレビューの自己検証: ドラッグ中 %d 回更新（%d 回の操作）%@", duringDrag, steps,
+          ok ? @"" : @"— 途切れています");
+    return ok;
+}
+
 // スタック結果を表示した直後は、位置合わせ領域の枠が消えているか。
 - (BOOL)selfCheckApHiddenAfterStack {
     const BOOL ok = [[_displayMenu itemAtIndex:1] state] == NSControlStateValueOff &&

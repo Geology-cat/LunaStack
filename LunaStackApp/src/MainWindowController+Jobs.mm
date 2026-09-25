@@ -429,6 +429,7 @@
                                                      static_cast<int>(result.frames.size())]];
         if (_referenceImage) {
             [_viewModeSegment setSelectedSegment:1];
+            [_preview clearFixedStretch];
             [_preview showSharedFrame:_referenceImage];
         }
         // アライメントの直後は、置いた位置合わせ領域を参照画像の上で確かめられるようにする。

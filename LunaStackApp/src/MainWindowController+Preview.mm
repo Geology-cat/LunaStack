@@ -58,6 +58,7 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
         const stackcore::FrameBuffer* frame =
             stackcore::read_prepared_frame(*_previewSource, index, raw, cfa, rgb);
         _sourceChannels = frame->channels();
+        [_preview clearFixedStretch];  // 入力のフレームは1枚ごとに明るさを合わせて見せる
         [_preview showFrameBuffer:*frame];
     } catch (const std::exception& e) {
         [_preview clearImage];
@@ -178,6 +179,7 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
     switch ([_viewModeSegment selectedSegment]) {
         case 1:
             if (_referenceImage) {
+                [_preview clearFixedStretch];
                 [_preview showSharedFrame:_referenceImage];
             } else {
                 [_statusLabel

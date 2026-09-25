@@ -117,6 +117,13 @@
     NSTextField* _sharpenValues[kWaveletLayers];
     NSSlider* _denoiseSliders[kWaveletLayers];
     NSTextField* _denoiseValues[kWaveletLayers];
+    // ±ボタンと数値欄つきのつまみ（番号は LSAppSupport.h の kAdjust*）。
+    NSSlider* _adjSliders[kAdjustCount];
+    NSTextField* _adjFields[kAdjustCount];
+    NSButton* _adjMinus[kAdjustCount];
+    NSButton* _adjPlus[kAdjustCount];
+    double _adjSteps[kAdjustCount];
+    NSButton* _layerResetButtons[kWaveletLayers];
     NSButton* _linkedCheck;
     NSSlider* _linkedSlider;
     NSTextField* _linkedValue;
@@ -216,6 +223,13 @@
     std::shared_ptr<stackcore::FinishingPipeline> _finishingDraft;  // ドラッグ中の縮小版
     dispatch_queue_t _finishQueue;  // 仕上げの描画を順に行う直列キュー
     long _renderGeneration;         // 最新の描画要求の番号（古い結果を捨てる）
+    int _previewUpdates;            // 画面に出した仕上げの回数（自己検証用）
+    BOOL _renderInFlight;           // 仕上げを描いている最中
+    BOOL _renderPending;            // 描いている間に次の要求が来た
+    BOOL _pendingDraft;             // 次の要求は下書きでよいか
+    double _lastFullRenderSeconds;  // 直前の本解像度の描画にかかった時間
+    float _stackedDisplayLow;       // 仕上げの表示に使う明るさの基準（スタック結果の範囲）
+    float _stackedDisplayHigh;
     int _rotationTurns;
     NSRect _cropRect;               // スタック結果の座標。幅0で未指定
 
@@ -383,6 +397,14 @@
 - (stackcore::FinishingSettings)previewFinishingSettings;
 - (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNowWithSettings:(const stackcore::FinishingSettings&)settings;
 - (void)waveletOnlyPreviewChanged:(id)sender;
+- (NSView*)adjustRow:(NSString*)caption slider:(NSSlider*)slider field:(NSTextField*)field
+               index:(int)index step:(double)step;
+- (NSTextField*)valueFieldWithIndex:(int)index;
+- (void)adjustMinus:(id)sender;
+- (void)adjustPlus:(id)sender;
+- (void)adjustFieldChanged:(id)sender;
+- (void)adjustableChanged:(int)index;
+- (void)resetLayer:(id)sender;
 - (void)buildCompareSection:(NSStackView*)box;
 - (void)resetFinishingForNewStack;
 - (void)applyWavelet;
@@ -415,7 +437,11 @@
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
             generation:(long)generation
                  draft:(bool)draft
+               seconds:(double)seconds
                  error:(const std::string&)error;
+- (void)startFinishingRender:(BOOL)draft;
+- (NSSize)finishedSizeForSettings:(const stackcore::FinishingSettings&)s;
+- (void)applyFinishingDisplayRange;
 - (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNow;
 - (BOOL)sliderIsDragging;
 - (void)captureLinkedProfile:(double*)profile;

@@ -63,6 +63,13 @@
 // **保存されるデータには一切影響しない。** 見るための変換である。
 @property(nonatomic) BOOL displayStretch;
 
+// 表示ストレッチの範囲を固定する（画像ごとに測り直さない）。
+// 仕上げのスライダーを動かすたびに最小・最大が変わると、明るさが揺れて違いが見えにくい。
+// 基準の画像（スタック結果）の範囲に固定すれば、強調の効き方だけが変わって見える。
+// gamma は表示用のガンマ（1.0で線形）。
+- (void)setFixedStretchLow:(float)lo high:(float)hi gamma:(float)gamma;
+- (void)clearFixedStretch;
+
 // ---- APオーバーレイ（UI設計書 §5.2） ----
 
 // APの一覧を渡す。

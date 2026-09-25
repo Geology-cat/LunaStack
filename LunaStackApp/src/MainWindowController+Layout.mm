@@ -568,6 +568,60 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     return row;
 }
 
+// 数値欄（直接入力できる）。Return か入力欄を離れたときに反映する。
+- (NSTextField*)valueFieldWithIndex:(int)index {
+    NSTextField* field = [[[NSTextField alloc] init] autorelease];
+    [field setFont:[NSFont monospacedDigitSystemFontOfSize:11.0 weight:NSFontWeightRegular]];
+    [field setAlignment:NSTextAlignmentRight];
+    [field setControlSize:NSControlSizeSmall];
+    [field setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [field setTag:index];
+    [field setTarget:self];
+    [field setAction:@selector(adjustFieldChanged:)];
+    [[field cell] setSendsActionOnEndEditing:YES];
+    return field;
+}
+
+// 「見出し －［スライダー］＋ 数値欄」の1行。
+// －/＋は押し続けると連続して動く（NSButton の continuous。押している時間が長いほど速く）。
+- (NSView*)adjustRow:(NSString*)caption slider:(NSSlider*)slider field:(NSTextField*)field
+               index:(int)index step:(double)step {
+    NSStackView* row = [[[NSStackView alloc] init] autorelease];
+    [row setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
+    [row setSpacing:3.0];
+    [row setTranslatesAutoresizingMaskIntoConstraints:NO];
+    NSTextField* label = MakeLabel(caption);
+    [label setTextColor:[NSColor secondaryLabelColor]];
+    [[label cell] setWraps:NO];
+    [label setLineBreakMode:NSLineBreakByClipping];
+    [[label widthAnchor] constraintEqualToConstant:40.0].active = YES;
+    NSButton* minus = [self buttonWithTitle:@"－" action:@selector(adjustMinus:)];
+    NSButton* plus = [self buttonWithTitle:@"＋" action:@selector(adjustPlus:)];
+    for (NSButton* b in @[ minus, plus ]) {
+        [b setBezelStyle:NSBezelStyleSmallSquare];
+        [b setControlSize:NSControlSizeSmall];
+        [b setTag:index];
+        [b setContinuous:YES];
+        [b setPeriodicDelay:0.35f interval:0.06f];
+        [[b widthAnchor] constraintEqualToConstant:20.0].active = YES;
+    }
+    [minus setToolTip:LSLocalizedString(@"少し下げる（押し続けると連続）")];
+    [plus setToolTip:LSLocalizedString(@"少し上げる（押し続けると連続）")];
+    [row addArrangedSubview:label];
+    [row addArrangedSubview:minus];
+    [row addArrangedSubview:slider];
+    [row addArrangedSubview:plus];
+    [row addArrangedSubview:field];
+    [[field widthAnchor] constraintEqualToConstant:46.0].active = YES;
+    [[row widthAnchor] constraintEqualToConstant:272.0].active = YES;
+    _adjSliders[index] = slider;
+    _adjFields[index] = field;
+    _adjMinus[index] = minus;
+    _adjPlus[index] = plus;
+    _adjSteps[index] = step;
+    return row;
+}
+
 - (NSStackView*)buttonRow:(NSArray*)buttons {
     NSStackView* row = [[[NSStackView alloc] init] autorelease];
     [row setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
@@ -908,25 +962,43 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
                   view:[self noteLabel:@"強調：1.00＝変化なし、8以上は強め ／ ノイズ：大きいほど強く低減"]
                    box:box];
 
+    [self addToSection:key
+                  view:[self noteLabel:@"－/＋で細かく調整できます（押し続けると連続して変わります）。数値欄に直接入力もできます。"]
+                   box:box];
+
     for (int j = 0; j < kWaveletLayers; ++j) {
         NSString* title = [NSString stringWithFormat:LSLocalizedString(@"Layer %d（約%d px）"),
                                                      j + 1, 1 << (j + 1)];
         NSTextField* layerLabel = MakeLabel(title);
         [layerLabel setFont:[NSFont boldSystemFontOfSize:11.0]];
-        [self addToSection:key view:layerLabel box:box];
+        // レイヤーごとの「初期値に戻す」（強調1.00・ノイズ0.00）。
+        _layerResetButtons[j] = [self buttonWithTitle:@"初期値に戻す" action:@selector(resetLayer:)];
+        [_layerResetButtons[j] setControlSize:NSControlSizeSmall];
+        [_layerResetButtons[j] setFont:[NSFont systemFontOfSize:10.0]];
+        [_layerResetButtons[j] setTag:j];
+        [_layerResetButtons[j] setToolTip:LSLocalizedString(@"このレイヤーを強調1.00・ノイズ0.00に戻します")];
+        NSStackView* header = [[[NSStackView alloc] init] autorelease];
+        [header setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
+        [header setTranslatesAutoresizingMaskIntoConstraints:NO];
+        [header addView:layerLabel inGravity:NSStackViewGravityLeading];
+        [header addView:_layerResetButtons[j] inGravity:NSStackViewGravityTrailing];
+        [[header widthAnchor] constraintEqualToConstant:272.0].active = YES;
+        [self addToSection:key view:header box:box];
 
         _sharpenSliders[j] = [self sliderMin:0.0 max:kWaveletGuiSharpenMaximum value:1.0
                                       action:@selector(waveletChanged:)];
-        _sharpenValues[j] = MakeLabel(@"1.00");
+        _sharpenValues[j] = [self valueFieldWithIndex:2 * j];
         [self addToSection:key
-                      view:[self captionRow:@"強調" slider:_sharpenSliders[j] value:_sharpenValues[j]]
+                      view:[self adjustRow:@"強調" slider:_sharpenSliders[j] field:_sharpenValues[j]
+                                     index:2 * j step:0.05]
                        box:box];
 
         _denoiseSliders[j] = [self sliderMin:0.0 max:1.0 value:0.0
                                       action:@selector(waveletChanged:)];
-        _denoiseValues[j] = MakeLabel(@"0.00");
+        _denoiseValues[j] = [self valueFieldWithIndex:2 * j + 1];
         [self addToSection:key
-                      view:[self captionRow:@"ノイズ" slider:_denoiseSliders[j] value:_denoiseValues[j]]
+                      view:[self adjustRow:@"ノイズ" slider:_denoiseSliders[j] field:_denoiseValues[j]
+                                     index:2 * j + 1 step:0.01]
                        box:box];
     }
 
@@ -936,12 +1008,16 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_linkedCheck setAction:@selector(waveletChanged:)];
     [self addToSection:key view:_linkedCheck box:box];
     _linkedSlider = [self sliderMin:0.0 max:2.5 value:1.0 action:@selector(waveletChanged:)];
-    _linkedValue = MakeLabel(@"1.00");
-    [self addToSection:key view:[self captionRow:@"強さ" slider:_linkedSlider value:_linkedValue] box:box];
+    _linkedValue = [self valueFieldWithIndex:kAdjustLinked];
+    [self addToSection:key
+                  view:[self adjustRow:@"強さ" slider:_linkedSlider field:_linkedValue index:kAdjustLinked step:0.02]
+                   box:box];
 
     _deringSlider = [self sliderMin:0.0 max:1.0 value:0.0 action:@selector(finishingChanged:)];
-    _deringValue = MakeLabel(@"0.00");
-    [self addToSection:key view:[self captionRow:@"輪抑制" slider:_deringSlider value:_deringValue] box:box];
+    _deringValue = [self valueFieldWithIndex:kAdjustDering];
+    [self addToSection:key
+                  view:[self adjustRow:@"輪抑制" slider:_deringSlider field:_deringValue index:kAdjustDering step:0.01]
+                   box:box];
     [self addToSection:key
                   view:[self noteLabel:@"輪抑制（デリンギング）：強調で明るい縁の外にできる暗い輪を抑えます。"]
                    box:box];
