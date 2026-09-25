@@ -283,7 +283,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [tools addArrangedSubview:_frameOrderSegment];
 
     _frameSlider = [self sliderMin:0.0 max:0.0 value:0.0 action:@selector(frameSliderChanged:)];
-    [[_frameSlider widthAnchor] constraintGreaterThanOrEqualToConstant:100.0].active = YES;
+    [[_frameSlider widthAnchor] constraintGreaterThanOrEqualToConstant:60.0].active = YES;
     [_frameSlider setContentHuggingPriority:NSLayoutPriorityDefaultLow - 1
                              forOrientation:NSLayoutConstraintOrientationHorizontal];
     [tools addArrangedSubview:_frameSlider];
@@ -293,6 +293,10 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_frameInfoLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow - 5
                                                forOrientation:NSLayoutConstraintOrientationHorizontal];
     [[_frameInfoLabel widthAnchor] constraintLessThanOrEqualToConstant:260.0].active = YES;
+    // 「上位 x.x%」の部分だけは必ず見えるようにする（狭いときはスライダーを縮める）。
+    NSLayoutConstraint* infoMin = [[_frameInfoLabel widthAnchor] constraintGreaterThanOrEqualToConstant:96.0];
+    [infoMin setPriority:NSLayoutPriorityDefaultHigh];
+    [infoMin setActive:YES];
     [tools addArrangedSubview:_frameInfoLabel];
 
     _zoomControl = [[[NSSegmentedControl alloc] init] autorelease];

@@ -199,7 +199,7 @@
 "窓合成スタック(2回目)" = "Windowed Stacking (Pass 2)";
 
 /* v0.3: 静止画連番・キャリブレーション・仕上げ工程・表示の改善 */
-" · 上位 %.1f%% · 品質 %.4g" = " · top %.1f%% · quality %.4g";
+"上位 %.1f%% · %@ · 品質 %.4g" = "Top %.1f%% · %@ · quality %.4g";
 "#%d  %@（類似度 %.3f・位置ずれ %d,%d）\n" = "#%d  %@ (similarity %.3f, shift %d,%d)\n";
 "#%d 品質 %.4g 上位 %.1f%%" = "#%d quality %.4g top %.1f%%";
 "#%d 除外" = "#%d rejected";

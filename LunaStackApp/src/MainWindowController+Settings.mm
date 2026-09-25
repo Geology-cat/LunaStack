@@ -66,6 +66,12 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
 - (void)inputInterpretationChanged:(id)sender {
     (void)sender;
     if (_restoringSettings) return;
+    // 数値欄は入力欄を離れただけでも action を送る。読み方が変わっていないのに
+    // 開き直すと、スタック結果や仕上げを黙って捨ててしまう。
+    if (_currentIndex >= 0 && _previewSource && _openedInputSignature &&
+        [_openedInputSignature isEqualToString:[self inputSignature]]) {
+        return;
+    }
     _bannerDismissed = NO;
     // 読み方が変われば1枚目の見え方も変わる。開き直して確かめられるようにする。
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
@@ -587,7 +593,10 @@ static void SetText(NSTextField* field, id value) {
 
 - (void)restorePersistedSettings {
     NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
-    NSDictionary* d = [defaults dictionaryForKey:@"lastSettings"];
+    NSMutableDictionary* d = [[[defaults dictionaryForKey:@"lastSettings"] mutableCopy] autorelease];
+    // フレーム範囲はファイルごとのものなので、次の起動へは持ち越さない。
+    [d removeObjectForKey:@"rangeStart"];
+    [d removeObjectForKey:@"rangeEnd"];
     if (d) [self applySettingsDictionary:d includePostProcessing:YES];
     NSFileManager* fm = [NSFileManager defaultManager];
     NSString* dark = [defaults stringForKey:@"darkPath"];
@@ -780,14 +789,17 @@ static void SetText(NSTextField* field, id value) {
         return;
     }
 
-    // 範囲を戻した場合はプレビュー用の入力も開き直す。
-    if (frames != _sourceFrames) {
+    // 解析時の読み方（範囲・色配列など）を戻した場合は、プレビュー用の入力も開き直す。
+    if (!_openedInputSignature || ![_openedInputSignature isEqualToString:[self inputSignature]]) {
         try {
             _previewSource = std::shared_ptr<stackcore::VideoSource>(
                 stackcore::open_video(_inputPath, [self currentOpenOptions]).release());
             _sourceFrames = _previewSource->frame_count();
             [_frameSlider setMaxValue:std::max(0, _sourceFrames - 1)];
             [_graph setDisplayOffset:_previewSource->original_index(0)];
+            [_openedInputSignature release];
+            _openedInputSignature = [[self inputSignature] copy];
+            [self showSourceFrame:0];
         } catch (const std::exception&) {
         }
     }
@@ -902,7 +914,10 @@ static void SetText(NSTextField* field, id value) {
 - (void)presetSelected:(id)sender {
     (void)sender;
     if ([_presetPopup indexOfSelectedItem] <= 0) return;
-    NSDictionary* d = [Presets loadSettingsNamed:[_presetPopup titleOfSelectedItem]];
+    NSMutableDictionary* d = [[[Presets loadSettingsNamed:[_presetPopup titleOfSelectedItem]] mutableCopy] autorelease];
+    // プリセットは処理の設定であり、特定のファイルのフレーム範囲は持ち込まない。
+    [d removeObjectForKey:@"rangeStart"];
+    [d removeObjectForKey:@"rangeEnd"];
     if (!d) {
         [self showError:LSLocalizedString(@"プリセットを読めませんでした")
                   title:LSLocalizedString(@"プリセット")];

@@ -49,11 +49,15 @@
 - (BOOL)selfCheckFrameOrder;
 // 画面に出した仕上げと書き出す画像が一致するかを確かめる。
 - (BOOL)selfCheckFinishingMatchesExport;
+// 入力の読み方の欄に触れただけで結果が消えないかを確かめる。
+- (BOOL)selfCheckUntouchedInputKeepsResult;
 // 仕上げの描画を待ってから表示に反映する（スナップショット前に呼ぶ）。
 - (void)waitForFinishingForTesting;
 - (void)setFinishingForTesting:(NSString*)spec;
 - (void)setCalibrationForTestingDark:(NSString*)dark flat:(NSString*)flat;
 - (void)selectInspectorTabForTesting:(int)tab;
+// フレーム表示に切り替え、スライダーを指定の位置へ動かす（品質順ならその順位）。
+- (void)showFrameAtSliderPositionForTesting:(int)position;
 
 // 起動時に前回の設定・キューを戻す（自己検証の起動では呼ばない）。
 - (void)restoreSession;

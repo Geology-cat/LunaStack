@@ -201,6 +201,7 @@
     }
     return @{
         @"drizzle" : @(LSDrizzleScaleAt([_drizzleSegment selectedSegment])),
+        @"pixfrac" : @([_pixfracSlider doubleValue]),
         @"apSize" : @(apSize),
         @"globalOnly" : @(globalOnly),
         @"selection" : selection,

@@ -315,6 +315,12 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
              byExtendingSelection:NO];
 
     QueueItem* item = _items[static_cast<NSUInteger>(index)];
+    // フレーム範囲はそのファイルだけのもの。別のファイルへ引き継ぐと、
+    // 短い動画では「範囲が空」で開けなくなる（解析済みならサイドカーから戻る）。
+    if (!sameInput) {
+        [_rangeStartField setStringValue:@""];
+        [_rangeEndField setStringValue:@""];
+    }
     _inputPath = std::string([[item path] UTF8String]);
     _inputIsSequence = [item isSequence];
     _sequenceFiles.clear();
@@ -361,6 +367,8 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     // 1枚目を出しておく。何も映らないより、まず見えたほうがよい。
     // プレビュー用の入力は開いたままにし、スライダー操作で開き直さない。
     _previewSource.reset();
+    [_openedInputSignature release];
+    _openedInputSignature = nil;
     try {
         const stackcore::OpenOptions options = [self currentOpenOptions];
         _previewSource = std::shared_ptr<stackcore::VideoSource>(
@@ -373,6 +381,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
                                  : _sourceFrames;
         _byteOrderSuspect = _previewSource->byte_order_suspect() ? YES : NO;
         [_graph setDisplayOffset:_previewSource->original_index(0)];
+        _openedInputSignature = [[self inputSignature] copy];
 
         // 16bitと名乗っているのに実測が12bit幅に収まっていないか。
         // そのままだと画像が暗いだけで、破綻はしないので気づきにくい。

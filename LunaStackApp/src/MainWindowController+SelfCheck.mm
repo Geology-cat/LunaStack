@@ -166,6 +166,8 @@
     // 品質順のスライダーの左端は最良のフレーム、右端に除外フレームが並ぶ。
     const BOOL savedOrder = _frameOrderByQuality;
     const double savedPosition = [_frameSlider doubleValue];
+    const NSInteger savedMode = [_viewModeSegment selectedSegment];
+    [_viewModeSegment setSelectedSegment:0];
     [self setFrameOrderByQuality:YES];
     [_frameSlider setDoubleValue:0.0];
     const int best = [self currentFrameIndex];
@@ -178,15 +180,30 @@
     }
     [self updateFrameInfoLabel];
     NSString* label = [_frameInfoLabel stringValue];
-    NSString* expectTop = [NSString stringWithFormat:LSLocalizedString(@" · 上位 %.1f%% · 品質 %.4g"),
+    NSString* expectTop = [NSString stringWithFormat:LSLocalizedString(@"上位 %.1f%% · %@ · 品質 %.4g"),
                                                      100.0 / std::max(1, accepted),
+                                                     [NSString stringWithFormat:@"#%d / %d",
+                                                                                _previewSource->original_index(best) + 1,
+                                                                                std::max(_sourceTotalFrames, _sourceFrames)],
                                                      _frameInfos[static_cast<std::size_t>(best)].quality];
-    if ([label rangeOfString:expectTop].location == NSNotFound) {
+    if (![label isEqualToString:expectTop]) {
         NSLog(@"フレーム順の自己検証: 表示が想定と違います（%@）", label);
         ok = NO;
     }
+    // 除外フレームは品質順の最後に並ぶ。
+    BOOL seenRejected = NO;
+    for (int k : _qualityOrder) {
+        const BOOL rejected = !_frameInfos[static_cast<std::size_t>(k)].accepted;
+        if (seenRejected && !rejected) {
+            NSLog(@"フレーム順の自己検証: 除外フレームの後に採用フレームがあります");
+            ok = NO;
+            break;
+        }
+        seenRejected = seenRejected || rejected;
+    }
     [self setFrameOrderByQuality:savedOrder];
     [_frameSlider setDoubleValue:savedPosition];
+    [_viewModeSegment setSelectedSegment:savedMode];
     [self updateFrameInfoLabel];
     NSLog(@"フレーム順の自己検証: %@（採用 %d / 全 %zu フレーム）", ok ? @"一致" : @"不一致", accepted,
           _frameInfos.size());
@@ -213,6 +230,20 @@
     }
     NSLog(@"仕上げの自己検証: 画面と書き出しが%@（%d×%d）", ok ? @"一致" : @"不一致", exported.width(),
           exported.height());
+    return ok;
+}
+
+// 入力の読み方の欄に触れただけ（値は変えない）で、スタック結果が消えないかを確かめる。
+// 数値欄は入力欄を離れたときにも action を送るので、クリックして離れるだけで呼ばれる。
+- (BOOL)selfCheckUntouchedInputKeepsResult {
+    if (!_stacked) {
+        NSLog(@"入力欄の自己検証: スタック結果がありません");
+        return NO;
+    }
+    [self inputInterpretationChanged:_rangeStartField];
+    [self inputInterpretationChanged:_bayerPopup];
+    const BOOL ok = _stacked != nullptr && [self alignmentUsable];
+    NSLog(@"入力欄の自己検証: 値を変えずに離れたとき結果が%@", ok ? @"残る" : @"消えた");
     return ok;
 }
 
@@ -270,6 +301,12 @@
     [_flatPath release];
     _flatPath = [flat length] > 0 ? [flat copy] : nil;
     [self invalidateCalibration];
+}
+
+- (void)showFrameAtSliderPositionForTesting:(int)position {
+    [_viewModeSegment setSelectedSegment:0];
+    [_frameSlider setDoubleValue:std::max(0.0, std::min([_frameSlider maxValue], static_cast<double>(position)))];
+    [self frameSliderChanged:nil];
 }
 
 - (void)selectInspectorTabForTesting:(int)tab {

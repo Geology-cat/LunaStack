@@ -655,6 +655,10 @@ std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& s
     base.path = _inputPath;
     base.options = [self currentOpenOptions];
     base.settings = [self currentSettings];
+    // 倍率は表示中の結果を作ったときのものに揃える。名前・切り抜き・チャンネルのずれは
+    // その画像の座標で決めてあるので、つまみの今の値で作ると食い違う。
+    if (_stackedInfo[@"drizzle"]) base.settings.drizzle_scale = [_stackedInfo[@"drizzle"] doubleValue];
+    if (_stackedInfo[@"pixfrac"]) base.settings.pixfrac = [_stackedInfo[@"pixfrac"] doubleValue];
     base.global_only = globalOnly;
     base.low_memory = [_lowMemoryCheck state] == NSControlStateValueOn;
     base.stage = JobStage::Stack;

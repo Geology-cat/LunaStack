@@ -82,12 +82,14 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
     }
     const int index = [self currentFrameIndex];
     const int original = _previewSource->original_index(index) + 1;
-    NSMutableString* text = [NSMutableString
-        stringWithFormat:@"#%d / %d", original, std::max(_sourceTotalFrames, _sourceFrames)];
+    // 狭いウインドウでは末尾から切り詰まるので、いちばん知りたい「上位何%」を先頭に置く。
+    NSString* number = [NSString stringWithFormat:@"#%d / %d", original,
+                                                  std::max(_sourceTotalFrames, _sourceFrames)];
+    NSString* text = number;
     if (index < static_cast<int>(_frameInfos.size())) {
         const stackcore::FrameInfo& info = _frameInfos[static_cast<std::size_t>(index)];
         if (!info.accepted) {
-            [text appendFormat:@" · %@", RejectReasonText(info.reason)];
+            text = [NSString stringWithFormat:@"%@ · %@", RejectReasonText(info.reason), number];
         } else {
             int accepted = 0, rank = 0;
             for (std::size_t k = 0; k < _qualityOrder.size(); ++k) {
@@ -95,12 +97,14 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
                 if (_qualityOrder[k] == index) rank = accepted;
             }
             if (accepted > 0 && rank > 0) {
-                [text appendFormat:LSLocalizedString(@" · 上位 %.1f%% · 品質 %.4g"),
-                                   100.0 * rank / accepted, info.quality];
+                text = [NSString stringWithFormat:LSLocalizedString(@"上位 %.1f%% · %@ · 品質 %.4g"),
+                                                  100.0 * rank / accepted, number, info.quality];
             }
         }
     }
     [_frameInfoLabel setStringValue:text];
+    [_frameInfoLabel setToolTip:text];
+    [_frameSlider setToolTip:text];
 }
 
 - (void)frameSliderChanged:(id)sender {

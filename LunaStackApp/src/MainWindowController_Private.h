@@ -170,6 +170,8 @@
     // プレビュー用に開いたままにしておく入力（メインスレッド専用）。
     // バックグラウンドの処理は、低メモリモードの張り直しと競合しないよう自分で開く。
     std::shared_ptr<stackcore::VideoSource> _previewSource;
+    // _previewSource を開いたときの読み方。変わっていなければ開き直さない。
+    NSString* _openedInputSignature;
     int _sourceChannels;
     int _sourceFrames;       // 前処理（フレーム範囲）を掛けたあとのフレーム数
     int _sourceTotalFrames;  // ファイル全体のフレーム数

@@ -118,6 +118,10 @@
                 // 品質評価の直後に、スライダーの品質順を確かめる。
                 [self check:[controller selfCheckFrameOrder]];
             }
+            if (selfTest && stagedStep == 1) {
+                // アライメントの後（除外フレームが並びの最後に来る状態）でも確かめる。
+                [self check:[controller selfCheckFrameOrder]];
+            }
             if ((stagedMode && stagedStep < 2) || (alignmentMode && stagedStep < 1)) {
                 ++stagedStep;
                 if (stagedStep == 1) [controller startAlignmentOnly];
@@ -137,6 +141,7 @@
                 [controller setFinishingForTesting:[NSString stringWithUTF8String:finishText]];
             }
             if (selfTest) [self check:[controller selfCheckFinishingMatchesExport]];
+            if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];
             }
@@ -152,6 +157,7 @@
             }
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
+            if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];
             [self writeSnapshotTo:path];
             if (selfTest) {
                 NSLog(@"GUI自己検証: %@", _selfTestFailed ? @"失敗" : @"合格");

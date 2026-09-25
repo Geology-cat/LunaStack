@@ -74,6 +74,7 @@
     [_stackedInfo release];
     [_darkPath release];
     [_flatPath release];
+    [_openedInputSignature release];
     [_onRunFinished release];
     dispatch_release(_finishQueue);
     [super dealloc];
