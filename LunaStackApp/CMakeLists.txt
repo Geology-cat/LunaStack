@@ -32,7 +32,15 @@ set_source_files_properties(${LUNASTACK_EN_LOCALIZATIONS} PROPERTIES
 add_executable(LunaStackApp MACOSX_BUNDLE
     src/main.mm
     src/AppDelegate.mm
+    src/LSAppSupport.mm
     src/MainWindowController.mm
+    src/MainWindowController+Layout.mm
+    src/MainWindowController+Queue.mm
+    src/MainWindowController+Settings.mm
+    src/MainWindowController+Jobs.mm
+    src/MainWindowController+Preview.mm
+    src/MainWindowController+Finishing.mm
+    src/MainWindowController+SelfCheck.mm
     src/PreviewView.mm
     src/QualityGraphView.mm
     src/QueueItem.mm

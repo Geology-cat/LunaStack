@@ -10,12 +10,17 @@
 //   中央 : プレビュー（APオーバーレイ・編集）
 //   右   : Inspector（Alignment / Quality / Stack / Drizzle / Wavelet / Export）
 //   下   : ステータスバー（フェーズ名・進捗・残り時間・中断）
-@interface MainWindowController
-    : NSWindowController <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate,
-                          NSMenuDelegate, NSMenuItemValidation, QualityGraphViewDelegate,
-                          PreviewViewDelegate>
+//
+// 実装は工程ごとのカテゴリに分かれている（MainWindowController_Private.h 参照）。
+// デリゲートの採用も、そのメソッドを実装するカテゴリの側で宣言する。
+@interface MainWindowController : NSWindowController <NSWindowDelegate>
 
 - (instancetype)init;
+@property(nonatomic, copy) void (^onRunFinished)(void);
+
+@end
+
+@interface MainWindowController (LSPublic)
 
 // キューに追加して、いちばん最後に足したものを選択する。
 - (void)openFileAtPath:(NSString*)path;
@@ -24,17 +29,14 @@
 // ---- 自己検証用 ----
 // GUIを人が操作しなくても「開く→品質評価→アライメント→スタック」の
 // 経路を通せる。通常のGUIでは各工程で必ず停止する。
-@property(nonatomic, copy) void (^onRunFinished)(void);
 - (void)startRun;         // 自己検証用の一括処理
 - (void)startAnalyzeOnly; // 品質評価だけ
 - (void)startAlignmentOnly;
 - (void)startStackOnly;
-- (void)startBatch;
 - (void)setFrameLimit:(int)limit;
 - (void)setSharpenForTesting:(double)value denoise:(double)denoise;
 - (void)setWaveletPreviewForTesting:(BOOL)on;
 - (void)clearForTesting;
-- (void)setBatchOutputDirectory:(NSString*)path;
 // APの当たり判定が描画とずれていないかを確かめる。
 - (BOOL)selfCheckApHitTest;
 // AP編集とプリセットの往復が壊れていないかを確かめる。

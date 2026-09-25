@@ -25,10 +25,8 @@
     const char* autorun = getenv("LUNASTACK_AUTORUN");
     const char* limitText = getenv("LUNASTACK_LIMIT");
     // "run"（既定、自己検証の一括処理）/ "staged"（GUIの3工程を順に通す）/
-    // "analyze"（品質評価だけ）/ "alignment"（アライメントまで）/
-    // "batch"（キューを一括処理）
+    // "analyze"（品質評価だけ）/ "alignment"（アライメントまで）
     const char* mode = getenv("LUNASTACK_MODE");
-    const char* outDir = getenv("LUNASTACK_OUTDIR");
     // "幅x高さ"。最小サイズ（UI設計書 §2 の 1000×640）でも
     // 画面が崩れないことを機械的に確かめるために使う。
     const char* sizeText = getenv("LUNASTACK_SIZE");
@@ -55,9 +53,6 @@
         NSString* joined = [NSString stringWithUTF8String:openPath];
         NSArray* paths = [joined componentsSeparatedByString:@":"];
         [_controller addPathsToQueue:paths];
-    }
-    if (outDir) {
-        [_controller setBatchOutputDirectory:[NSString stringWithUTF8String:outDir]];
     }
     if (const char* drizzle = getenv("LUNASTACK_DRIZZLE")) {
         [_controller setDrizzleIndexForTesting:atoi(drizzle)];
@@ -114,8 +109,6 @@
                            if (stagedMode || alignmentMode ||
                                (mode && strcmp(mode, "analyze") == 0)) {
                                [_controller startAnalyzeOnly];
-                           } else if (mode && strcmp(mode, "batch") == 0) {
-                               [_controller startBatch];
                            } else {
                                [_controller startRun];
                            }
@@ -207,9 +200,6 @@
     [processMenu addItemWithTitle:LSLocalizedString(@"スタック")
                            action:@selector(run:)
                     keyEquivalent:@"r"];
-    [processMenu addItemWithTitle:LSLocalizedString(@"すべて処理")
-                           action:@selector(batch:)
-                    keyEquivalent:@"b"];
     [processMenu addItem:[NSMenuItem separatorItem]];
     [processMenu addItemWithTitle:LSLocalizedString(@"中断")
                            action:@selector(cancel:)
