@@ -6,7 +6,7 @@ RegiStax のウェーブレットシャープニングを1つのアプリに統�
 
 - 対応環境: **macOS 10.13 (High Sierra) 以降 / Intel・Apple Silicon 両対応**
 - 設計文書: [仕様書](docs/仕様書.md) / [実装計画書](docs/実装計画書.md)
-- 現在の段階: **M0〜M7の主要実装済み（3ペインGUIあり）/ 実機互換性検証を継続中**
+- 現在の段階: **v0.3.0（M0〜M7＋静止画連番・キャリブレーション・仕上げ工程）/ 実機互換性検証を継続中**
 
 ---
 
@@ -32,39 +32,59 @@ open dist/LunaStack.app
 中間生成物は `.build/universal/` へ集約し、リポジトリ直下に別の
 `LunaStack.app` を作らない。
 
-左＝入力キューと品質グラフ、中央＝プレビュー、右＝Inspector の3ペイン構成。
-動画を開く → ［品質評価］→ グラフを確認 → ［アライメント］→ 参照画像と
-位置合わせ領域を確認 → ［スタック］→
-仕上げスライダーで追い込む → 書き出し、までGUIだけで完結する。
-各主工程は完了時に必ず停止し、次工程を勝手に実行しない。
+左＝入力キューと品質グラフ、中央＝プレビュー、右＝Inspector の3ペイン構成
+（⌘1 / ⌘2 で左右を畳める）。
+動画または静止画連番を開く → ［品質評価］→ グラフとフレームを確認 → ［アライメント］→
+参照画像と位置合わせ領域を確認 → ［スタック］→ 仕上げで追い込む → 書き出し、まで
+GUIだけで完結する。各主工程は完了時に必ず停止し、次工程を勝手に実行しない。
 処理後に［クリア］を押すと、元動画・解析キャッシュ・書き出し済みファイル・設定を残したまま、
 入力キュー、処理結果、プレビューを空にして次の処理を始められる。
-処理中も操作でき、中断できる。
+処理中も操作でき、中断できる。処理中にウインドウを閉じる・終了するときは確認してから中断する。
 
 右Inspectorは4つの工程タブ（**品質評価 / アライメント / スタック / 仕上げ・出力**）で構成する。
 各工程の完了後は次タブへ案内し、新しいファイルを選ぶと品質評価タブに戻る。
 「どの段階の設定を触っているのか」をUIの構造で示すための分割である。
+普段触らないつまみは「詳細設定」「入力の前処理」に畳んである。
+
+**品質評価の後は、プレビュー下のスライダーを品質順に送れる。**
+左端が最良のフレームで、位置ごとに「#元の番号 / 総数 · 上位 x.x% · 品質」を表示する。
+並びはエンジンの上位選択と同じ規則（採用フレームを品質降順、同点は番号順、除外は最後）で、
+品質グラフの「時系列 / 品質順」と連動する。グラフをクリックするとそのフレームへ移動し、
+プレビュー上では ←→（Shiftで10枚、Optionで100枚）でコマ送りできる。
 
 **選択率を変えただけの再スタックは解析をやり直さない。**
-解析結果はサイドカー（`.lstk`）に自動保存され、次に同じファイルを開くと読み直される。
+解析結果はサイドカー（`.lstk`）に、品質評価の結果は `.lstkq` に自動保存され、
+次に同じファイルを開くと読み直される。
 木星300フレームの実測で、解析込み 22.2 秒に対し再スタックは 2.35 秒だった。
 
-仕上げ（ウェーブレット）は分解を1回だけ行い、スライダー操作では再構成しか走らないので
-即座に反映される。「ウェーブレット効果をプレビュー」のON/OFFで効果あり/なしを比較できる。
+仕上げは「RGBチャンネル合わせ → ウェーブレット（デリンギング付き）→ 色 → 黒点・白点・ガンマ
+→ 回転・反転・切り抜き」の順に掛かる。プレビューと書き出しは同じ処理系（`FinishingPipeline`）を
+通すので、画面で見た結果とファイルは同じ画素になる。描画は別スレッドで行い、大きな画像では
+スライダーのドラッグ中だけ縮小版で追従する。「仕上げの効果をプレビュー」のON/OFFで
+スタックそのままと比較できる。
 
 そのほか:
 
-- 位置合わせ領域の表示・クリックでの追加・Deleteでの削除、品質のヒートマップ表示
-- 品質グラフのカットラインをドラッグして選択率を決める（時系列 ⇄ 品質順を切替可能）
-- 品質指標（勾配エネルギー／FFT周波数帯パワー比）、選択方式（割合／枚数）の切替
-- 輝度正規化、単純平均／品質重み付き平均／σクリップの切替
-- 16bit TIFF、32bit float TIFF、32bit float FITS（PixInsight向け）、16bit PNGの書き出し
-- 残り時間の推定と完了通知
+- 入力: SER / AVI（非圧縮・MJPEG）/ 静止画連番（TIFF・PNG・FITS・JPEG。フォルダまたは複数選択）
+- 入力の前処理: フレーム範囲、Bayer配列の手動指定、デバイヤー方式（bilinear / Malvar-He-Cutler）、
+  ダーク・フラット補正（動画・静止画・フォルダから全フレーム平均でマスターを作り、デバイヤー前に適用）
+- プレビュー: 全体表示（小さな画像は拡大）、100%＝Retinaでも画面の実画素で等倍、
+  ⌘＋ホイール・ピンチでカーソル中心のズーム、画素値の表示
+- 位置合わせ領域の表示・クリックでの追加・Deleteでの削除（⌘Zで取り消し）、品質の色分けと凡例
+- 品質グラフのカットラインのドラッグで参照の割合を決める（線が何に使われるかを表示）
+- 詳細設定: 外れ値判定・類似度の下限・位置ずれ上限・一致度の下限・位置合わせ領域の配置しきい値・σクリップ閾値
+- 除外したフレームの一覧と理由、アライメントの内訳（自動判定したモード・補間や退避の割合）
+- 品質指標（勾配エネルギー／FFT周波数帯パワー比）、選択方式（割合／枚数）、輝度正規化、
+  単純平均／品質重み付き平均／σクリップ、Bayerのまま合成
+- 16bit TIFF、32bit float TIFF、32bit float FITS（PixInsight向け）、16bit PNGの書き出し。
+  処理条件と撮影時刻（SERのタイムスタンプの中央）を記録でき、WinJUPOS形式の名前も付けられる
+- 採用率を変えた複数の結果をまとめて書き出す（解析はやり直さない。既存ファイルは上書きしない）
+- 残り時間とパス数の表示、完了通知
 - プリセットのJSON保存（`~/Library/Application Support/LunaStack/Presets/`）
-- キューの一括処理。自動命名・途中中断・処理済みのスキップによる再開
-- キューの右クリックからFinder表示・削除・選択ファイルだけの処理
-- ［クリア］で入力キューと画面上の処理結果を消去（元ファイルと設定は保持）
+- 設定・入力キュー・最近使った項目を次回の起動へ引き継ぐ
 - SER診断バナーからlittle/big・12bit解釈を直接切り替え、警告を閉じる操作
+
+バッチ処理（キューの一括処理）は v0.3.0 で廃止した。保存先は書き出しダイアログで選ぶ。
 
 **10.13実機での動作は未検証。** ビルドは10.13ターゲットで通っているが、実行を確かめていない。
 UIはmacOSの優先言語に従って日本語・英語を切り替える。
@@ -81,11 +101,15 @@ cmake -S . -B .build/local && cmake --build .build/local -j8
 ctest --test-dir .build/local --output-on-failure
 ```
 
-`ctest` は3つを実行する。
+`ctest` は4つを実行する。
 
-1. `stackcore_tests` — エンジンのユニット・リグレッションテスト
-2. `localization_strings_valid` — 日本語・英語リソースの構文検証
-3. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。
+1. `stackcore_tests` — エンジンのユニット・リグレッションテスト（210件）
+2. `gui_selftest` — 合成SERでGUIの3工程を画面の経路で通す自己検証。
+   スライダーの品質順とエンジンの上位選択の一致、位置合わせ領域の当たり判定、
+   編集の取り消し・やり直し、プリセットの往復、画面の仕上げと書き出しの一致を確かめる。
+   GUIセッションの無い環境では `LUNASTACK_SKIP_GUI_TEST=1` で飛ばせる
+3. `localization_strings_valid` — 日本語・英語リソースの構文検証
+4. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。
    デプロイメントターゲット(10.13)より新しいAPIを使ったコードが
    コンパイルエラーになることを確認する。これが「成功」してしまうと
    availabilityガードが効いていない＝10.13対応が無検証、ということになる。
@@ -140,6 +164,14 @@ arm64スライスは `minos 11.0` になっていれば正しい
 | 出力名 `.png` | 決定論的な16bit PNGで書き出す |
 | 出力名 `.fits` / `.fit` | PixInsight等向けの32bit float FITSで書き出す |
 | `--raw-cfa` | Bayerをデバイヤーせず生のCFAのまま出力 |
+| `--frames <開始:終了>` | 使うフレームの範囲（1始まり、終了を含む） |
+| `--bayer mono\|rggb\|grbg\|gbrg\|bggr` | 色形式を手動で指定する |
+| `--debayer bilinear\|mhc` | デバイヤー方式（mhc = Malvar-He-Cutler） |
+| `--dark <素材>` / `--flat <素材>` | ダーク・フラット補正（動画・静止画・フォルダ） |
+| `--metadata` / `--object <名前>` | 処理条件と撮影時刻をファイルに記録する |
+
+入力には動画のほか、静止画（TIFF・PNG・FITS・JPEG）の入ったフォルダを指定できる。
+ファイル名の数字は自然順（`img2` < `img10`）に並べる。
 
 `mapstack` のオプション（`stack` のものも使える）:
 
@@ -196,19 +228,27 @@ arm64スライスは `minos 11.0` になっていれば正しい
 ```text
 libstackcore/     エンジン（C++17静的ライブラリ、UI非依存）
   include/stackcore/
-  src/image/        frame_buffer, debayer, quality, resample
+  src/image/        frame_buffer, debayer（bilinear / MHC）, calibration, quality, resample
   src/registration/ phase_correlate, global_aligner, zncc_matcher
   src/map/          ap_placer, local_aligner
-  src/stack/        simple_stacker, frame_selector, windowed_stacker
+  src/stack/        simple_stacker, frame_selector, windowed_stacker, drizzle
   src/pipeline/     global_stage, map_pipeline
-  src/io/           ser_decoder, avi_decoder, video_source, tiff/png/fits_writer, mapped_file
+  src/post/         wavelet, finishing（チャンネル合わせ・色・形・デリンギング・仕上げの処理系）
+  src/io/           ser_decoder, avi_decoder, jpeg_decoder, image_reader, inflate,
+                    video_source（前処理ラッパー・静止画連番）, tiff/png/fits_writer,
+                    metadata, sidecar, mapped_file
+LunaStackApp/     GUI（AppKit・MRC・xibなし）
+  src/MainWindowController.mm と +Layout / +Queue / +Settings / +Jobs / +Preview /
+      +Finishing / +SelfCheck（インスタンス変数は MainWindowController_Private.h）
 stackcli/         CLI
 scripts/          検証済みアプリの作成スクリプト
 .build/           CMake中間生成物（リポジトリには含めない）
 dist/LunaStack.app 最新の検証済みUniversalアプリ
 tests/            テスト（自前の最小ハーネス、外部依存なし）
+  data/             他ソフトが書いた静止画の試験画像（PIL・tifffile・tiffcpで生成）
+  tools/            GUI自己検証用の合成SER生成
 tools/            開発用スクリプト（ビルドには含まれない）
-docs/             仕様書・実装計画書
+docs/             仕様書・実装計画書・UI設計書・開発記録
 sample-data/      検証用の実データ（巨大。リポジトリには含めない）
 ```
 
@@ -359,6 +399,15 @@ MAP段に統合済み（`mapstack --drizzle 2.0`）。窓合成スタッカ自�
     --sharpen 8,4,2 --denoise 0.3,0.2 --stretch 0.0,0.35,1.8
 ```
 
+v0.3.0で仕上げの工程を追加した（CLI・GUIとも `FinishingPipeline` を通す）。
+
+```bash
+# RGBチャンネル合わせ・ホワイトバランス・デリンギング・自動クロップ・回転
+./.build/local/stackcli/stackcli mapstack saturn.ser -o out.png --debayer mhc \
+    --channel-align auto --wb auto --sharpen 6,3,1.5 --dering 0.7 \
+    --crop auto:20 --rotate 90 --metadata --object Saturn
+```
+
 ### GUIを作る過程で見つかったエンジンの不具合
 
 **参照の反復精密化（2パス）とDrizzleを併用すると、倍率が二重に掛かっていた。**
@@ -438,6 +487,27 @@ MAP結果のすべてに同じ形で存在した。半径方向の輝度は単�
   ローカライズ文字列に応じて伸びるステータスボタンを実装
 - JPEG/AVI・SER方言追加テストを含め **173/173件** 合格
 
+### v0.3.0: 静止画連番・キャリブレーション・仕上げ工程・GUI全面改修（2026-09-25）
+
+- **入力**: 自前のTIFF（無圧縮/LZW/Deflate/PackBits、予測子、タイル、プレーナ）・PNG・FITS・JPEG
+  読み込みと DEFLATE 展開器で、静止画連番を1本の動画として扱う。PIL・tifffile・libtiffの
+  `tiffcp` が書いた試験画像（`tests/data`）で画素一致を確認した
+- **前処理**: `open_video` の内側に前処理ラッパーを置き、フレーム範囲・Bayer配列の指定・
+  デバイヤー方式・ダーク/フラット補正を掛ける。**前処理がすべて既定値なら元のソースを
+  そのまま返し、出力は v0.2.4 とバイト単位で一致する**（月面16bit・土星Bayer・木星2×Drizzleの
+  3条件と、ウェーブレット＋ストレッチ付きの出力でSHA-256一致を確認）
+- **デバイヤー**: Malvar-He-Cutler を追加。色の輪郭がそろった合成画像で bilinear より
+  RMS誤差が45%小さい（0.0254 → 0.0139）
+- **仕上げ**: RGBチャンネル合わせ（ZNCC総当たり＋放物線でサブピクセル推定）、
+  ホワイトバランス（灰色仮説）・彩度、デリンギング、回転・反転・自動クロップ
+- **メタデータ**: TIFF（ImageDescription/Software/DateTime）・PNG（iTXt）・FITS
+  （DATE-OBS/OBJECT/NCOMBINE/CREATOR/ROWORDER/HISTORY）。**現在時刻は書かない**
+  （撮影時刻はSERのタイムスタンプ由来）ので決定論性は保たれる。
+  `fitsverify` で警告0・エラー0、`sips`・`tiffinfo` でタグを読めることを確認
+- **GUI**: 上記のGUI化、品質順のフレーム送り、プレビュー・グラフ・メニューの改善、
+  バッチ処理と出力先指定の廃止。MainWindowController を工程別のカテゴリに分割した。
+  詳細は [開発記録_2026-09-25](docs/開発記録_2026-09-25.md)
+
 ### 未実装・実機待ち（次の段階）
 
 プレビューのタイル化は4K・高倍率で実害が確認されたときに着手する。
@@ -454,9 +524,11 @@ MAP結果のすべてに同じ形で存在した。半径方向の輝度は単�
 | x86_64 / macOS 15.7 での動作 | **検証済み**（開発機） |
 | availabilityガードの発火 | **検証済み**（CTestで自動確認） |
 | 出荷バイナリの最低OS表記 | **検証済み**（x86_64: 10.13 / arm64: 11.0） |
-| Universal 2のビルド・リンク | **検証済み（MJPEG・多言語化・SER方言追加後に再確認）**。x86_64 + arm64 の2スライスがビルド・リンクでき、`vtool` で x86_64=10.13 / arm64=11.0 を確認。単体テスト173件を含むCTest 3/3がUniversal 2ビルドでも全通過 |
+| Universal 2のビルド・リンク | **検証済み（v0.3.0で再確認）**。x86_64 + arm64 の2スライスがビルド・リンクでき、`vtool` で x86_64=10.13 / arm64=11.0 を確認。単体テスト210件とGUI自己検証を含むCTest 4/4がUniversal 2ビルドでも全通過 |
 | TIFFの他アプリでの可読性 | **検証済み**（macOSの`sips`で16bit/float32とも読める） |
 | PNGの他アプリでの可読性 | **検証済み**（macOSの`sips`と`file`で16bit RGB PNGとして認識） |
+| GUIの3工程・仕上げ・品質順 | **検証済み**（ctest `gui_selftest`、実データでは月面16bit SER・木星AVI 300フレーム・静止画連番60枚＋ダーク/フラットで同じ自己検証を通過） |
+| 静止画連番の読み込み | **検証済み**（他ソフトが書いたTIFF/PNG/FITSの試験画像で画素一致。木星AVIから切り出した16bit PNG 60枚でMAPスタックを完走） |
 | UIの日本語・英語切替 | **検証済み**。`ja.lproj` / `en.lproj`をバンドルし、`NSBundle`で英語の実選択を確認。さらに `-AppleLanguages '(en)'` でアプリを実起動し、1000×640ポイント（2000×1280ピクセル）の英語GUIスナップショットを目視確認 |
 | 完了通知 | **検証済み**。実ジョブ終了時に`com.lunastack.app`の通知をOSが受理し、NotificationCenterがバナー表示して通知センターへ配達済みにしたことを確認 |
 | AVI MJPEG | **検証済み**。自前SOF0/DQT/DHT/DRI/SOS・Huffman・固定小数点IDCT・YCbCr変換。ffmpeg生成4:4:4の参照比PSNR 50.98dB、実写由来4:2:0の100フレーム抽出・スタック完走 |

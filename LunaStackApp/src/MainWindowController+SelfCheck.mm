@@ -275,12 +275,12 @@
 - (void)selectInspectorTabForTesting:(int)tab {
     [self selectInspectorTab:tab];
     // 詳細設定なども開いて見せる（配置の崩れを確かめるため）。
+    // 利用者の開閉状態（NSUserDefaults）は書き換えず、画面の上だけで開く。
     for (NSString* key in _sections) {
-        if ([self tabIndexForSectionKey:key] != tab || [self sectionOpen:key]) continue;
-        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:[@"section." stringByAppendingString:key]];
-        [self updateSectionHeader:_sectionHeaders[key] key:key];
+        if ([self tabIndexForSectionKey:key] != tab) continue;
+        [(NSButton*)_sectionHeaders[key] setHidden:NO];
+        for (NSView* v in _sections[key]) [v setHidden:NO];
     }
-    [self updateInspectorVisibility];
 }
 
 - (void)setDrizzleIndexForTesting:(int)index {

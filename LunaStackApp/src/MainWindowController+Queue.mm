@@ -591,7 +591,8 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
 }
 
 - (void)noteRecentPath:(NSString*)path {
-    if ([path length] == 0) return;
+    // 自己検証の起動で利用者の履歴を書き換えない。
+    if ([path length] == 0 || getenv("LUNASTACK_SNAPSHOT")) return;
     NSMutableArray* list = [[[self recentPaths] mutableCopy] autorelease];
     [list removeObject:path];
     [list insertObject:path atIndex:0];
