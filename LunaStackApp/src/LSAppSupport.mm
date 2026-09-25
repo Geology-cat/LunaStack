@@ -15,18 +15,19 @@
 
 
 void write_output_image(const std::string& path, const stackcore::FrameBuffer& image,
-                        OutputFormat format) {
+                        OutputFormat format, const stackcore::ImageMetadata& metadata) {
     if (format == OutputFormat::FitsFloat32) {
-        stackcore::write_fits_float32(path, image);
+        stackcore::write_fits_float32(path, image, metadata);
         return;
     }
     if (format == OutputFormat::Png16) {
-        stackcore::write_png16(path, image);
+        stackcore::write_png16(path, image, metadata);
         return;
     }
-    stackcore::write_tiff(path, image, format == OutputFormat::TiffFloat32
-                                           ? stackcore::TiffFormat::Float32
-                                           : stackcore::TiffFormat::UInt16);
+    stackcore::write_tiff(path, image,
+                          format == OutputFormat::TiffFloat32 ? stackcore::TiffFormat::Float32
+                                                              : stackcore::TiffFormat::UInt16,
+                          metadata);
 }
 
 NSTextField* MakeLabel(NSString* text) {
@@ -66,10 +67,12 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                                                 req.settings.raw_cfa, *req.quality, progress));
             out.frames = out.global->frames;
             if (!req.global_only) {
-                stackcore::MapStackReport report;
+                auto report = std::make_shared<stackcore::MapStackReport>();
                 out.analysis = std::make_shared<stackcore::AnalysisData>(
                     stackcore::analyze_map_alignment(*source, req.settings, *out.global,
-                                                     progress, report));
+                                                     progress, *report));
+                report->global = *out.global;
+                out.map_report = report;
                 out.frames = out.analysis->frames;
             }
             return out;
@@ -88,6 +91,8 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                     stackcore::build_global_reference(*source, *req.global, selected,
                                                       req.settings.raw_cfa, progress,
                                                       req.settings.normalize_brightness));
+                for (const stackcore::FrameInfo& f : selected) out.stacked_frames.push_back(f.index);
+                out.frames_combined = static_cast<int>(selected.size());
             } else {
                 if (!req.analysis) {
                     throw std::runtime_error("スタック: 先にアライメントを実行してください");
@@ -98,11 +103,13 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                 out.image = std::make_shared<stackcore::FrameBuffer>(
                     stackcore::stack_from_analysis(*source, req.settings, *req.analysis,
                                                    progress, report));
+                out.stacked_frames = req.analysis->analyzed_indices;
+                out.frames_combined = report.frames_per_ap;
             }
             return out;
         }
 
-        // バッチとGUI自己検証用の一括経路。通常のGUIボタンはここを通らない。
+        // GUI自己検証用の一括経路。通常のGUIボタンはここを通らない。
         if (req.global_only) {
             out.global = std::make_shared<stackcore::GlobalStageReport>(
                 stackcore::run_global_stage(*source, req.settings.global,
@@ -114,15 +121,21 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                 stackcore::build_global_reference(*source, *out.global, selected,
                                                   req.settings.raw_cfa, progress,
                                                   req.settings.normalize_brightness));
+            for (const stackcore::FrameInfo& f : selected) out.stacked_frames.push_back(f.index);
+            out.frames_combined = static_cast<int>(selected.size());
         } else {
-            stackcore::MapStackReport report;
+            auto report = std::make_shared<stackcore::MapStackReport>();
             out.analysis = std::make_shared<stackcore::AnalysisData>(
-                stackcore::analyze_map_stack(*source, req.settings, progress, report));
+                stackcore::analyze_map_stack(*source, req.settings, progress, *report));
             out.global =
-                std::make_shared<stackcore::GlobalStageReport>(report.global);
+                std::make_shared<stackcore::GlobalStageReport>(report->global);
+            out.map_report = report;
             out.frames = out.analysis->frames;
+            stackcore::MapStackReport stack_report;
             out.image = std::make_shared<stackcore::FrameBuffer>(stackcore::stack_from_analysis(
-                *source, req.settings, *out.analysis, progress, report));
+                *source, req.settings, *out.analysis, progress, stack_report));
+            out.stacked_frames = out.analysis->analyzed_indices;
+            out.frames_combined = stack_report.frames_per_ap;
         }
     } catch (const stackcore::Cancelled&) {
         out.cancelled = true;

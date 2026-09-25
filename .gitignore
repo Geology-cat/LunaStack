@@ -26,3 +26,5 @@ lunastack_test_*.png
 # 実入力に付随する解析キャッシュ
 *.lstk
 *.lstk.json
+*.lstkq
+*.lstkq.json

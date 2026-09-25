@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "stackcore/map_pipeline.hpp"
+#include "stackcore/metadata.hpp"
 #include "stackcore/video_source.hpp"
 
 // 原点が左上のコンテナ。
@@ -48,7 +49,8 @@ inline int LSApSizeAt(NSInteger index) {
 enum class OutputFormat { Tiff16, TiffFloat32, FitsFloat32, Png16 };
 
 void write_output_image(const std::string& path, const stackcore::FrameBuffer& image,
-                        OutputFormat format);
+                        OutputFormat format,
+                        const stackcore::ImageMetadata& metadata = stackcore::ImageMetadata());
 
 NSTextField* MakeLabel(NSString* text);
 
@@ -78,6 +80,9 @@ struct JobResult {
     std::shared_ptr<stackcore::AnalysisData> analysis;  // MAPモードのみ
     std::vector<stackcore::FrameInfo> frames;           // 品質グラフ用
     std::shared_ptr<stackcore::FrameBuffer> image;      // スタック工程のとき
+    std::shared_ptr<stackcore::MapStackReport> map_report;  // アライメントの内訳（表示用）
+    std::vector<int> stacked_frames;  // 加算に使ったフレーム（撮影時刻の計算用）
+    int frames_combined = 0;          // 1画素あたりに加算した枚数（FITSのNCOMBINE）
     std::string error;
     bool cancelled = false;
 };

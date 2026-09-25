@@ -33,6 +33,14 @@ target_compile_definitions(stackcore_tests PRIVATE
 
 add_test(NAME stackcore_tests COMMAND stackcore_tests)
 
+# ---- GUIの自己検証（画面の経路で3工程を通す） ------------------------------
+add_executable(make_scene_ser tools/make_scene_ser.cpp)
+target_link_libraries(make_scene_ser PRIVATE lunastack_flags)
+add_test(NAME gui_selftest
+         COMMAND /bin/sh ${CMAKE_CURRENT_SOURCE_DIR}/gui_selftest.sh
+                 $<TARGET_FILE:LunaStackApp> $<TARGET_FILE:make_scene_ser>)
+set_tests_properties(gui_selftest PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
+
 add_test(NAME localization_strings_valid
          COMMAND /usr/bin/plutil -lint
                  ${CMAKE_SOURCE_DIR}/LunaStackApp/Resources/ja.lproj/Localizable.strings

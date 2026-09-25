@@ -8,6 +8,8 @@
 @synthesize state = _state;
 @synthesize subtitle = _subtitle;
 @synthesize message = _message;
+@synthesize sequenceFiles = _sequenceFiles;
+@synthesize isSequence = _isSequence;
 
 + (instancetype)itemWithPath:(NSString*)path {
     QueueItem* item = [[[QueueItem alloc] init] autorelease];
@@ -15,13 +17,40 @@
     [item setState:QueueItemStatePending];
     [item setSubtitle:@""];
     [item setMessage:@""];
+    [item setSequenceFiles:@[]];
+    [item setIsSequence:NO];
     return item;
+}
+
++ (instancetype)sequenceItemWithDirectory:(NSString*)directory files:(NSArray*)files {
+    QueueItem* item = [self itemWithPath:directory];
+    [item setSequenceFiles:files ? files : @[]];
+    [item setIsSequence:YES];
+    return item;
+}
+
+- (NSString*)displayName {
+    if (!_isSequence) return [_path lastPathComponent];
+    if ([_sequenceFiles count] > 0) {
+        return [NSString stringWithFormat:LSLocalizedString(@"%@ ほか（静止画 %lu枚）"),
+                                          [[_sequenceFiles firstObject] lastPathComponent],
+                                          (unsigned long)[_sequenceFiles count]];
+    }
+    return [NSString stringWithFormat:LSLocalizedString(@"%@（静止画連番）"),
+                                      [_path lastPathComponent]];
+}
+
+- (BOOL)isSameInputAs:(QueueItem*)other {
+    if (_isSequence != [other isSequence]) return NO;
+    if (![_path isEqualToString:[other path]]) return NO;
+    return [_sequenceFiles isEqualToArray:[other sequenceFiles]];
 }
 
 - (void)dealloc {
     [_path release];
     [_subtitle release];
     [_message release];
+    [_sequenceFiles release];
     [super dealloc];
 }
 

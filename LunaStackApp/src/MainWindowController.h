@@ -43,7 +43,24 @@
 - (BOOL)selfCheckEditingAndPresets;
 - (void)setApHeatmapForTesting:(BOOL)on;
 - (void)setDrizzleIndexForTesting:(int)index;
-// ズーム（0=全体 / 1=等倍 / 2=2倍 / 3=4倍）。はみ出しの検証用。
+// ズーム（0=全体 / 1=100% / 2=200% / 3=400%）。はみ出しの検証用。
 - (void)setZoomIndexForTesting:(int)index;
+// スライダーの品質順がエンジンの上位選択と一致するかを確かめる。
+- (BOOL)selfCheckFrameOrder;
+// 画面に出した仕上げと書き出す画像が一致するかを確かめる。
+- (BOOL)selfCheckFinishingMatchesExport;
+// 仕上げの描画を待ってから表示に反映する（スナップショット前に呼ぶ）。
+- (void)waitForFinishingForTesting;
+- (void)setFinishingForTesting:(NSString*)spec;
+- (void)setCalibrationForTestingDark:(NSString*)dark flat:(NSString*)flat;
+- (void)selectInspectorTabForTesting:(int)tab;
+
+// 起動時に前回の設定・キューを戻す（自己検証の起動では呼ばない）。
+- (void)restoreSession;
+// アプリの終了要求への答え（処理中なら確認して中断してから終わる）。
+- (NSApplicationTerminateReply)applicationShouldTerminate;
+- (void)openRecent:(id)sender;
+- (void)clearRecent:(id)sender;
+- (NSArray*)recentPaths;
 
 @end

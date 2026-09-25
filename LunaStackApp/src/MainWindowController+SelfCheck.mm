@@ -2,11 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
-#include "stackcore/map_pipeline.hpp"
-#include "stackcore/video_source.hpp"
-#include "stackcore/wavelet.hpp"
-
+// GUIを人が操作しなくても主要な経路を通し、壊れていないかを確かめるための仕掛け。
+// AppDelegate が環境変数 LUNASTACK_* を見て呼ぶ。通常の操作では使わない。
 @implementation MainWindowController (SelfCheck)
 
 // APの当たり判定を自己検証する。
@@ -20,7 +19,7 @@
         NSLog(@"AP当たり判定の自己検証: APが無いので確認できません");
         return NO;
     }
-    const double coordScale = _stacked ? LSDrizzleScaleAt([_drizzleSegment selectedSegment]) : 1.0;
+    const double coordScale = [self overlayScale];
 
     int checked = 0, mismatched = 0;
     double maxRoundTrip = 0.0;
@@ -36,8 +35,8 @@
         if (hit != static_cast<NSInteger>(i)) ++mismatched;
         ++checked;
     }
-    NSLog(@"AP当たり判定の自己検証: %d点中 一致しない %d点 / 往復誤差 最大 %.4f px", checked,
-          mismatched, maxRoundTrip);
+    NSLog(@"AP当たり判定の自己検証: %d点中 一致しない %d点 / 往復誤差 最大 %.4f px（倍率 %.2f）", checked,
+          mismatched, maxRoundTrip, [_preview effectiveDeviceZoom]);
     return mismatched == 0 && maxRoundTrip < 0.01;
 }
 
@@ -49,13 +48,20 @@
 - (BOOL)selfCheckEditingAndPresets {
     BOOL ok = YES;
 
-    // --- AP編集 ---
+    // --- AP編集（取り消しを含む） ---
     if (_analysis && !_analysis->points.empty()) {
         const std::size_t before = _analysis->points.size();
         NSString* signatureBefore = [[self analysisSignature] copy];
+        NSUndoManager* undo = [[self window] undoManager];
+        // 自己検証はイベント処理の外から呼ばれるので、取り消しの区切りを自分で付ける。
+        [undo setGroupsByEvent:NO];
 
+        [undo beginUndoGrouping];
         [self previewView:_preview didDeleteApAtIndex:0];
-        [self previewView:_preview didAddApAtX:_analysis ? 0 : 10 y:10];
+        [undo endUndoGrouping];
+        [undo beginUndoGrouping];
+        [self previewView:_preview didAddApAtX:10 y:10];
+        [undo endUndoGrouping];
 
         const stackcore::MapStackSettings settings = [self currentSettings];
         if (!settings.ap.use_manual_points) {
@@ -72,11 +78,27 @@
             NSLog(@"AP編集の自己検証: APを変えたのに解析が無効になっていません");
             ok = NO;
         }
+        // 2回取り消せば元の状態（自動配置・解析が有効）に戻る。
+        [undo undo];
+        [undo undo];
+        if (_manualPointsActive || ![signatureBefore isEqualToString:[self analysisSignature]]) {
+            NSLog(@"AP編集の自己検証: 取り消しで元に戻りません");
+            ok = NO;
+        }
+        [undo redo];
+        if (!_manualPointsActive || _manualPoints.size() != before - 1) {
+            NSLog(@"AP編集の自己検証: やり直しが効きません");
+            ok = NO;
+        }
         [signatureBefore release];
 
         // 元に戻す
         _manualPointsActive = NO;
         _manualPoints.clear();
+        [undo removeAllActionsWithTarget:self];
+        [undo setGroupsByEvent:YES];
+        [self updateApOverlay];
+        [self updateControlsEnabled];
     }
 
     // --- プリセット ---
@@ -87,6 +109,10 @@
     [_denoiseSliders[4] setDoubleValue:0.55];
     [_drizzleSegment setSelectedSegment:2];
     [_endianPopup selectItemAtIndex:2];
+    [_debayerPopup selectItemAtIndex:1];
+    [_gainSliders[2] setDoubleValue:1.2];
+    [_minScoreField setStringValue:@"0.42"];
+    [_nameStylePopup selectItemAtIndex:1];
     NSDictionary* modified = [self settingsDictionary];
 
     NSString* error = nil;
@@ -112,6 +138,180 @@
 
     NSLog(@"AP編集・プリセットの自己検証: %@", ok ? @"問題なし" : @"問題あり");
     return ok;
+}
+
+// スライダーの品質順が、エンジンの上位選択（select_top_frames）と同じ並びかを確かめる。
+// ここがずれると「スライダーで上位10%に見えたフレーム」と「実際に使われたフレーム」が食い違う。
+- (BOOL)selfCheckFrameOrder {
+    if (_frameInfos.empty() || _qualityOrder.empty()) {
+        NSLog(@"フレーム順の自己検証: 品質評価の結果がありません");
+        return NO;
+    }
+    BOOL ok = YES;
+    int accepted = 0;
+    for (const stackcore::FrameInfo& f : _frameInfos) {
+        if (f.accepted) ++accepted;
+    }
+    for (double percent : {5.0, 10.0, 25.0, 50.0, 100.0}) {
+        const std::vector<stackcore::FrameInfo> top = stackcore::select_top_frames(_frameInfos, percent);
+        std::vector<int> expected;
+        for (const stackcore::FrameInfo& f : top) expected.push_back(f.index);
+        std::vector<int> fromOrder(_qualityOrder.begin(), _qualityOrder.begin() + static_cast<std::ptrdiff_t>(top.size()));
+        std::sort(fromOrder.begin(), fromOrder.end());
+        if (fromOrder != expected) {
+            NSLog(@"フレーム順の自己検証: 上位%.0f%%がエンジンの選択と一致しません", percent);
+            ok = NO;
+        }
+    }
+    // 品質順のスライダーの左端は最良のフレーム、右端に除外フレームが並ぶ。
+    const BOOL savedOrder = _frameOrderByQuality;
+    const double savedPosition = [_frameSlider doubleValue];
+    [self setFrameOrderByQuality:YES];
+    [_frameSlider setDoubleValue:0.0];
+    const int best = [self currentFrameIndex];
+    for (const stackcore::FrameInfo& f : _frameInfos) {
+        if (f.accepted && f.quality > _frameInfos[static_cast<std::size_t>(best)].quality) {
+            NSLog(@"フレーム順の自己検証: 左端が最良のフレームではありません");
+            ok = NO;
+            break;
+        }
+    }
+    [self updateFrameInfoLabel];
+    NSString* label = [_frameInfoLabel stringValue];
+    NSString* expectTop = [NSString stringWithFormat:LSLocalizedString(@" · 上位 %.1f%% · 品質 %.4g"),
+                                                     100.0 / std::max(1, accepted),
+                                                     _frameInfos[static_cast<std::size_t>(best)].quality];
+    if ([label rangeOfString:expectTop].location == NSNotFound) {
+        NSLog(@"フレーム順の自己検証: 表示が想定と違います（%@）", label);
+        ok = NO;
+    }
+    [self setFrameOrderByQuality:savedOrder];
+    [_frameSlider setDoubleValue:savedPosition];
+    [self updateFrameInfoLabel];
+    NSLog(@"フレーム順の自己検証: %@（採用 %d / 全 %zu フレーム）", ok ? @"一致" : @"不一致", accepted,
+          _frameInfos.size());
+    return ok;
+}
+
+// 画面の仕上げと書き出す画像が、同じ設定なら同じ画素になるかを確かめる。
+- (BOOL)selfCheckFinishingMatchesExport {
+    if (!_stacked || !_finishing) {
+        NSLog(@"仕上げの自己検証: スタック結果がありません");
+        return NO;
+    }
+    std::shared_ptr<stackcore::FrameBuffer> shown = [self renderFinishingNow];
+    stackcore::FinishingPipeline fresh;
+    fresh.set_input(_stacked, kWaveletLayers);
+    stackcore::FrameBuffer exported;
+    fresh.render([self currentFinishingSettings], exported);
+    BOOL ok = shown->width() == exported.width() && shown->height() == exported.height() &&
+              shown->channels() == exported.channels();
+    for (int c = 0; ok && c < exported.channels(); ++c) {
+        for (int y = 0; ok && y < exported.height(); ++y) {
+            ok = std::memcmp(shown->row(c, y), exported.row(c, y), sizeof(float) * exported.width()) == 0;
+        }
+    }
+    NSLog(@"仕上げの自己検証: 画面と書き出しが%@（%d×%d）", ok ? @"一致" : @"不一致", exported.width(),
+          exported.height());
+    return ok;
+}
+
+- (void)waitForFinishingForTesting {
+    if (!_finishing) return;
+    std::shared_ptr<stackcore::FrameBuffer> out = [self renderFinishingNow];
+    _displayed = out;
+    ++_renderGeneration;  // 途中の非同期描画で上書きさせない
+    if ([_viewModeSegment selectedSegment] == 2) [self showFinishedOrStacked];
+}
+
+// "channel=auto,wb=auto,crop=auto,rotate=1,dering=0.6,tone=auto,linked=1.5" のような指定で
+// 仕上げのつまみを動かす（ボタンを押したのと同じ経路の計算を同期で行う）。
+- (void)setFinishingForTesting:(NSString*)spec {
+    if (!_stacked) return;
+    for (NSString* part in [spec componentsSeparatedByString:@","]) {
+        NSArray* kv = [part componentsSeparatedByString:@"="];
+        if ([kv count] != 2) continue;
+        NSString* key = kv[0];
+        NSString* value = kv[1];
+        if ([key isEqualToString:@"channel"] && _stacked->channels() == 3) {
+            [self applyChannelOffsets:stackcore::estimate_channel_offsets(*_stacked)];
+        } else if ([key isEqualToString:@"wb"] && _stacked->channels() == 3) {
+            stackcore::FrameBuffer aligned;
+            stackcore::shift_channels(*_stacked, [self currentFinishingSettings].channels, aligned);
+            double gains[3];
+            stackcore::estimate_white_balance(aligned, gains);
+            [self applyGainsRed:gains[0] blue:gains[2]];
+        } else if ([key isEqualToString:@"crop"]) {
+            [self autoCrop:nil];
+        } else if ([key isEqualToString:@"rotate"]) {
+            _rotationTurns = (([value intValue] % 4) + 4) % 4;
+            [self finishingChanged:nil];
+        } else if ([key isEqualToString:@"dering"]) {
+            [_deringSlider setDoubleValue:[value doubleValue]];
+            [self finishingChanged:nil];
+        } else if ([key isEqualToString:@"saturation"]) {
+            [_saturationSlider setDoubleValue:[value doubleValue]];
+            [self finishingChanged:nil];
+        } else if ([key isEqualToString:@"linked"]) {
+            [_linkedCheck setState:NSControlStateValueOn];
+            [self waveletChanged:_linkedCheck];
+            [_linkedSlider setDoubleValue:[value doubleValue]];
+            [self waveletChanged:_linkedSlider];
+        }
+    }
+    [self waitForFinishingForTesting];
+}
+
+// ---- 自己検証用のつまみ操作 ---------------------------------------------------
+
+- (void)setCalibrationForTestingDark:(NSString*)dark flat:(NSString*)flat {
+    [_darkPath release];
+    _darkPath = [dark length] > 0 ? [dark copy] : nil;
+    [_flatPath release];
+    _flatPath = [flat length] > 0 ? [flat copy] : nil;
+    [self invalidateCalibration];
+}
+
+- (void)selectInspectorTabForTesting:(int)tab {
+    [self selectInspectorTab:tab];
+    // 詳細設定なども開いて見せる（配置の崩れを確かめるため）。
+    for (NSString* key in _sections) {
+        if ([self tabIndexForSectionKey:key] != tab || [self sectionOpen:key]) continue;
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:[@"section." stringByAppendingString:key]];
+        [self updateSectionHeader:_sectionHeaders[key] key:key];
+    }
+    [self updateInspectorVisibility];
+}
+
+- (void)setDrizzleIndexForTesting:(int)index {
+    if (index < 0 || index >= kDrizzleChoiceCount) return;
+    [_drizzleSegment setSelectedSegment:index];
+    [self drizzleChanged:nil];
+}
+
+- (void)setZoomIndexForTesting:(int)index {
+    if (index < 0 || index > 3) return;
+    [_zoomControl setSelectedSegment:index];
+    [self zoomChanged:nil];
+}
+
+- (void)setApHeatmapForTesting:(BOOL)on {
+    [[_displayMenu itemAtIndex:2] setState:on ? NSControlStateValueOn : NSControlStateValueOff];
+    [self apDisplayChanged:nil];
+}
+
+- (void)setSharpenForTesting:(double)value denoise:(double)denoise {
+    for (int j = 0; j < kWaveletLayers; ++j) {
+        [_sharpenSliders[j] setDoubleValue:(j < 3 ? value : 1.0)];
+        [_denoiseSliders[j] setDoubleValue:denoise];
+    }
+    [self updateFinishingValueLabels];
+    [self waitForFinishingForTesting];
+}
+
+- (void)setWaveletPreviewForTesting:(BOOL)on {
+    [_waveletPreviewCheck setState:on ? NSControlStateValueOn : NSControlStateValueOff];
+    [self waveletPreviewChanged:nil];
 }
 
 @end

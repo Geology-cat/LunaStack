@@ -2,6 +2,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
 #include <vector>
 
 #include "stackcore/ap_placer.hpp"
@@ -14,6 +15,13 @@
 - (void)previewView:(PreviewView*)view didAddApAtX:(int)x y:(int)y;
 // index 番目のAPを削除したい。
 - (void)previewView:(PreviewView*)view didDeleteApAtIndex:(NSInteger)index;
+@optional
+// カーソル位置の座標と画素値の説明。画像の外では nil。
+- (void)previewView:(PreviewView*)view hoverDescription:(NSString*)text;
+// ←→キーでフレームを送りたい（Shiftで10枚、Optionで100枚）。
+- (void)previewView:(PreviewView*)view didRequestFrameStep:(int)step;
+// ホイールやピンチで倍率が変わった（ツールバーの表示を合わせるため）。
+- (void)previewViewZoomDidChange:(PreviewView*)view;
 @end
 
 // スタック結果を表示するビュー。
@@ -31,10 +39,21 @@
 // NSRect を FrameBuffer の参照として解釈して即クラッシュする。
 // Objective-C のセレクタは引数の型を含まないので、コンパイラは警告を出さない。
 - (void)showFrameBuffer:(const stackcore::FrameBuffer&)frame;
+// 共有して表示する（複製しない）。大きなスタック結果ではこちらを使う。
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame;
 - (void)clearImage;
+- (BOOL)hasImage;
+- (int)imageWidth;
+- (int)imageHeight;
 
-// 表示倍率。0 で「ウィンドウに合わせる」。
+// 表示倍率。0 で「ウィンドウに合わせる」（小さな画像は拡大して合わせる）。
+// それ以外は**画面の実画素**に対する倍率。1 なら画像1画素＝画面1画素
+// （Retinaでも本当の等倍になる）。
 @property(nonatomic) double zoom;
+// いまの実効倍率（画面の実画素に対する）。「全体」表示のときも値を返す。
+- (double)effectiveDeviceZoom;
+- (void)zoomInStep;
+- (void)zoomOutStep;
 
 // 表示だけを明るくする（自動ストレッチ）。
 //
@@ -65,6 +84,9 @@
 // クリックでAP追加、選択して Delete で削除。
 @property(nonatomic) BOOL apEditing;
 
+// クロップ範囲の枠（画像座標）。幅0で描かない。
+@property(nonatomic) NSRect cropOverlay;
+
 @property(nonatomic, assign) id<PreviewViewDelegate> delegate;
 
 // 画像座標 ⇄ ビュー座標。
@@ -80,5 +102,9 @@
 // クリック処理そのものが使う経路なので、自己検証もここを通す。
 - (NSInteger)apIndexAtViewPoint:(NSPoint)p;
 - (NSInteger)alignmentPointCount;
+
+// 指定の倍率で、画像座標 p がビュー座標 anchor に来るよう表示を合わせる
+// （カーソル位置を中心にしたズーム）。
+- (void)setZoom:(double)zoom keepingImagePoint:(NSPoint)p atViewPoint:(NSPoint)anchor;
 
 @end

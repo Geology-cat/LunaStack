@@ -9,14 +9,29 @@
 // 定義より前に出てくるメソッドの宣言。無いと型が分からず素通りしてしまう。
 @interface PreviewView ()
 - (NSPoint)clampedPan:(NSPoint)pan;
+- (double)effectiveScale;
+- (double)backingScale;
+- (void)rebuildImage;
+- (void)releaseMipmaps;
 @end
+
+namespace {
+
+// 縮小表示用の段数（1/2, 1/4, 1/8, 1/16）。
+constexpr int kMipLevels = 4;
+// ホイール・ピンチで使える倍率の範囲（画面の実画素に対して）。
+constexpr double kMinZoom = 0.05;
+constexpr double kMaxZoom = 32.0;
+
+}  // namespace
 
 @implementation PreviewView {
     CGImageRef _image;
+    CGImageRef _mips[kMipLevels];
     int _imageWidth;
     int _imageHeight;
-    // 直近に渡された画像。ストレッチの切り替えで作り直すために持っておく。
-    stackcore::FrameBuffer _source;
+    // 直近に渡された画像。ストレッチの切り替えと画素値の表示で使う。
+    std::shared_ptr<const stackcore::FrameBuffer> _source;
 
     // APオーバーレイ。
     std::vector<stackcore::AlignmentPoint> _points;
@@ -30,6 +45,8 @@
     BOOL _panning;
     NSPoint _panStart;
     NSPoint _panOrigin;
+
+    NSTrackingArea* _tracking;
 }
 
 @synthesize zoom = _zoom;
@@ -37,12 +54,14 @@
 @synthesize showAlignmentPoints = _showAlignmentPoints;
 @synthesize apHeatmap = _apHeatmap;
 @synthesize apEditing = _apEditing;
+@synthesize cropOverlay = _cropOverlay;
 @synthesize delegate = _delegate;
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
     if (self) {
         _image = NULL;
+        for (int i = 0; i < kMipLevels; ++i) _mips[i] = NULL;
         _imageWidth = 0;
         _imageHeight = 0;
         _zoom = 0.0;
@@ -55,12 +74,16 @@
         _apEditing = NO;
         _pan = NSZeroPoint;
         _panning = NO;
+        _cropOverlay = NSZeroRect;
+        _tracking = nil;
     }
     return self;
 }
 
 - (void)dealloc {
     if (_image) CGImageRelease(_image);
+    [self releaseMipmaps];
+    [_tracking release];
     [super dealloc];
 }
 
@@ -69,8 +92,42 @@
 }
 
 - (BOOL)acceptsFirstResponder {
-    // Delete キーでAPを消せるようにするため、キー入力を受け取る。
+    // Delete キーでAPを消し、←→でフレームを送れるようにするため、キー入力を受け取る。
     return YES;
+}
+
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (_tracking) {
+        [self removeTrackingArea:_tracking];
+        [_tracking release];
+    }
+    _tracking = [[NSTrackingArea alloc]
+        initWithRect:NSZeroRect
+             options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited |
+                     NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+               owner:self
+            userInfo:nil];
+    [self addTrackingArea:_tracking];
+}
+
+- (void)releaseMipmaps {
+    for (int i = 0; i < kMipLevels; ++i) {
+        if (_mips[i]) CGImageRelease(_mips[i]);
+        _mips[i] = NULL;
+    }
+}
+
+- (BOOL)hasImage {
+    return _image != NULL;
+}
+
+- (int)imageWidth {
+    return _imageWidth;
+}
+
+- (int)imageHeight {
+    return _imageHeight;
 }
 
 - (void)clearImage {
@@ -78,7 +135,8 @@
         CGImageRelease(_image);
         _image = NULL;
     }
-    _source.clear();
+    [self releaseMipmaps];
+    _source.reset();
     _imageWidth = 0;
     _imageHeight = 0;
     _pan = NSZeroPoint;
@@ -87,7 +145,7 @@
 
 - (void)setDisplayStretch:(BOOL)on {
     _displayStretch = on;
-    if (!_source.empty()) [self rebuildImage];
+    if (_source) [self rebuildImage];
 }
 
 - (void)showFrameBuffer:(const stackcore::FrameBuffer&)frame {
@@ -95,29 +153,36 @@
         [self clearImage];
         return;
     }
-    // ストレッチの切り替えで作り直せるよう、元の値を保持する。
-    _source.reset(frame.width(), frame.height(), frame.channels());
+    auto copy = std::make_shared<stackcore::FrameBuffer>(frame.width(), frame.height(),
+                                                         frame.channels());
     for (int c = 0; c < frame.channels(); ++c) {
         for (int y = 0; y < frame.height(); ++y) {
-            const float* s = frame.row(c, y);
-            float* d = _source.row(c, y);
-            for (int x = 0; x < frame.width(); ++x) d[x] = s[x];
+            std::copy(frame.row(c, y), frame.row(c, y) + frame.width(), copy->row(c, y));
         }
     }
+    [self showSharedFrame:copy];
+}
+
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame {
+    if (!frame || frame->empty()) {
+        [self clearImage];
+        return;
+    }
+    _source = frame;
     [self rebuildImage];
 }
 
 - (void)rebuildImage {
-    const stackcore::FrameBuffer& frame = _source;
     if (_image) {
         CGImageRelease(_image);
         _image = NULL;
     }
-    if (frame.empty()) {
+    [self releaseMipmaps];
+    if (!_source || _source->empty()) {
         [self setNeedsDisplay:YES];
         return;
     }
-
+    const stackcore::FrameBuffer& frame = *_source;
     const int w = frame.width();
     const int h = frame.height();
     const int channels = frame.channels();
@@ -125,19 +190,29 @@
     _imageHeight = h;
 
     // 表示用のストレッチ係数。全チャンネル共通にしないと色が転ぶ。
+    // 行ごとの最小・最大を並列に求めてから畳む（結果は実行順によらない）。
     float lo = 0.0f, hi = 1.0f;
     if (_displayStretch) {
-        lo = 1.0f;
-        hi = 0.0f;
-        for (int c = 0; c < channels; ++c) {
-            for (int y = 0; y < h; ++y) {
-                const float* r = frame.row(c, y);
-                for (int x = 0; x < w; ++x) {
-                    if (r[x] < lo) lo = r[x];
-                    if (r[x] > hi) hi = r[x];
-                }
-            }
-        }
+        std::vector<float> row_lo(static_cast<std::size_t>(h), 1.0f);
+        std::vector<float> row_hi(static_cast<std::size_t>(h), 0.0f);
+        float* rlo = row_lo.data();
+        float* rhi = row_hi.data();
+        const stackcore::FrameBuffer* f = &frame;
+        dispatch_apply(static_cast<size_t>(h), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
+                       ^(size_t y) {
+                           float a = 1.0f, b = 0.0f;
+                           for (int c = 0; c < channels; ++c) {
+                               const float* r = f->row(c, static_cast<int>(y));
+                               for (int x = 0; x < w; ++x) {
+                                   if (r[x] < a) a = r[x];
+                                   if (r[x] > b) b = r[x];
+                               }
+                           }
+                           rlo[y] = a;
+                           rhi[y] = b;
+                       });
+        lo = *std::min_element(row_lo.begin(), row_lo.end());
+        hi = *std::max_element(row_hi.begin(), row_hi.end());
         if (!(hi > lo)) {
             lo = 0.0f;
             hi = 1.0f;
@@ -145,46 +220,54 @@
     }
     const float inv_range = 1.0f / (hi - lo);
     const bool stretch = _displayStretch ? true : false;
-    auto map = [lo, inv_range, stretch](float v) -> float {
-        if (!stretch) return v;
-        float t = (v - lo) * inv_range;
-        if (t < 0.0f) t = 0.0f;
-        if (t > 1.0f) t = 1.0f;
-        // 軽いガンマで暗部を持ち上げる。惑星面の縞は中間調にある。
-        return std::pow(t, 0.75f);
-    };
 
     // 8bitのRGBAに落として CGImage を作る。
     // プレビューは目で見るためのものなので8bitで足りる。
-    // 保存は16bit/32bit floatのTIFFで別途行う。
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(w) * h * 4);
-    for (int y = 0; y < h; ++y) {
-        unsigned char* dst = pixels.data() + static_cast<std::size_t>(y) * w * 4;
-        if (channels >= 3) {
-            const float* r = frame.row(0, y);
-            const float* g = frame.row(1, y);
-            const float* b = frame.row(2, y);
-            for (int x = 0; x < w; ++x) {
-                dst[x * 4 + 0] = static_cast<unsigned char>(
-                    std::min(255.0f, std::max(0.0f, map(r[x]) * 255.0f + 0.5f)));
-                dst[x * 4 + 1] = static_cast<unsigned char>(
-                    std::min(255.0f, std::max(0.0f, map(g[x]) * 255.0f + 0.5f)));
-                dst[x * 4 + 2] = static_cast<unsigned char>(
-                    std::min(255.0f, std::max(0.0f, map(b[x]) * 255.0f + 0.5f)));
-                dst[x * 4 + 3] = 255;
-            }
-        } else {
-            const float* v = frame.row(0, y);
-            for (int x = 0; x < w; ++x) {
-                const unsigned char g = static_cast<unsigned char>(
-                    std::min(255.0f, std::max(0.0f, map(v[x]) * 255.0f + 0.5f)));
-                dst[x * 4 + 0] = g;
-                dst[x * 4 + 1] = g;
-                dst[x * 4 + 2] = g;
-                dst[x * 4 + 3] = 255;
-            }
-        }
+    // 保存は16bit/32bit floatで別途行う。
+    // ガンマ変換は4096段の表を引く（1画素ごとに pow を呼ぶと大画像で遅い）。
+    // 軽いガンマで暗部を持ち上げる。惑星面の縞は中間調にある。
+    constexpr int kLutSize = 4096;
+    std::vector<unsigned char> lut(kLutSize + 1);
+    for (int i = 0; i <= kLutSize; ++i) {
+        const float t = static_cast<float>(i) / kLutSize;
+        lut[static_cast<std::size_t>(i)] =
+            static_cast<unsigned char>((stretch ? std::pow(t, 0.75f) : t) * 255.0f + 0.5f);
     }
+    const unsigned char* table = lut.data();
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(w) * h * 4);
+    unsigned char* base = pixels.data();
+    const stackcore::FrameBuffer* f = &frame;
+    dispatch_apply(static_cast<size_t>(h), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
+                   ^(size_t yy) {
+                       const int y = static_cast<int>(yy);
+                       unsigned char* dst = base + static_cast<std::size_t>(y) * w * 4;
+                       const auto map = [lo, inv_range, stretch, table](float v) -> unsigned char {
+                           float t = stretch ? (v - lo) * inv_range : v;
+                           if (!(t > 0.0f)) t = 0.0f;
+                           if (t > 1.0f) t = 1.0f;
+                           return table[static_cast<int>(t * kLutSize + 0.5f)];
+                       };
+                       if (channels >= 3) {
+                           const float* r = f->row(0, y);
+                           const float* g = f->row(1, y);
+                           const float* b = f->row(2, y);
+                           for (int x = 0; x < w; ++x) {
+                               dst[x * 4 + 0] = map(r[x]);
+                               dst[x * 4 + 1] = map(g[x]);
+                               dst[x * 4 + 2] = map(b[x]);
+                               dst[x * 4 + 3] = 255;
+                           }
+                       } else {
+                           const float* v = f->row(0, y);
+                           for (int x = 0; x < w; ++x) {
+                               const unsigned char g = map(v[x]);
+                               dst[x * 4 + 0] = g;
+                               dst[x * 4 + 1] = g;
+                               dst[x * 4 + 2] = g;
+                               dst[x * 4 + 3] = 255;
+                           }
+                       }
+                   });
 
     CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
     CGContextRef ctx = CGBitmapContextCreate(pixels.data(), w, h, 8, w * 4, space,
@@ -197,9 +280,37 @@
     [self setNeedsDisplay:YES];
 }
 
+// 縮小表示用の画像（UI設計書 §5.3 のミップマップ相当）。
+// 大きな画像を毎回全画素から縮めて描くと重いので、段ごとに1回だけ作って使い回す。
+- (CGImageRef)imageForDeviceScale:(double)deviceScale {
+    if (!_image || deviceScale >= 0.5) return _image;
+    int level = 0;
+    double s = deviceScale;
+    while (s < 0.5 && level < kMipLevels) {
+        s *= 2.0;
+        ++level;
+    }
+    if (level == 0) return _image;
+    CGImageRef& slot = _mips[level - 1];
+    if (!slot) {
+        const int w = std::max(1, _imageWidth >> level);
+        const int h = std::max(1, _imageHeight >> level);
+        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, 0, space, kCGImageAlphaNoneSkipLast);
+        if (ctx) {
+            CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
+            CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), _image);
+            slot = CGBitmapContextCreateImage(ctx);
+            CGContextRelease(ctx);
+        }
+        CGColorSpaceRelease(space);
+    }
+    return slot ? slot : _image;
+}
+
 - (void)setZoom:(double)zoom {
-    _zoom = zoom;
-    if (zoom <= 0.0) {
+    _zoom = zoom <= 0.0 ? 0.0 : std::min(kMaxZoom, std::max(kMinZoom, zoom));
+    if (_zoom <= 0.0) {
         _pan = NSZeroPoint;  // 「合わせる」に戻したらパンも戻す
     } else {
         // 倍率を下げたとき、前の倍率でのパン量が残っていると
@@ -207,6 +318,45 @@
         _pan = [self clampedPan:_pan];
     }
     [self setNeedsDisplay:YES];
+}
+
+- (void)setZoom:(double)zoom keepingImagePoint:(NSPoint)p atViewPoint:(NSPoint)anchor {
+    _zoom = std::min(kMaxZoom, std::max(kMinZoom, zoom));
+    const NSRect bounds = [self bounds];
+    const double scale = [self effectiveScale];
+    const double drawW = _imageWidth * scale;
+    const double drawH = _imageHeight * scale;
+    const double originX = anchor.x - p.x * scale;
+    const double originY = anchor.y + p.y * scale - drawH;
+    _pan = [self clampedPan:NSMakePoint(originX - (NSMidX(bounds) - drawW * 0.5),
+                                        originY - (NSMidY(bounds) - drawH * 0.5))];
+    [self setNeedsDisplay:YES];
+    if ([_delegate respondsToSelector:@selector(previewViewZoomDidChange:)]) {
+        [_delegate previewViewZoomDidChange:self];
+    }
+}
+
+- (double)effectiveDeviceZoom {
+    return [self effectiveScale] * [self backingScale];
+}
+
+// 1段 = √2倍。2回で2倍になる。
+- (void)zoomInStep {
+    if (!_image) return;
+    const NSRect b = [self bounds];
+    const NSPoint center = NSMakePoint(NSMidX(b), NSMidY(b));
+    [self setZoom:[self effectiveDeviceZoom] * M_SQRT2
+        keepingImagePoint:[self imagePointFromViewPoint:center]
+              atViewPoint:center];
+}
+
+- (void)zoomOutStep {
+    if (!_image) return;
+    const NSRect b = [self bounds];
+    const NSPoint center = NSMakePoint(NSMidX(b), NSMidY(b));
+    [self setZoom:[self effectiveDeviceZoom] / M_SQRT2
+        keepingImagePoint:[self imagePointFromViewPoint:center]
+              atViewPoint:center];
 }
 
 // パン量を「画像の端がビューの端より内側に入らない」範囲に収める。
@@ -273,16 +423,28 @@
     [self setNeedsDisplay:YES];
 }
 
+- (void)setCropOverlay:(NSRect)rect {
+    _cropOverlay = rect;
+    [self setNeedsDisplay:YES];
+}
+
 // ---- 座標変換 --------------------------------------------------------------
 
+- (double)backingScale {
+    NSWindow* window = [self window];
+    const double s = window ? [window backingScaleFactor] : 1.0;
+    return s > 0.0 ? s : 1.0;
+}
+
+// ビュー座標（ポイント）で、画像1画素が何ポイントになるか。
 - (double)effectiveScale {
     if (_imageWidth == 0 || _imageHeight == 0) return 1.0;
-    if (_zoom > 0.0) return _zoom;
-    // ウィンドウに合わせる。拡大はしない（等倍を超えて引き伸ばさない）。
+    if (_zoom > 0.0) return _zoom / [self backingScale];
+    // ウィンドウに合わせる。小さな惑星画像は拡大して画面を使い切る。
     const NSRect bounds = [self bounds];
     const double sx = bounds.size.width / _imageWidth;
     const double sy = bounds.size.height / _imageHeight;
-    return std::min(1.0, std::min(sx, sy));
+    return std::min(sx, sy);
 }
 
 - (NSRect)imageDrawRect {
@@ -345,18 +507,57 @@
     }
 
     const NSRect target = [self imageDrawRect];
-    const double scale = [self effectiveScale];
+    const double deviceScale = [self effectiveDeviceZoom];
 
     CGContextRef ctx = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
     CGContextSaveGState(ctx);
-    // 等倍以上に拡大するときは補間しない。
+    // 画面の実画素で等倍以上に拡大するときは補間しない。
     // 滑らかに補間すると「実際に写っている画素」が分からなくなる。
-    CGContextSetInterpolationQuality(ctx, scale >= 1.0 ? kCGInterpolationNone
-                                                       : kCGInterpolationHigh);
-    CGContextDrawImage(ctx, NSRectToCGRect(target), _image);
+    CGContextSetInterpolationQuality(ctx, deviceScale >= 1.0 ? kCGInterpolationNone
+                                                             : kCGInterpolationHigh);
+    CGContextDrawImage(ctx, NSRectToCGRect(target), [self imageForDeviceScale:deviceScale]);
     CGContextRestoreGState(ctx);
 
     if (_showAlignmentPoints && !_points.empty()) [self drawAlignmentPoints];
+    if (_cropOverlay.size.width > 0.0 && _cropOverlay.size.height > 0.0) [self drawCropOverlay];
+    if (_showAlignmentPoints && _apHeatmap && !_apQuality.empty()) [self drawHeatmapLegend];
+}
+
+- (void)drawCropOverlay {
+    const NSPoint a = [self viewPointFromImagePoint:_cropOverlay.origin];
+    const NSPoint b = [self viewPointFromImagePoint:NSMakePoint(NSMaxX(_cropOverlay),
+                                                                NSMaxY(_cropOverlay))];
+    const NSRect r = NSMakeRect(std::min(a.x, b.x), std::min(a.y, b.y), std::fabs(b.x - a.x),
+                                std::fabs(b.y - a.y));
+    NSBezierPath* path = [NSBezierPath bezierPathWithRect:r];
+    const CGFloat dash[2] = {6.0, 4.0};
+    [path setLineDash:dash count:2 phase:0.0];
+    [path setLineWidth:1.5];
+    [[NSColor colorWithCalibratedRed:1.0 green:0.85 blue:0.2 alpha:0.95] setStroke];
+    [path stroke];
+}
+
+// 品質の色分けの凡例。色だけでは何が高いのか分からない。
+- (void)drawHeatmapLegend {
+    const NSRect bounds = [self bounds];
+    const NSRect bar = NSMakeRect(bounds.origin.x + 12.0, bounds.origin.y + 12.0, 120.0, 8.0);
+    [[NSColor colorWithCalibratedWhite:0.0 alpha:0.55] setFill];
+    NSRectFillUsingOperation(NSInsetRect(bar, -8.0, -14.0), NSCompositingOperationSourceOver);
+    for (int i = 0; i < 120; ++i) {
+        const double t = i / 119.0;
+        [[NSColor colorWithCalibratedHue:(1.0 - t) * 0.6 saturation:0.9 brightness:1.0 alpha:1.0]
+            setFill];
+        NSRectFill(NSMakeRect(bar.origin.x + i, bar.origin.y, 1.0, bar.size.height));
+    }
+    NSDictionary* attrs = @{
+        NSForegroundColorAttributeName : [NSColor whiteColor],
+        NSFontAttributeName : [NSFont systemFontOfSize:9.0]
+    };
+    [LSLocalizedString(@"品質 低") drawAtPoint:NSMakePoint(bar.origin.x, NSMaxY(bar) + 1.0)
+                               withAttributes:attrs];
+    NSString* high = LSLocalizedString(@"高");
+    const NSSize size = [high sizeWithAttributes:attrs];
+    [high drawAtPoint:NSMakePoint(NSMaxX(bar) - size.width, NSMaxY(bar) + 1.0) withAttributes:attrs];
 }
 
 - (void)drawAlignmentPoints {
@@ -435,9 +636,9 @@
 
 - (void)mouseDown:(NSEvent*)event {
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+    [[self window] makeFirstResponder:self];
 
     if (_apEditing && _image) {
-        [[self window] makeFirstResponder:self];
         const NSInteger hit = [self apIndexAtViewPoint:p];
         if (hit >= 0) {
             _selectedAp = hit;
@@ -482,6 +683,63 @@
     if (hit >= 0 && _delegate) [_delegate previewView:self didDeleteApAtIndex:hit];
 }
 
+// ホイール: 拡大中はパン、⌘を押しながらならカーソル位置を中心にズーム。
+- (void)scrollWheel:(NSEvent*)event {
+    if (!_image) return;
+    const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+    if ([event modifierFlags] & NSEventModifierFlagCommand) {
+        const double delta = [event hasPreciseScrollingDeltas] ? [event scrollingDeltaY] / 50.0
+                                                                : [event scrollingDeltaY] / 5.0;
+        const double factor = std::pow(2.0, delta);
+        [self setZoom:[self effectiveDeviceZoom] * factor
+            keepingImagePoint:[self imagePointFromViewPoint:p]
+                  atViewPoint:p];
+        return;
+    }
+    const double k = [event hasPreciseScrollingDeltas] ? 1.0 : 8.0;
+    _pan = [self clampedPan:NSMakePoint(_pan.x + [event scrollingDeltaX] * k,
+                                        _pan.y - [event scrollingDeltaY] * k)];
+    [self setNeedsDisplay:YES];
+}
+
+// トラックパッドのピンチ。
+- (void)magnifyWithEvent:(NSEvent*)event {
+    if (!_image) return;
+    const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+    [self setZoom:[self effectiveDeviceZoom] * (1.0 + [event magnification])
+        keepingImagePoint:[self imagePointFromViewPoint:p]
+              atViewPoint:p];
+}
+
+- (void)mouseMoved:(NSEvent*)event {
+    if (![_delegate respondsToSelector:@selector(previewView:hoverDescription:)]) return;
+    const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+    NSString* text = nil;
+    if (_source && _image) {
+        const NSPoint img = [self imagePointFromViewPoint:p];
+        const int x = static_cast<int>(std::floor(img.x));
+        const int y = static_cast<int>(std::floor(img.y));
+        if (x >= 0 && y >= 0 && x < _source->width() && y < _source->height()) {
+            if (_source->channels() >= 3) {
+                text = [NSString stringWithFormat:@"x %d  y %d   R %.4f  G %.4f  B %.4f", x, y,
+                                                  _source->row(0, y)[x], _source->row(1, y)[x],
+                                                  _source->row(2, y)[x]];
+            } else {
+                text = [NSString stringWithFormat:@"x %d  y %d   %.4f", x, y,
+                                                  _source->row(0, y)[x]];
+            }
+        }
+    }
+    [_delegate previewView:self hoverDescription:text];
+}
+
+- (void)mouseExited:(NSEvent*)event {
+    (void)event;
+    if ([_delegate respondsToSelector:@selector(previewView:hoverDescription:)]) {
+        [_delegate previewView:self hoverDescription:nil];
+    }
+}
+
 - (void)keyDown:(NSEvent*)event {
     const unichar key = [[event charactersIgnoringModifiers] length] > 0
                             ? [[event charactersIgnoringModifiers] characterAtIndex:0]
@@ -490,6 +748,14 @@
         const NSInteger index = _selectedAp;
         _selectedAp = -1;
         if (_delegate) [_delegate previewView:self didDeleteApAtIndex:index];
+        return;
+    }
+    if ((key == NSLeftArrowFunctionKey || key == NSRightArrowFunctionKey) &&
+        [_delegate respondsToSelector:@selector(previewView:didRequestFrameStep:)]) {
+        int step = key == NSLeftArrowFunctionKey ? -1 : 1;
+        if ([event modifierFlags] & NSEventModifierFlagShift) step *= 10;
+        if ([event modifierFlags] & NSEventModifierFlagOption) step *= 100;
+        [_delegate previewView:self didRequestFrameStep:step];
         return;
     }
     [super keyDown:event];
