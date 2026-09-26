@@ -10,6 +10,7 @@
 #include "stackcore/mapped_file.hpp"
 
 #include "../common/parallel_rows.hpp"
+#include "libraw_reader.hpp"
 
 namespace stackcore {
 namespace {
@@ -331,18 +332,18 @@ Cr2Layout parse_cr2(const MappedFile& file) {
             }
         }
         if (!tz_known) {
-            // TimeInfo: [1]時差（分） [3]夏時間（分）
+            // TimeInfo: [1]時差（分、夏時間のぶんも含む。[3] の夏時間は足さない）
             if (const Entry* ti = mn.find(0x0035)) {
                 if (ti->type == 4 || ti->type == 9) {
                     if (ti->count >= 4) {
-                        tz_minutes = static_cast<int>(t.value(*ti, 1)) + static_cast<int>(t.value(*ti, 3));
+                        tz_minutes = static_cast<int>(t.value(*ti, 1));
                         tz_known = true;
                     }
                 } else if (ti->type == 7 && ti->count >= 16) {
                     Entry as_long = *ti;
                     as_long.type = 9;
                     as_long.count = ti->count / 4;
-                    tz_minutes = static_cast<int>(t.value(as_long, 1)) + static_cast<int>(t.value(as_long, 3));
+                    tz_minutes = static_cast<int>(t.value(as_long, 1));
                     tz_known = true;
                 }
             }
@@ -873,6 +874,15 @@ void fill_cr2_info(const Cr2Layout& L, ImageFileInfo& info) {
     info.timestamp_ticks = L.ticks;
 }
 
+// CR2 の白（生の値）。ISO ごとの飽和点（メーカーノートの SpecularWhiteLevel）を LibRaw から得る。
+// 分からなければ記録ビット数の最大値。
+double cr2_white(const std::string& path, const Cr2Layout& L) {
+    const double full = std::ldexp(1.0, L.jpeg.precision) - 1.0;
+    double white = 0.0;
+    if (detail::libraw_white_level(path, white) && white > 0.0 && white <= full) return white;
+    return full;
+}
+
 void check_size(const ImageFileInfo& info, const char* format) {
     if (info.width <= 0 || info.height <= 0) fail(format, "画像の寸法がありません");
     if (static_cast<double>(info.width) * info.height > 400.0e6) fail(format, "画像が大きすぎます");
@@ -916,7 +926,7 @@ std::int64_t exif_datetime_to_ticks(const std::string& datetime, const std::stri
 
 bool is_raw_image_path(const std::string& path) {
     const std::string ext = lower_extension(path);
-    return ext == "cr2" || ext == "dng";
+    return ext == "cr2" || ext == "dng" || detail::libraw_extension(ext);
 }
 
 ImageFileInfo probe_raw_image(const std::string& path) {
@@ -932,6 +942,8 @@ ImageFileInfo probe_raw_image(const std::string& path) {
         const DngRaw R = parse_dng(file);
         fill_dng_info(R, info);
         check_size(info, "DNG");
+    } else if (detail::libraw_extension(ext)) {
+        return detail::libraw_probe(path);
     } else {
         throw std::runtime_error("RAWではない拡張子です: " + path);
     }
@@ -950,7 +962,7 @@ void read_raw_image(const std::string& path, FrameBuffer& out, ImageFileInfo& in
         const std::vector<std::uint16_t> v = decode_cr2_values(L);
         double black[4];
         masked_black(v, L.raw_width, L.raw_height, L, black);
-        const double white = std::ldexp(1.0, L.jpeg.precision) - 1.0;
+        const double white = cr2_white(path, L);
         const int W = info.width, H = info.height;
         out.reset(W, H, 1);
         out.set_source_bit_depth(L.jpeg.precision);
@@ -975,6 +987,8 @@ void read_raw_image(const std::string& path, FrameBuffer& out, ImageFileInfo& in
         check_size(info, "DNG");
         std::vector<float> raw = decode_dng_values(R);
         normalize_dng(R, raw, out);
+    } else if (detail::libraw_extension(ext)) {
+        detail::libraw_read(path, out, info);
     } else {
         throw std::runtime_error("RAWではない拡張子です: " + path);
     }
@@ -994,7 +1008,7 @@ RawSensorData read_cr2_sensor_data(const std::string& path) {
     d.crop_height = L.bottom - L.top + 1;
     masked_black(d.values, d.width, d.height, L, d.black);
     d.bits = L.jpeg.precision;
-    d.white = std::ldexp(1.0, d.bits) - 1.0;
+    d.white = cr2_white(path, L);
     return d;
 }
 

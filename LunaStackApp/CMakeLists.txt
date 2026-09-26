@@ -29,6 +29,16 @@ set_source_files_properties(${LUNASTACK_EN_LOCALIZATIONS} PROPERTIES
     MACOSX_PACKAGE_LOCATION "Resources/en.lproj"
 )
 
+# 同梱するライブラリのライセンス表示（LibRaw は CDDL 1.0 で使う。third_party/LibRaw）。
+set(LUNASTACK_THIRD_PARTY_NOTICES
+    "${PROJECT_SOURCE_DIR}/third_party/LibRaw/LICENSE.CDDL"
+    "${PROJECT_SOURCE_DIR}/third_party/LibRaw/COPYRIGHT"
+    "${PROJECT_SOURCE_DIR}/third_party/LibRaw/README.LunaStack.md"
+)
+set_source_files_properties(${LUNASTACK_THIRD_PARTY_NOTICES} PROPERTIES
+    MACOSX_PACKAGE_LOCATION "Resources/ThirdParty/LibRaw"
+)
+
 add_executable(LunaStackApp MACOSX_BUNDLE
     src/main.mm
     src/AppDelegate.mm
@@ -48,6 +58,7 @@ add_executable(LunaStackApp MACOSX_BUNDLE
     ${LUNASTACK_APP_ICON}
     ${LUNASTACK_JA_LOCALIZATIONS}
     ${LUNASTACK_EN_LOCALIZATIONS}
+    ${LUNASTACK_THIRD_PARTY_NOTICES}
 )
 
 target_include_directories(LunaStackApp PRIVATE src)

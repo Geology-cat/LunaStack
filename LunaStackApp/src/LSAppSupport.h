@@ -69,6 +69,9 @@ void write_output_image(const std::string& path, const stackcore::FrameBuffer& i
 
 NSTextField* MakeLabel(NSString* text);
 
+// 開くパネルで選べる入力の拡張子（動画・静止画・カメラのRAW）。
+NSArray* LSInputFileTypes();
+
 // 1ファイルぶんの処理。
 //
 // **GUIから完全に切り離してある。** GUIの各工程も自己検証の一括経路も

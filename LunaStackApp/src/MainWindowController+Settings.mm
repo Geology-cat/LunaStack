@@ -615,8 +615,7 @@ static void SetText(NSTextField* field, id value) {
 
 - (NSString*)chooseCalibrationSourceWithMessage:(NSString*)message {
     NSOpenPanel* panel = [NSOpenPanel openPanel];
-    [panel setAllowedFileTypes:@[ @"ser", @"avi", @"tif", @"tiff", @"png", @"fit", @"fits", @"fts",
-                                  @"jpg", @"jpeg", @"cr2", @"dng" ]];
+    [panel setAllowedFileTypes:LSInputFileTypes()];
     [panel setCanChooseDirectories:YES];
     [panel setAllowsMultipleSelection:NO];
     [panel setMessage:message];

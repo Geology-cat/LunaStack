@@ -50,6 +50,16 @@ void write_output_image(const std::string& path, const stackcore::FrameBuffer& i
                           metadata);
 }
 
+NSArray* LSInputFileTypes() {
+    return @[
+        @"ser", @"avi", @"tif", @"tiff", @"png", @"fit", @"fits", @"fts", @"jpg", @"jpeg",
+        // カメラのRAW（stackcore::is_raw_image_path と同じ並び）
+        @"cr2", @"dng", @"cr3", @"crw", @"nef", @"nrw", @"arw", @"srf", @"sr2", @"raf", @"orf",
+        @"rw2", @"raw", @"rwl", @"pef", @"srw", @"3fr", @"fff", @"iiq", @"erf", @"kdc", @"dcr",
+        @"mrw", @"mos", @"mef", @"gpr"
+    ];
+}
+
 NSTextField* MakeLabel(NSString* text) {
     NSTextField* label = [[[NSTextField alloc] init] autorelease];
     [label setStringValue:text];

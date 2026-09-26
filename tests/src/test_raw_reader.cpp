@@ -73,7 +73,9 @@ MT_TEST(raw_拡張子でRAWを判定し静止画として扱う) {
     MT_CHECK(stackcore::is_raw_image_path("/a/静止画cr2/20250713_0070345 .CR2"));
     MT_CHECK(stackcore::is_raw_image_path("x.dng"));
     MT_CHECK(!stackcore::is_raw_image_path("/a/静止画cr2/readme"));  // フォルダ名に cr2 があっても違う
-    MT_CHECK(!stackcore::is_raw_image_path("x.cr3"));
+    MT_CHECK(stackcore::is_raw_image_path("x.CR3"));
+    MT_CHECK(stackcore::is_raw_image_path("x.nef") && stackcore::is_raw_image_path("x.ARW") && stackcore::is_raw_image_path("x.raf"));
+    MT_CHECK(!stackcore::is_raw_image_path("x.xyz"));
     MT_CHECK(stackcore::is_supported_image_path("IMG_1.CR2"));
     MT_CHECK(stackcore::is_supported_image_path("IMG_1.DNG"));
 }
@@ -219,4 +221,20 @@ MT_TEST(raw_連番はRAWとJPEGが混ざっていても1種類にそろえる) {
     MT_CHECK_EQ(static_cast<int>(tif.size()), 3);
     MT_CHECK(tif[1] == "/d/c.TIFF");
     MT_CHECK(select_sequence_files({"/d/x.txt"}).empty());
+}
+
+MT_TEST(raw_LibRawで読む形式も壊れたファイルははっきり失敗する) {
+    // 中身がRAWでない .NEF・.CR3。LibRaw が読めないと言ったら、形式名つきの例外にする。
+    for (const char* name : {"/tmp/lunastack_test_broken.NEF", "/tmp/lunastack_test_broken.cr3"}) {
+        std::FILE* fp = std::fopen(name, "wb");
+        MT_CHECK(fp != nullptr);
+        const char junk[] = "this is not a raw file at all, just some text to confuse the parser";
+        for (int i = 0; i < 64; ++i) std::fwrite(junk, 1, sizeof(junk), fp);
+        std::fclose(fp);
+        FrameBuffer f;
+        ImageFileInfo info;
+        MT_CHECK_THROWS(stackcore::read_image_file(name, f, info));
+        MT_CHECK_THROWS(stackcore::probe_image_file(name));
+        std::remove(name);
+    }
 }
