@@ -7,8 +7,8 @@
 - ライセンス: LibRaw は LGPL 2.1 と CDDL 1.0 の選択制。LunaStack は **CDDL 1.0** の条件で使う
   （静的リンクしてもアプリ本体のライセンスには及ばない。LibRaw のソースと著作権表示を同梱する）。
   アプリには LICENSE.CDDL と COPYRIGHT を Resources/ThirdParty/LibRaw に入れる
-- 使い方: `libstackcore/src/io/libraw_reader.cpp` から、RAW の展開（`unpack`）と機種ごとの
-  切り抜き・黒・白の情報だけを使う。色補間・色変換・ガンマ（`dcraw_process`）は使わない
+- 使い方: `libstackcore/src/io/libraw_reader.cpp` から、カメラRAW（CR2・DNG を含むすべて）の展開（`unpack`）と
+  機種ごとの切り抜き・黒・白の情報だけを使う。Deflate の DNG のため `USE_ZLIB` を付け、macOS 標準の libz をリンクする。色補間・色変換・ガンマ（`dcraw_process`）は使わない
 - 更新するとき: 版を上げると黒・白・切り抜きの表が変わり、同じRAWでも出力が変わることがある。
   上げたら開発記録に書き、サンプルで値を比べること
 

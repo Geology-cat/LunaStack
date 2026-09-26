@@ -386,7 +386,12 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     [self updateFinishingValueLabels];
     [self waitForFinishingForTesting];
     // 1秒のドラッグで10回以上（＝おおむね10fps以上）描き直していれば「途切れない」とみなす。
-    const BOOL smooth = duringDrag >= 10;
+    // 400万画素を超える画像（一眼レフのRAWなど）は、仕上げ1回に0.1秒以上かかり、メモリの
+    // 込み具合で速さが揺れる（6240×4160 で毎秒3〜8回）。そこでは「止まらずに更新が続く」
+    // （ドラッグ中に2回以上）ことを見る。0回（ドラッグ中ずっと止まる）が以前の不具合。
+    const double pixels = static_cast<double>(_stacked->width()) * _stacked->height();
+    const int required = pixels > 4.0e6 ? 2 : 10;
+    const BOOL smooth = duringDrag >= required;
     const BOOL monotonic = drops == 0 && lowest >= before * 0.999;
     NSLog(@"連続プレビューの自己検証: ドラッグ中 %d 回更新（%d 回の操作・%.2f 秒、%d×%d）、高周波 動かす前 %.5f / "
           @"途中の最小 %.5f、下がった回数 %d %@",

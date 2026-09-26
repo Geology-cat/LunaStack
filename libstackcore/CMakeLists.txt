@@ -20,7 +20,6 @@ add_library(stackcore STATIC
     src/io/video_source.cpp
     src/io/inflate.cpp
     src/io/image_reader.cpp
-    src/io/lossless_jpeg.cpp
     src/io/raw_reader.cpp
     src/io/libraw_reader.cpp
     src/io/metadata.cpp

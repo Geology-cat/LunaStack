@@ -11,7 +11,7 @@ namespace stackcore {
 
 // 静止画1枚の読み込み（静止画連番の入力用）。
 //
-// 対応形式（すべて自前実装。OSのImageIOは使わない。仕様書 §8-7 の方針）:
+// 対応形式（OSのImageIOは使わない。仕様書 §8-7 の方針。RAW以外は自前実装）:
 //   * TIFF  : 8/16/32bit整数・32bit浮動小数点、1ch/3ch（アルファは捨てる）、
 //             無圧縮 / LZW / Deflate / PackBits、予測子（水平差分・浮動小数点）、
 //             ストリップ・タイル、チャンキー・プレーナ、リトル・ビッグエンディアン
@@ -19,7 +19,8 @@ namespace stackcore {
 //   * FITS  : BITPIX 8/16/32/-32/-64、2軸（モノ）または3軸（RGB面）、
 //             BZERO/BSCALE、BAYERPAT、ROWORDER
 //   * JPEG  : 8bitベースライン逐次
-//   * RAW   : Canon CR2・DNG（raw_reader.hpp。リニアのまま、CFAは1チャンネルで返す）
+//   * RAW   : CR2・CR3・NEF・ARW・RAF・DNG など（raw_reader.hpp。同梱の LibRaw で読む。
+//             リニアのまま、Bayer は1チャンネルで返す）
 //
 // 画素は 0..1 に正規化する。整数は型の最大値で割る。浮動小数点は、値が1を
 // 超えるなら16bitスケールとみなして65535で割る（連番の中で枚ごとに正規化を

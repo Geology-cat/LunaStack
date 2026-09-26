@@ -126,11 +126,35 @@ void open_raw(const std::string& path, Opened& o) {
     if (id.filters == 0 && id.colors != 1 && id.colors != 3) fail(path, "この色の数には対応していません");
 }
 
-SerColorId bayer_of(LibRaw& raw) {
+// 切り抜く範囲（LibRaw の見える範囲の座標）。機種の既定の範囲（CR2 の SensorInfo・
+// DNG の DefaultCrop など）があればそれ、無ければ見える範囲全体。
+struct Crop {
+    int x = 0, y = 0, w = 0, h = 0;
+};
+
+Crop crop_of(const LibRaw& raw) {
+    const libraw_image_sizes_t& S = raw.imgdata.sizes;
+    Crop c;
+    c.w = S.width;
+    c.h = S.height;
+    const libraw_raw_inset_crop_t& in = S.raw_inset_crops[0];
+    const int x = static_cast<int>(in.cleft) - S.left_margin;
+    const int y = static_cast<int>(in.ctop) - S.top_margin;
+    if (in.cwidth > 0 && in.cheight > 0 && in.cleft != 0xFFFF && in.ctop != 0xFFFF && x >= 0 && y >= 0 &&
+        x + in.cwidth <= S.width && y + in.cheight <= S.height) {
+        c.x = x;
+        c.y = y;
+        c.w = in.cwidth;
+        c.h = in.cheight;
+    }
+    return c;
+}
+
+SerColorId bayer_of(LibRaw& raw, const Crop& crop) {
     int c[2][2];
     for (int y = 0; y < 2; ++y) {
         for (int x = 0; x < 2; ++x) {
-            const int v = raw.COLOR(y, x);
+            const int v = raw.COLOR(crop.y + y, crop.x + x);
             c[y][x] = v == 3 ? 1 : v;
         }
     }
@@ -144,14 +168,15 @@ SerColorId bayer_of(LibRaw& raw) {
 void fill_info(const std::string& path, Opened& o, ImageFileInfo& info) {
     LibRaw& r = *o.raw;
     const libraw_iparams_t& id = r.imgdata.idata;
-    info.width = r.imgdata.sizes.width;
-    info.height = r.imgdata.sizes.height;
+    const Crop crop = crop_of(r);
+    info.width = crop.w;
+    info.height = crop.h;
     if (info.width <= 0 || info.height <= 0) fail(path, "画像の寸法がありません");
     if (static_cast<double>(info.width) * info.height > 400.0e6) fail(path, "画像が大きすぎます");
     const bool xtrans = id.filters == 9;
     if (id.filters > 1000) {
         info.channels = 1;
-        info.color = bayer_of(r);
+        info.color = bayer_of(r, crop);
         if (info.color == SerColorId::Mono) fail(path, "Bayerの並びが読めません");
     } else if (xtrans || id.colors == 3) {
         info.channels = 3;  // X-Trans はここで色補間してRGBで返す
@@ -166,7 +191,7 @@ void fill_info(const std::string& path, Opened& o, ImageFileInfo& info) {
         while (bits < 16 && (1u << bits) <= r.imgdata.color.maximum) ++bits;
     }
     info.bit_depth = static_cast<int>(bits);
-    info.format = upper_extension(path) + (xtrans ? "（X-Trans）" : "");
+    info.format = upper_extension(path) + (xtrans ? "（X-Trans）" : (id.filters == 0 ? "（色補間済み）" : ""));
     const std::string make = id.make, model = id.model;
     info.camera = model.compare(0, make.size(), make) == 0 || make.empty() ? model : make + " " + model;
     int tz = 0;
@@ -229,7 +254,7 @@ void demosaic_xtrans(const std::vector<float>& cfa, const int pattern[6][6], int
 
 bool libraw_extension(const std::string& ext) {
     static const char* const kExtensions[] = {
-        "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "raw", "rwl",
+        "cr2", "cr3", "crw", "dng", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "raw", "rwl",
         "pef", "srw", "3fr", "fff", "iiq", "erf", "kdc", "dcr", "mrw", "mos", "mef", "gpr",
     };
     for (const char* e : kExtensions) {
@@ -255,21 +280,40 @@ void libraw_read(const std::string& path, FrameBuffer& out, ImageFileInfo& info)
     if (rc != LIBRAW_SUCCESS) fail(path, std::string("展開できませんでした（") + libraw_strerror(rc) + "）");
     // 黒は展開したあとに決まる形式がある（遮光部から測るなど）。白も黒を引いた後の値にする。
     const double black = r.imgdata.color.black;
-    const double white_raw = white_of(r);
+    double white_raw = white_of(r);
+    // 浮動小数点のDNGは LibRaw が整数へ直すときに倍率 fnorm を掛けている。白レベルを超える値
+    // （HDR）があると、その画像の最大値に合わせて縮めるので、そのままだと1枚ごとに明るさの
+    // 基準が変わる。DNG の WhiteLevel に同じ倍率を掛けた値を白にして、基準を画像によらず一定にする
+    // （白を超えたところは1で切る）。
+    const libraw_colordata_t& color = r.imgdata.color;
+    if (color.fnorm > 0.0f && color.dng_levels.dng_whitelevel[0] > 0) {
+        white_raw = static_cast<double>(color.dng_levels.dng_whitelevel[0]) * color.fnorm;
+    }
     // 見える範囲を切り出しながら黒を引く（LibRaw の dcraw_process と同じ引き方。色補間はしない）。
     rc = r.raw2image_ex(1);
     if (rc != LIBRAW_SUCCESS) fail(path, std::string("画素を取り出せませんでした（") + libraw_strerror(rc) + "）");
     const libraw_image_sizes_t& S = r.imgdata.sizes;
-    const int W = S.iwidth, H = S.iheight;
+    const int stride = S.iwidth;
+    if (S.iwidth != S.width || S.iheight != S.height) fail(path, "画像の寸法が食い違っています");
+    const Crop crop = crop_of(r);
+    const int W = crop.w, H = crop.h;
     if (W != info.width || H != info.height) fail(path, "画像の寸法が食い違っています");
     // raw2image_ex の後の maximum は黒を引いた後の値。linear_max は生の値なので黒を引く。
     double white = r.imgdata.color.maximum;
-    if (white_raw - black > 0.0 && white_raw - black < white) white = white_raw - black;
+    if (color.fnorm > 0.0f && white_raw - black > 0.0) {
+        white = white_raw - black;
+    } else if (white_raw - black > 0.0 && white_raw - black < white) {
+        white = white_raw - black;
+    }
     if (!(white > 0.0)) fail(path, "白レベルが分かりません");
     const float scale = static_cast<float>(1.0 / white);
     const libraw_iparams_t& id = r.imgdata.idata;
     unsigned short (*image)[4] = r.imgdata.image;
     if (!image) fail(path, "画素がありません");
+    // 切り抜いた範囲の (x, y) にあたる画素。
+    const auto at = [&](int x, int y) -> unsigned short* {
+        return image[static_cast<std::size_t>(crop.y + y) * stride + (crop.x + x)];
+    };
 
     const auto norm = [scale](unsigned short v) {
         const float n = v * scale;
@@ -282,8 +326,8 @@ void libraw_read(const std::string& path, FrameBuffer& out, ImageFileInfo& info)
             for (int y = y0; y < y1; ++y) {
                 float* dst = out.row(0, y);
                 for (int x = 0; x < W; ++x) {
-                    const int c = id.filters ? r.COLOR(y, x) : 0;
-                    dst[x] = norm(image[static_cast<std::size_t>(y) * W + x][c]);
+                    const int c = id.filters ? r.COLOR(crop.y + y, crop.x + x) : 0;
+                    dst[x] = norm(at(x, y)[c]);
                 }
             }
         });
@@ -292,7 +336,7 @@ void libraw_read(const std::string& path, FrameBuffer& out, ImageFileInfo& info)
         int pattern[6][6];
         for (int y = 0; y < 6; ++y) {
             for (int x = 0; x < 6; ++x) {
-                const int c = r.COLOR(y, x);
+                const int c = r.COLOR(crop.y + y, crop.x + x);
                 pattern[y][x] = c == 3 ? 1 : c;
             }
         }
@@ -300,8 +344,7 @@ void libraw_read(const std::string& path, FrameBuffer& out, ImageFileInfo& info)
         parallel_rows(H, [&](int y0, int y1) {
             for (int y = y0; y < y1; ++y) {
                 for (int x = 0; x < W; ++x) {
-                    const std::size_t i = static_cast<std::size_t>(y) * W + x;
-                    cfa[i] = norm(image[i][r.COLOR(y, x)]);
+                    cfa[static_cast<std::size_t>(y) * W + x] = norm(at(x, y)[pattern[y % 6][x % 6]]);
                 }
             }
         });
@@ -313,24 +356,13 @@ void libraw_read(const std::string& path, FrameBuffer& out, ImageFileInfo& info)
             for (int y = y0; y < y1; ++y) {
                 for (int c = 0; c < 3; ++c) {
                     float* dst = out.row(c, y);
-                    for (int x = 0; x < W; ++x) dst[x] = norm(image[static_cast<std::size_t>(y) * W + x][c]);
+                    for (int x = 0; x < W; ++x) dst[x] = norm(at(x, y)[c]);
                 }
             }
         });
         out.invalidate_luma();
     }
     out.set_source_bit_depth(std::min(16, info.bit_depth));
-}
-
-bool libraw_white_level(const std::string& path, double& white) {
-    try {
-        Opened o;
-        open_raw(path, o);
-        white = white_of(*o.raw);
-        return white > 0.0;
-    } catch (const std::exception&) {
-        return false;
-    }
 }
 
 }  // namespace detail

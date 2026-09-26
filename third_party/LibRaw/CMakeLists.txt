@@ -101,3 +101,8 @@ target_compile_options(libraw_static PRIVATE
     -Werror=unguarded-availability-new
 )
 set_target_properties(libraw_static PROPERTIES CXX_STANDARD 17 CXX_EXTENSIONS OFF)
+
+# Deflate 圧縮の DNG（浮動小数点・HDRなど）には zlib が要る。macOS 標準の libz を使う
+# （可逆な展開なので、OSの版によって画素が変わることはない）。
+target_compile_definitions(libraw_static PRIVATE USE_ZLIB)
+target_link_libraries(libraw_static PUBLIC z)
