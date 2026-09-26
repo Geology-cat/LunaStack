@@ -12,6 +12,7 @@
 
 #include "stackcore/inflate.hpp"
 #include "stackcore/jpeg_decoder.hpp"
+#include "stackcore/raw_reader.hpp"
 
 namespace stackcore {
 namespace {
@@ -688,6 +689,13 @@ void read_jpeg(const std::vector<std::uint8_t>& data, FrameBuffer& out, ImageFil
 
 void dispatch(const std::string& path, FrameBuffer* out, ImageFileInfo& info) {
     const std::string ext = lower_extension(path);
+    // カメラのRAWは大きい（2000万画素級で数十MB）ので、全体を読み込まずに
+    // メモリへ割り付けて必要な部分だけ触る。ヘッダだけなら画素は展開しない。
+    if (is_raw_image_path(path)) {
+        if (out) read_raw_image(path, *out, info);
+        else info = probe_raw_image(path);
+        return;
+    }
     const std::vector<std::uint8_t> data = read_all(path);
     FrameBuffer scratch;
     FrameBuffer& target = out ? *out : scratch;
@@ -704,7 +712,7 @@ void dispatch(const std::string& path, FrameBuffer* out, ImageFileInfo& info) {
 bool is_supported_image_path(const std::string& path) {
     const std::string ext = lower_extension(path);
     return ext == "tif" || ext == "tiff" || ext == "png" || ext == "fit" || ext == "fits" ||
-           ext == "fts" || ext == "jpg" || ext == "jpeg";
+           ext == "fts" || ext == "jpg" || ext == "jpeg" || is_raw_image_path(path);
 }
 
 void read_image_file(const std::string& path, FrameBuffer& out, ImageFileInfo& info) {

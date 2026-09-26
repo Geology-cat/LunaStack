@@ -6,7 +6,7 @@ RegiStax のウェーブレットシャープニングを1つのアプリに統�
 
 - 対応環境: **macOS 10.13 (High Sierra) 以降 / Intel・Apple Silicon 両対応**
 - 設計文書: [仕様書](docs/仕様書.md) / [実装計画書](docs/実装計画書.md)
-- 現在の段階: **v0.3.0（M0〜M7＋静止画連番・キャリブレーション・仕上げ工程）/ 実機互換性検証を継続中**
+- 現在の段階: **v0.3.3（M0〜M7＋静止画連番・カメラのRAW・キャリブレーション・仕上げ工程）/ 実機互換性検証を継続中**
 
 ---
 
@@ -73,7 +73,12 @@ GUIだけで完結する。各主工程は完了時に必ず停止し、次工�
 
 そのほか:
 
-- 入力: SER / AVI（非圧縮・MJPEG）/ 静止画連番（TIFF・PNG・FITS・JPEG。フォルダまたは複数選択）
+- 入力: SER / AVI（非圧縮・MJPEG）/ 静止画連番（TIFF・PNG・FITS・JPEG・カメラのRAW。フォルダまたは複数選択）
+- カメラのRAW: Canon CR2 と DNG（CFA・LinearRaw）を自前のデコーダで読む。黒レベルを引いて
+  0..1 にするだけの**リニアのまま**で、ホワイトバランス・色変換・ガンマは掛けない
+  （CFAは色補間前の1チャンネルのまま、ほかの Bayer 入力と同じくデバイヤーする）。
+  色は仕上げの［自動ホワイトバランス］で合わせる。撮影時刻は時差が分かるときだけUTCで使う。
+  CR3・NEF・ARW・RAF などは未対応（Adobe DNG Converter で DNG にすれば読める）
 - 入力の前処理: フレーム範囲、Bayer配列の手動指定、デバイヤー方式（bilinear / Malvar-He-Cutler）、
   ダーク・フラット補正（動画・静止画・フォルダから全フレーム平均でマスターを作り、デバイヤー前に適用）
 - プレビュー: 全体表示（小さな画像は拡大）、100%＝Retinaでも画面の実画素で等倍、
@@ -177,7 +182,7 @@ arm64スライスは `minos 11.0` になっていれば正しい
 | `--dark <素材>` / `--flat <素材>` | ダーク・フラット補正（動画・静止画・フォルダ） |
 | `--metadata` / `--object <名前>` | 処理条件と撮影時刻をファイルに記録する |
 
-入力には動画のほか、静止画（TIFF・PNG・FITS・JPEG）の入ったフォルダを指定できる。
+入力には動画のほか、静止画（TIFF・PNG・FITS・JPEG・CR2・DNG）の入ったフォルダを指定できる。
 ファイル名の数字は自然順（`img2` < `img10`）に並べる。
 
 `mapstack` のオプション（`stack` のものも使える）:
@@ -242,7 +247,8 @@ libstackcore/     エンジン（C++17静的ライブラリ、UI非依存）
   src/pipeline/     global_stage, map_pipeline
   src/post/         wavelet, finishing（チャンネル合わせ・色・形・デリンギング・仕上げの処理系）
   src/io/           ser_decoder, avi_decoder, jpeg_decoder, image_reader, inflate,
-                    video_source（前処理ラッパー・静止画連番）, tiff/png/fits_writer,
+                    video_source（前処理ラッパー・静止画連番）, image_reader, raw_reader（CR2・DNG）,
+                    lossless_jpeg, tiff/png/fits_writer,
                     metadata, sidecar, mapped_file
 LunaStackApp/     GUI（AppKit・MRC・xibなし）
   src/MainWindowController.mm と +Layout / +Queue / +Settings / +Jobs / +Preview /

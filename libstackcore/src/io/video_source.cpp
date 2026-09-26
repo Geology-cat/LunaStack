@@ -125,6 +125,23 @@ public:
         if (info_.channels != 1 && info_.channels != 3) {
             throw std::runtime_error("静止画連番: 1chまたは3chの画像のみ対応しています");
         }
+        // カメラのRAWは1枚ごとに撮影時刻（UTC）を持つ。全部そろっているときだけ使う
+        // （WinJUPOS向けの中央時刻・FITSのDATE-OBS）。ヘッダだけなので速い。
+        if (info_.timestamp_ticks > 0) {
+            ticks_.assign(files_.size(), 0);
+            ticks_[0] = info_.timestamp_ticks;
+            for (std::size_t i = 1; i < files_.size(); ++i) {
+                try {
+                    ticks_[i] = probe_image_file(files_[i]).timestamp_ticks;
+                } catch (const std::exception&) {
+                    ticks_[i] = 0;  // 壊れた1枚は読むときに分かる
+                }
+                if (ticks_[i] <= 0) {
+                    ticks_.clear();
+                    break;
+                }
+            }
+        }
     }
 
     int width() const override { return info_.width; }
@@ -132,8 +149,11 @@ public:
     int frame_count() const override { return static_cast<int>(files_.size()); }
     SerColorId color_id() const override { return info_.color; }
     int bit_depth() const override { return std::min(16, info_.bit_depth); }
-    bool has_timestamps() const override { return false; }
-    std::int64_t timestamp_ticks(int) const override { return 0; }
+    bool has_timestamps() const override { return !ticks_.empty(); }
+    std::int64_t timestamp_ticks(int index) const override {
+        if (ticks_.empty() || index < 0 || index >= frame_count()) return 0;
+        return ticks_[static_cast<std::size_t>(index)];
+    }
 
     void read_frame(int index, FrameBuffer& out) const override {
         if (index < 0 || index >= frame_count()) {
@@ -174,14 +194,17 @@ public:
     }
 
     std::string describe() const override {
-        return std::to_string(files_.size()) + "枚の" + info_.format + "（" +
-               std::to_string(info_.bit_depth) + "bit）";
+        std::string s = std::to_string(files_.size()) + "枚の" + info_.format + "（" +
+                        std::to_string(info_.bit_depth) + "bit";
+        if (!info_.camera.empty()) s += "、" + info_.camera;
+        return s + "）";
     }
     const char* format_name() const override { return "静止画連番"; }
 
 private:
     std::vector<std::string> files_;
     ImageFileInfo info_;
+    std::vector<std::int64_t> ticks_;  // 撮影時刻（全部そろっているときだけ）
 };
 
 // 前処理（フレーム範囲・色形式の指定・デバイヤー方式・ダーク/フラット補正）を

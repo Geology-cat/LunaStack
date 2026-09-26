@@ -21,6 +21,7 @@ add_executable(stackcore_tests
     src/test_wavelet.cpp
     src/test_drizzle.cpp
     src/test_image_reader.cpp
+    src/test_raw_reader.cpp
     src/test_preprocess.cpp
     src/test_finishing.cpp
 )

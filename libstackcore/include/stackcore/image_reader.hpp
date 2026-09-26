@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@ namespace stackcore {
 //   * FITS  : BITPIX 8/16/32/-32/-64、2軸（モノ）または3軸（RGB面）、
 //             BZERO/BSCALE、BAYERPAT、ROWORDER
 //   * JPEG  : 8bitベースライン逐次
+//   * RAW   : Canon CR2・DNG（raw_reader.hpp。リニアのまま、CFAは1チャンネルで返す）
 //
 // 画素は 0..1 に正規化する。整数は型の最大値で割る。浮動小数点は、値が1を
 // 超えるなら16bitスケールとみなして65535で割る（連番の中で枚ごとに正規化を
@@ -27,8 +29,12 @@ struct ImageFileInfo {
     int height = 0;
     int channels = 0;          // 1 または 3
     int bit_depth = 0;         // 元データのビット深度（浮動小数点は32/64）
-    SerColorId color = SerColorId::Mono;  // FITSのBAYERPATがあればBayer
+    SerColorId color = SerColorId::Mono;  // FITSのBAYERPAT・RAWのCFAならBayer
     std::string format;        // "TIFF" など（表示用）
+    std::string camera;        // 撮影したカメラ（RAWのみ。例 "Canon EOS 6D Mark II"）
+    // 撮影時刻（UTC、.NET ticks = 0001-01-01 からの100ns単位）。RAWで、時差まで
+    // 分かるときだけ入る。分からなければ0（現地時刻をUTCと取り違えないため）。
+    std::int64_t timestamp_ticks = 0;
 };
 
 // 拡張子から、静止画として読める形式かを判定する（大文字小文字は区別しない）。

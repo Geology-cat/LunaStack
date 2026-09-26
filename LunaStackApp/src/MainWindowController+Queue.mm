@@ -584,7 +584,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     (void)sender;
     NSOpenPanel* panel = [NSOpenPanel openPanel];
     [panel setAllowedFileTypes:@[ @"ser", @"avi", @"tif", @"tiff", @"png", @"fit", @"fits", @"fts",
-                                  @"jpg", @"jpeg" ]];
+                                  @"jpg", @"jpeg", @"cr2", @"dng" ]];
     [panel setAllowsMultipleSelection:YES];
     [panel setCanChooseDirectories:YES];
     [panel setMessage:LSLocalizedString(@"動画、静止画（複数選ぶと1本の連番になります）、またはフォルダを選んでください")];
