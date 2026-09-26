@@ -205,3 +205,18 @@ MT_TEST(raw_壊れたファイルや非対応の形式ははっきり失敗す�
                                                 0x00, 0x01, 0x01, 0x01, 0x11, 0x00};
     MT_CHECK_THROWS(stackcore::decode_lossless_jpeg(baseline.data(), baseline.size()));
 }
+
+MT_TEST(raw_連番はRAWとJPEGが混ざっていても1種類にそろえる) {
+    using stackcore::select_sequence_files;
+    const std::vector<std::string> mixed = {"/d/IMG_1.CR2", "/d/IMG_1.JPG", "/d/IMG_2.CR2", "/d/IMG_2.JPG",
+                                            "/d/notes.txt"};
+    const std::vector<std::string> raw = select_sequence_files(mixed);
+    MT_CHECK_EQ(static_cast<int>(raw.size()), 2);
+    MT_CHECK(raw[0] == "/d/IMG_1.CR2" && raw[1] == "/d/IMG_2.CR2");
+    // RAWが無ければ多い形式（tif と tiff は同じ）。
+    const std::vector<std::string> images = {"/d/a.tif", "/d/b.png", "/d/c.TIFF", "/d/d.png", "/d/e.tif"};
+    const std::vector<std::string> tif = select_sequence_files(images);
+    MT_CHECK_EQ(static_cast<int>(tif.size()), 3);
+    MT_CHECK(tif[1] == "/d/c.TIFF");
+    MT_CHECK(select_sequence_files({"/d/x.txt"}).empty());
+}

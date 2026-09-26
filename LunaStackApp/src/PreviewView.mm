@@ -369,6 +369,18 @@ namespace {
     [self showSharedFrame:frame];
 }
 
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame
+               prepared:(std::shared_ptr<LSPreviewImage>)prepared
+                mapping:(const LSDisplayMapping&)mapping {
+    if (mapping.stretch) {
+        _fixedStretch = YES;
+        _fixedLo = mapping.lo;
+        _fixedHi = mapping.hi > mapping.lo ? mapping.hi : mapping.lo + 1e-6f;
+        _fixedGamma = mapping.gamma > 0.0f ? mapping.gamma : 1.0f;
+    }
+    [self showSharedFrame:frame prepared:prepared];
+}
+
 - (BOOL)currentDisplayMapping:(LSDisplayMapping*)mapping {
     LSDisplayMapping m;
     if (_displayStretch && !_fixedStretch) return NO;

@@ -183,6 +183,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     NSMutableDictionary* imagesByDir = [NSMutableDictionary dictionary];
     NSMutableArray* dirOrder = [NSMutableArray array];
     int skipped = 0;
+    int unified = 0;  // 連番の形式をそろえるために外した画像
 
     for (NSString* path in paths) {
         BOOL isDir = NO;
@@ -203,9 +204,16 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         }
     }
     for (NSString* dir in dirOrder) {
-        NSArray* files = [imagesByDir[dir] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
+        NSArray* sorted = [imagesByDir[dir] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
             return NaturalCompare([a lastPathComponent], [b lastPathComponent]);
         }];
+        // RAW と JPEG を一緒に選んだときなどは1種類にそろえる（混ぜると途中で形式が食い違う）。
+        std::vector<std::string> chosen;
+        for (NSString* f in sorted) chosen.push_back([f UTF8String]);
+        chosen = stackcore::select_sequence_files(chosen);
+        NSMutableArray* files = [NSMutableArray array];
+        for (const std::string& f : chosen) [files addObject:[NSString stringWithUTF8String:f.c_str()]];
+        unified += static_cast<int>([sorted count] - [files count]);
         [candidates addObject:[QueueItem sequenceItemWithDirectory:dir files:files]];
     }
 
@@ -234,6 +242,10 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         [_statusLabel setStringValue:[NSString stringWithFormat:
                                                    LSLocalizedString(@"対応していないファイルを %d 件除外しました（SER・AVI・静止画のみ）"),
                                                    skipped]];
+    } else if (unified > 0) {
+        [_statusLabel setStringValue:[NSString stringWithFormat:
+                                                   LSLocalizedString(@"連番の形式をそろえるため %d 枚を除外しました（RAWがあればRAWだけを使います）"),
+                                                   unified]];
     }
     [self updateControlsEnabled];
 }

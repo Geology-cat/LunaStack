@@ -154,9 +154,11 @@ double ParseField(NSTextField* field) {
 
     // 画面用の8bit画像も描画と同じ裏のスレッドで作る（大きな画像でメインが詰まらないように）。
     // 明るさの対応は表示するときと同じものを使う。違っていれば表示の側で作り直す。
-    [self applyFinishingDisplayRange];
-    LSDisplayMapping mapping;
-    const bool prepare = [_preview currentDisplayMapping:&mapping] ? true : false;
+    // ここでは表示を変えない（描き上がる前に今の画像の明るさだけ変わると、一瞬ちらつく）。
+    // 表示に使う対応を計算だけしておき、結果を出すときにプレビューへ設定する。
+    const LSDisplayMapping mapping = [self finishingDisplayMapping];
+    const bool prepare = [_viewModeSegment selectedSegment] == 2 &&
+                         [_waveletPreviewCheck state] == NSControlStateValueOn;
     const double deviceScale = [_preview effectiveDeviceZoom];
 
     _renderInFlight = YES;
@@ -197,8 +199,7 @@ double ParseField(NSTextField* field) {
         if ([_viewModeSegment selectedSegment] == 2 &&
             [_waveletPreviewCheck state] == NSControlStateValueOn) {
             ++_previewUpdates;
-            [self applyFinishingDisplayRange];
-            [_preview showSharedFrame:out prepared:prepared];
+            [_preview showSharedFrame:out prepared:prepared mapping:[self finishingDisplayMapping]];
             [self updateApOverlay];
             if (_previewUpdateHook) _previewUpdateHook(*out);
         }
@@ -212,10 +213,16 @@ double ParseField(NSTextField* field) {
 // 黒点・白点を自分で調整しているときは、その結果をそのまま（線形に）見せる。
 - (void)applyFinishingDisplayRange {
     if (!_stacked) return;
-    if ([_toneCheck state] == NSControlStateValueOn) {
-        [_preview setFixedStretchLow:0.0f high:1.0f gamma:1.0f];
-        return;
-    }
+    const LSDisplayMapping m = [self finishingDisplayMapping];
+    if (m.stretch) [_preview setFixedStretchLow:m.lo high:m.hi gamma:m.gamma];
+}
+
+// 仕上げの表示に使う明るさの対応（プレビューには触らない）。
+- (LSDisplayMapping)finishingDisplayMapping {
+    LSDisplayMapping m;
+    if (!_stacked || ![_preview displayStretch]) return m;  // 「表示を明るくする」OFFは素の値
+    m.stretch = true;
+    if ([_toneCheck state] == NSControlStateValueOn) return m;  // 0..1・線形
     if (!(_stackedDisplayHigh > _stackedDisplayLow)) {
         float lo = 1.0f, hi = 0.0f;
         for (int c = 0; c < _stacked->channels(); ++c) {
@@ -230,7 +237,10 @@ double ParseField(NSTextField* field) {
         _stackedDisplayLow = lo;
         _stackedDisplayHigh = hi > lo ? hi : lo + 1e-6f;
     }
-    [_preview setFixedStretchLow:_stackedDisplayLow high:_stackedDisplayHigh gamma:0.75f];
+    m.lo = _stackedDisplayLow;
+    m.hi = _stackedDisplayHigh;
+    m.gamma = 0.75f;
+    return m;
 }
 
 // 仕上げを同期して描く（書き出しと自己検証用）。

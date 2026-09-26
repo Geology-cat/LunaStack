@@ -46,8 +46,15 @@ void read_image_file(const std::string& path, FrameBuffer& out, ImageFileInfo& i
 // ヘッダだけを読む（寸法・形式の確認用）。中身の展開はしない形式もある。
 ImageFileInfo probe_image_file(const std::string& path);
 
+// 連番に使う画像を1種類にそろえる。カメラは RAW と JPEG を同時に保存することが多く、
+// 混ぜると先頭の1枚（CFA）と JPEG（RGB）で形式が食い違って途中で止まる。
+// RAWがあれば、いちばん多いRAWの形式だけ。無ければ、いちばん多い形式だけ
+// （tif/tiff・jpg/jpeg・fit/fits/fts は同じ形式とみなす。同数なら先に出てくる方）。
+// 順番は保つ。
+std::vector<std::string> select_sequence_files(const std::vector<std::string>& paths);
+
 // ディレクトリ直下の静止画を自然順（"img2" < "img10"）で列挙する。
-// 隠しファイルは含めない。
+// 隠しファイルは含めない。形式は select_sequence_files で1種類にそろえる。
 std::vector<std::string> list_image_sequence(const std::string& directory);
 
 // 自然順の比較（数字の並びを数値として比べる）。連番の並べ替えに使う。

@@ -773,7 +773,44 @@ std::vector<std::string> list_image_sequence(const std::string& directory) {
     for (const std::string& name : names) {
         paths.push_back(directory + (directory.back() == '/' ? "" : "/") + name);
     }
-    return paths;
+    return select_sequence_files(paths);
+}
+
+std::vector<std::string> select_sequence_files(const std::vector<std::string>& paths) {
+    const auto kind = [](const std::string& path) -> std::string {
+        const std::string ext = lower_extension(path);
+        if (ext == "tiff") return "tif";
+        if (ext == "jpeg") return "jpg";
+        if (ext == "fits" || ext == "fts") return "fit";
+        return ext;
+    };
+    std::vector<std::string> kinds;
+    std::vector<int> counts;
+    std::vector<bool> raw;
+    for (const std::string& p : paths) {
+        if (!is_supported_image_path(p)) continue;
+        const std::string k = kind(p);
+        const auto it = std::find(kinds.begin(), kinds.end(), k);
+        if (it == kinds.end()) {
+            kinds.push_back(k);
+            counts.push_back(1);
+            raw.push_back(is_raw_image_path(p));
+        } else {
+            ++counts[static_cast<std::size_t>(it - kinds.begin())];
+        }
+    }
+    if (kinds.empty()) return std::vector<std::string>();
+    const bool any_raw = std::find(raw.begin(), raw.end(), true) != raw.end();
+    std::size_t best = kinds.size();
+    for (std::size_t i = 0; i < kinds.size(); ++i) {
+        if (any_raw && !raw[i]) continue;
+        if (best == kinds.size() || counts[i] > counts[best]) best = i;
+    }
+    std::vector<std::string> out;
+    for (const std::string& p : paths) {
+        if (is_supported_image_path(p) && kind(p) == kinds[best]) out.push_back(p);
+    }
+    return out;
 }
 
 }  // namespace stackcore

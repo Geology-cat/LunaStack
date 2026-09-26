@@ -395,6 +395,28 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     return smooth && monotonic;
 }
 
+// 明るさの対応（黒点・白点のON/OFFなど）を変えても、新しい仕上げが描き上がるまでは
+// 画面の対応を変えないか（前の画像だけ明るさが変わって一瞬ちらつかないように）。
+- (BOOL)selfCheckMappingWaitsForResult {
+    if (!_stacked || !_finishing) return NO;
+    [_viewModeSegment setSelectedSegment:2];
+    [_waveletPreviewCheck setState:NSControlStateValueOn];
+    [self waitForFinishingForTesting];
+    LSDisplayMapping before;
+    const BOOL fixedBefore = [_preview currentDisplayMapping:&before];
+    const NSControlStateValue tone = [_toneCheck state];
+    [_toneCheck setState:tone == NSControlStateValueOn ? NSControlStateValueOff : NSControlStateValueOn];
+    [self finishingChanged:_toneCheck];  // ランループは回さない（まだ描き上がっていない）
+    LSDisplayMapping during;
+    const BOOL fixedDuring = [_preview currentDisplayMapping:&during];
+    const BOOL ok = fixedBefore == fixedDuring && (!fixedBefore || before == during);
+    [_toneCheck setState:tone];
+    [self finishingChanged:_toneCheck];
+    [self waitForFinishingForTesting];
+    NSLog(@"表示の対応の自己検証: %@", ok ? @"描き上がるまで変わらない" : @"— 描き上がる前に変わっています");
+    return ok;
+}
+
 // 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
 - (BOOL)selfCheckInspectorScrollsVerticallyOnly {
     NSClipView* clip = [_inspectorScroll contentView];

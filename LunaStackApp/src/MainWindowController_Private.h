@@ -442,6 +442,7 @@
               prepared:(std::shared_ptr<LSPreviewImage>)prepared
             generation:(long)generation
                  error:(const std::string&)error;
+- (LSDisplayMapping)finishingDisplayMapping;
 - (void)startFinishingRender;
 - (NSSize)finishedSizeForSettings:(const stackcore::FinishingSettings&)s;
 - (void)applyFinishingDisplayRange;

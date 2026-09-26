@@ -68,6 +68,11 @@ std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer&
 // 前もって作った画面用の画像ごと差し替える。明るさの対応がいまの設定と違えば作り直す。
 - (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame
                prepared:(std::shared_ptr<LSPreviewImage>)prepared;
+// 明るさの対応（固定ストレッチ）と画像を同時に差し替える。対応だけ先に変えて
+// 前の画像を描き直す手間とちらつきを避ける。mapping.stretch が false なら対応は変えない。
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame
+               prepared:(std::shared_ptr<LSPreviewImage>)prepared
+                mapping:(const LSDisplayMapping&)mapping;
 // いまの明るさの対応。画像ごとに測り直す（固定していない）自動ストレッチなら NO。
 - (BOOL)currentDisplayMapping:(LSDisplayMapping*)mapping;
 - (void)clearImage;

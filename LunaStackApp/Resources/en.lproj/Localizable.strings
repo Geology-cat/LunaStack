@@ -392,3 +392,4 @@
 "このレイヤーを強調1.00・ノイズ0.00に戻します" = "Resets this layer to sharpen 1.00 and noise 0.00";
 "少し下げる（押し続けると連続）" = "Decrease slightly (hold to repeat)";
 "少し上げる（押し続けると連続）" = "Increase slightly (hold to repeat)";
+"連番の形式をそろえるため %d 枚を除外しました（RAWがあればRAWだけを使います）" = "Excluded %d image(s) so that the sequence uses one format (RAW files are used when present)";

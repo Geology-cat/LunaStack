@@ -149,6 +149,7 @@
             if (selfTest) [self check:[controller selfCheckContinuousPreview]];
             if (selfTest) [self check:[controller selfCheckWaveletControls]];
             if (selfTest) [self check:[controller selfCheckInspectorScrollsVerticallyOnly]];
+            if (selfTest) [self check:[controller selfCheckMappingWaitsForResult]];
             if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];
