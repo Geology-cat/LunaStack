@@ -400,11 +400,18 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_inspectorTab setTranslatesAutoresizingMaskIntoConstraints:NO];
     [pane addSubview:_inspectorTab];
 
+    // 設定パネルは縦にだけスクロールする（トラックパッドの横スワイプで左右へずらさない）。
     NSScrollView* scroll = [[[NSScrollView alloc] initWithFrame:NSZeroRect] autorelease];
+    VerticalClipView* clip = [[[VerticalClipView alloc] initWithFrame:NSZeroRect] autorelease];
+    [clip setDrawsBackground:NO];
+    [scroll setContentView:clip];
     [scroll setHasVerticalScroller:YES];
+    [scroll setHasHorizontalScroller:NO];
+    [scroll setHorizontalScrollElasticity:NSScrollElasticityNone];
     [scroll setDrawsBackground:NO];
     [scroll setTranslatesAutoresizingMaskIntoConstraints:NO];
     [pane addSubview:scroll];
+    _inspectorScroll = scroll;
 
     NSDictionary* views = NSDictionaryOfVariableBindings(presetRow, _inspectorTab, scroll);
     for (NSString* format in @[ @"H:|[presetRow]-(>=0)-|", @"H:|[_inspectorTab]|", @"H:|[scroll]|",
@@ -426,7 +433,10 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [box setTranslatesAutoresizingMaskIntoConstraints:NO];
     [container addSubview:box];
 
-    [[[container widthAnchor] constraintEqualToAnchor:[scroll widthAnchor]] setActive:YES];
+    // 幅はスクロールビュー全体ではなく表示領域（クリップビュー）に合わせる。
+    // スクロールバーを常に表示する設定では、全体の幅に合わせるとバーの幅だけ
+    // 中身がはみ出し、横にずらせてしまう。
+    [[[container widthAnchor] constraintEqualToAnchor:[clip widthAnchor]] setActive:YES];
     [[[box topAnchor] constraintEqualToAnchor:[container topAnchor] constant:2.0] setActive:YES];
     [[[box leadingAnchor] constraintEqualToAnchor:[container leadingAnchor]
                                          constant:2.0] setActive:YES];

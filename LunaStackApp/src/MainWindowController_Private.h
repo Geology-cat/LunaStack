@@ -14,6 +14,7 @@
 #import "QueueItem.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,6 +65,7 @@
 
     // --- 右Inspector ---
     NSSegmentedControl* _inspectorTab;
+    NSScrollView* _inspectorScroll;  // 右の設定パネル（縦にだけスクロール）
     NSPopUpButton* _presetPopup;
 
     // 品質評価タブ
@@ -220,14 +222,16 @@
     std::vector<int> _stackedFrames;  // 加算に使ったフレーム（撮影時刻の計算用）
     std::shared_ptr<const stackcore::FrameBuffer> _displayed;  // 仕上げ済み
     std::shared_ptr<stackcore::FinishingPipeline> _finishing;
-    std::shared_ptr<stackcore::FinishingPipeline> _finishingDraft;  // ドラッグ中の縮小版
+    // 仕上げの描画先（2枚を使い回す。画面が持っている方には書き込まない）。
+    std::shared_ptr<stackcore::FrameBuffer> _renderTargets[2];
+    unsigned _nextRenderSlot;
+    // 自己検証用: 仕上げを画面に出すたびに呼ぶ。
+    std::function<void(const stackcore::FrameBuffer&)> _previewUpdateHook;
     dispatch_queue_t _finishQueue;  // 仕上げの描画を順に行う直列キュー
     long _renderGeneration;         // 最新の描画要求の番号（古い結果を捨てる）
     int _previewUpdates;            // 画面に出した仕上げの回数（自己検証用）
     BOOL _renderInFlight;           // 仕上げを描いている最中
     BOOL _renderPending;            // 描いている間に次の要求が来た
-    BOOL _pendingDraft;             // 次の要求は下書きでよいか
-    double _lastFullRenderSeconds;  // 直前の本解像度の描画にかかった時間
     float _stackedDisplayLow;       // 仕上げの表示に使う明るさの基準（スタック結果の範囲）
     float _stackedDisplayHigh;
     int _rotationTurns;
@@ -408,7 +412,7 @@
 - (void)buildCompareSection:(NSStackView*)box;
 - (void)resetFinishingForNewStack;
 - (void)applyWavelet;
-- (void)requestFinishingRender:(BOOL)draft;
+- (void)requestFinishingRender;
 - (void)showFinishedOrStacked;
 - (void)waveletChanged:(id)sender;
 - (void)waveletPreviewChanged:(id)sender;
@@ -435,15 +439,13 @@
 - (void)stretchToggled:(id)sender;
 - (std::vector<stackcore::WaveletLayerParams>)waveletParams;
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
+              prepared:(std::shared_ptr<LSPreviewImage>)prepared
             generation:(long)generation
-                 draft:(bool)draft
-               seconds:(double)seconds
                  error:(const std::string&)error;
-- (void)startFinishingRender:(BOOL)draft;
+- (void)startFinishingRender;
 - (NSSize)finishedSizeForSettings:(const stackcore::FinishingSettings&)s;
 - (void)applyFinishingDisplayRange;
 - (std::shared_ptr<stackcore::FrameBuffer>)renderFinishingNow;
-- (BOOL)sliderIsDragging;
 - (void)captureLinkedProfile:(double*)profile;
 - (void)applyChannelOffsets:(stackcore::ChannelOffsets)o;
 - (void)applyGainsRed:(double)r blue:(double)b;

@@ -571,7 +571,7 @@ static void SetText(NSTextField* field, id value) {
     [self refreshCutLabel];
     _restoringSettings = wasRestoring;
     [self updateFinishingValueLabels];
-    if (includePost) [self requestFinishingRender:NO];
+    if (includePost) [self requestFinishingRender];
     [self updateControlsEnabled];
 }
 

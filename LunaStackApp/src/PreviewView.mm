@@ -12,7 +12,6 @@
 - (double)effectiveScale;
 - (double)backingScale;
 - (void)rebuildImage;
-- (void)releaseMipmaps;
 @end
 
 namespace {
@@ -23,11 +22,180 @@ constexpr int kMipLevels = 4;
 constexpr double kMinZoom = 0.05;
 constexpr double kMaxZoom = 32.0;
 
+// CGImage が画素を持っている間だけ生きる8bit RGBAの画素列。
+struct PixelBlock {
+    std::vector<unsigned char> bytes;
+};
+
+void ReleasePixelBlock(void* info, const void*, size_t) {
+    delete static_cast<PixelBlock*>(info);
+}
+
+// 画素列をそのまま（写さずに）CGImage にする。画素列の持ち主は CGImage になる。
+CGImageRef MakeImageFromPixels(PixelBlock* block, int w, int h) {
+    CGDataProviderRef provider = CGDataProviderCreateWithData(block, block->bytes.data(),
+                                                              block->bytes.size(), ReleasePixelBlock);
+    if (!provider) {
+        delete block;
+        return NULL;
+    }
+    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
+    CGImageRef image = CGImageCreate(w, h, 8, 32, static_cast<size_t>(w) * 4, space,
+                                     kCGImageAlphaNoneSkipLast | kCGBitmapByteOrderDefault, provider,
+                                     NULL, false, kCGRenderingIntentDefault);
+    CGColorSpaceRelease(space);
+    CGDataProviderRelease(provider);
+    return image;
+}
+
+// 描くのに使う縮小段。0 は原寸、k は 1/2^k。
+int MipLevelForDeviceScale(double deviceScale) {
+    int level = 0;
+    double s = deviceScale;
+    while (s < 0.5 && level < kMipLevels) {
+        s *= 2.0;
+        ++level;
+    }
+    return level;
+}
+
+}  // namespace
+
+class LSPreviewImage {
+public:
+    LSPreviewImage(int w, int h, const LSDisplayMapping& m) : width(w), height(h), mapping(m) {}
+    ~LSPreviewImage() {
+        for (int k = 0; k <= kMipLevels; ++k) {
+            if (levels[k]) CGImageRelease(levels[k]);
+        }
+    }
+    LSPreviewImage(const LSPreviewImage&) = delete;
+    LSPreviewImage& operator=(const LSPreviewImage&) = delete;
+
+    // 段 level の画像。無ければ1段ずつ、前の段の2×2画素を平均して作る（行ごとに並列）。
+    // 以前は Core Graphics の高品質補間で原寸から縮めていたが、2600万画素では1段に
+    // 約0.3秒かかっていた。同時に2つのスレッドから呼ばないこと。
+    CGImageRef level(int level) {
+        level = std::max(0, std::min(kMipLevels, level));
+        for (int k = 1; k <= level; ++k) {
+            if (levels[k]) continue;
+            const unsigned char* src = pixels[k - 1];
+            if (!src) break;
+            const int sw = std::max(1, width >> (k - 1)), sh = std::max(1, height >> (k - 1));
+            const int w = std::max(1, width >> k), h = std::max(1, height >> k);
+            PixelBlock* block = new PixelBlock;
+            block->bytes.resize(static_cast<std::size_t>(w) * h * 4);
+            unsigned char* dst = block->bytes.data();
+            dispatch_apply(static_cast<size_t>(h), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
+                           ^(size_t yy) {
+                               const int y = static_cast<int>(yy);
+                               const unsigned char* r0 =
+                                   src + static_cast<std::size_t>(std::min(sh - 1, 2 * y)) * sw * 4;
+                               const unsigned char* r1 =
+                                   src + static_cast<std::size_t>(std::min(sh - 1, 2 * y + 1)) * sw * 4;
+                               unsigned char* d = dst + static_cast<std::size_t>(y) * w * 4;
+                               for (int x = 0; x < w; ++x) {
+                                   const int x0 = std::min(sw - 1, 2 * x) * 4;
+                                   const int x1 = std::min(sw - 1, 2 * x + 1) * 4;
+                                   for (int c = 0; c < 3; ++c) {
+                                       d[x * 4 + c] = static_cast<unsigned char>(
+                                           (r0[x0 + c] + r0[x1 + c] + r1[x0 + c] + r1[x1 + c] + 2) / 4);
+                                   }
+                                   d[x * 4 + 3] = 255;
+                               }
+                           });
+            levels[k] = MakeImageFromPixels(block, w, h);
+            if (!levels[k]) break;
+            pixels[k] = dst;
+        }
+        for (int k = level; k > 0; --k) {
+            if (levels[k]) return levels[k];
+        }
+        return levels[0];
+    }
+
+    const int width;
+    const int height;
+    const LSDisplayMapping mapping;
+    CGImageRef levels[kMipLevels + 1] = {};
+    // 各段の画素。対応する CGImage が持っている間だけ有効。
+    const unsigned char* pixels[kMipLevels + 1] = {};
+};
+
+std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer& frame,
+                                                   const LSDisplayMapping& mapping,
+                                                   double device_scale) {
+    if (frame.empty()) return nullptr;
+    const int w = frame.width();
+    const int h = frame.height();
+    const int channels = frame.channels();
+    const float lo = mapping.lo;
+    const float inv_range = 1.0f / (mapping.hi > mapping.lo ? mapping.hi - mapping.lo : 1.0f);
+    const bool stretch = mapping.stretch;
+
+    // 8bitのRGBAに落として CGImage を作る。
+    // プレビューは目で見るためのものなので8bitで足りる。
+    // 保存は16bit/32bit floatで別途行う。
+    // ガンマ変換は4096段の表を引く（1画素ごとに pow を呼ぶと大画像で遅い）。
+    // 軽いガンマで暗部を持ち上げる。惑星面の縞は中間調にある。
+    constexpr int kLutSize = 4096;
+    std::vector<unsigned char> lut(kLutSize + 1);
+    for (int i = 0; i <= kLutSize; ++i) {
+        const float t = static_cast<float>(i) / kLutSize;
+        lut[static_cast<std::size_t>(i)] =
+            static_cast<unsigned char>((stretch ? std::pow(t, mapping.gamma) : t) * 255.0f + 0.5f);
+    }
+    const unsigned char* table = lut.data();
+    // 画素列は CGImage に写さずそのまま渡す（大きな画像で写す時間を省く）。
+    PixelBlock* block = new PixelBlock;
+    block->bytes.resize(static_cast<std::size_t>(w) * h * 4);
+    unsigned char* base = block->bytes.data();
+    const stackcore::FrameBuffer* f = &frame;
+    dispatch_apply(static_cast<size_t>(h), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
+                   ^(size_t yy) {
+                       const int y = static_cast<int>(yy);
+                       unsigned char* dst = base + static_cast<std::size_t>(y) * w * 4;
+                       const auto map = [lo, inv_range, stretch, table](float v) -> unsigned char {
+                           float t = stretch ? (v - lo) * inv_range : v;
+                           if (!(t > 0.0f)) t = 0.0f;
+                           if (t > 1.0f) t = 1.0f;
+                           return table[static_cast<int>(t * kLutSize + 0.5f)];
+                       };
+                       if (channels >= 3) {
+                           const float* r = f->row(0, y);
+                           const float* g = f->row(1, y);
+                           const float* b = f->row(2, y);
+                           for (int x = 0; x < w; ++x) {
+                               dst[x * 4 + 0] = map(r[x]);
+                               dst[x * 4 + 1] = map(g[x]);
+                               dst[x * 4 + 2] = map(b[x]);
+                               dst[x * 4 + 3] = 255;
+                           }
+                       } else {
+                           const float* v = f->row(0, y);
+                           for (int x = 0; x < w; ++x) {
+                               const unsigned char g = map(v[x]);
+                               dst[x * 4 + 0] = g;
+                               dst[x * 4 + 1] = g;
+                               dst[x * 4 + 2] = g;
+                               dst[x * 4 + 3] = 255;
+                           }
+                       }
+                   });
+    auto image = std::make_shared<LSPreviewImage>(w, h, mapping);
+    image->levels[0] = MakeImageFromPixels(block, w, h);
+    if (!image->levels[0]) return nullptr;
+    image->pixels[0] = base;
+    if (device_scale > 0.0) image->level(MipLevelForDeviceScale(device_scale));
+    return image;
+}
+
+namespace {
 }  // namespace
 
 @implementation PreviewView {
-    CGImageRef _image;
-    CGImageRef _mips[kMipLevels];
+    // 画面用の8bit画像と縮小段。
+    std::shared_ptr<LSPreviewImage> _display;
     int _imageWidth;
     int _imageHeight;
     // 直近に渡された画像。ストレッチの切り替えと画素値の表示で使う。
@@ -65,8 +233,6 @@ constexpr double kMaxZoom = 32.0;
 - (instancetype)initWithFrame:(NSRect)frameRect {
     self = [super initWithFrame:frameRect];
     if (self) {
-        _image = NULL;
-        for (int i = 0; i < kMipLevels; ++i) _mips[i] = NULL;
         _imageWidth = 0;
         _imageHeight = 0;
         _zoom = 0.0;
@@ -90,8 +256,7 @@ constexpr double kMaxZoom = 32.0;
 }
 
 - (void)dealloc {
-    if (_image) CGImageRelease(_image);
-    [self releaseMipmaps];
+    _display.reset();
     [_tracking release];
     [super dealloc];
 }
@@ -120,15 +285,8 @@ constexpr double kMaxZoom = 32.0;
     [self addTrackingArea:_tracking];
 }
 
-- (void)releaseMipmaps {
-    for (int i = 0; i < kMipLevels; ++i) {
-        if (_mips[i]) CGImageRelease(_mips[i]);
-        _mips[i] = NULL;
-    }
-}
-
 - (BOOL)hasImage {
-    return _image != NULL;
+    return _display ? YES : NO;
 }
 
 - (int)imageWidth {
@@ -140,11 +298,7 @@ constexpr double kMaxZoom = 32.0;
 }
 
 - (void)clearImage {
-    if (_image) {
-        CGImageRelease(_image);
-        _image = NULL;
-    }
-    [self releaseMipmaps];
+    _display.reset();
     _source.reset();
     _imageWidth = 0;
     _imageHeight = 0;
@@ -196,12 +350,40 @@ constexpr double kMaxZoom = 32.0;
     [self rebuildImage];
 }
 
-- (void)rebuildImage {
-    if (_image) {
-        CGImageRelease(_image);
-        _image = NULL;
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame
+               prepared:(std::shared_ptr<LSPreviewImage>)prepared {
+    if (!frame || frame->empty()) {
+        [self clearImage];
+        return;
     }
-    [self releaseMipmaps];
+    LSDisplayMapping mapping;
+    if (prepared && [self currentDisplayMapping:&mapping] && prepared->mapping == mapping &&
+        prepared->width == frame->width() && prepared->height == frame->height()) {
+        _source = frame;
+        _display = prepared;
+        _imageWidth = frame->width();
+        _imageHeight = frame->height();
+        [self setNeedsDisplay:YES];
+        return;
+    }
+    [self showSharedFrame:frame];
+}
+
+- (BOOL)currentDisplayMapping:(LSDisplayMapping*)mapping {
+    LSDisplayMapping m;
+    if (_displayStretch && !_fixedStretch) return NO;
+    if (_displayStretch) {
+        m.stretch = true;
+        m.lo = _fixedLo;
+        m.hi = _fixedHi;
+        m.gamma = _fixedGamma;
+    }
+    if (mapping) *mapping = m;
+    return YES;
+}
+
+- (void)rebuildImage {
+    _display.reset();
     if (!_source || _source->empty()) {
         [self setNeedsDisplay:YES];
         return;
@@ -215,13 +397,8 @@ constexpr double kMaxZoom = 32.0;
 
     // 表示用のストレッチ係数。全チャンネル共通にしないと色が転ぶ。
     // 行ごとの最小・最大を並列に求めてから畳む（結果は実行順によらない）。
-    float lo = 0.0f, hi = 1.0f;
-    float displayGamma = 0.75f;
-    if (_displayStretch && _fixedStretch) {
-        lo = _fixedLo;
-        hi = _fixedHi;
-        displayGamma = _fixedGamma;
-    } else if (_displayStretch) {
+    LSDisplayMapping mapping;
+    if (![self currentDisplayMapping:&mapping]) {
         std::vector<float> row_lo(static_cast<std::size_t>(h), 1.0f);
         std::vector<float> row_hi(static_cast<std::size_t>(h), 0.0f);
         float* rlo = row_lo.data();
@@ -240,101 +417,25 @@ constexpr double kMaxZoom = 32.0;
                            rlo[y] = a;
                            rhi[y] = b;
                        });
-        lo = *std::min_element(row_lo.begin(), row_lo.end());
-        hi = *std::max_element(row_hi.begin(), row_hi.end());
-        if (!(hi > lo)) {
-            lo = 0.0f;
-            hi = 1.0f;
+        mapping.stretch = true;
+        mapping.lo = *std::min_element(row_lo.begin(), row_lo.end());
+        mapping.hi = *std::max_element(row_hi.begin(), row_hi.end());
+        mapping.gamma = 0.75f;
+        if (!(mapping.hi > mapping.lo)) {
+            mapping.lo = 0.0f;
+            mapping.hi = 1.0f;
         }
     }
-    const float inv_range = 1.0f / (hi - lo);
-    const bool stretch = _displayStretch ? true : false;
-
-    // 8bitのRGBAに落として CGImage を作る。
-    // プレビューは目で見るためのものなので8bitで足りる。
-    // 保存は16bit/32bit floatで別途行う。
-    // ガンマ変換は4096段の表を引く（1画素ごとに pow を呼ぶと大画像で遅い）。
-    // 軽いガンマで暗部を持ち上げる。惑星面の縞は中間調にある。
-    constexpr int kLutSize = 4096;
-    std::vector<unsigned char> lut(kLutSize + 1);
-    for (int i = 0; i <= kLutSize; ++i) {
-        const float t = static_cast<float>(i) / kLutSize;
-        lut[static_cast<std::size_t>(i)] =
-            static_cast<unsigned char>((stretch ? std::pow(t, displayGamma) : t) * 255.0f + 0.5f);
-    }
-    const unsigned char* table = lut.data();
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(w) * h * 4);
-    unsigned char* base = pixels.data();
-    const stackcore::FrameBuffer* f = &frame;
-    dispatch_apply(static_cast<size_t>(h), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0),
-                   ^(size_t yy) {
-                       const int y = static_cast<int>(yy);
-                       unsigned char* dst = base + static_cast<std::size_t>(y) * w * 4;
-                       const auto map = [lo, inv_range, stretch, table](float v) -> unsigned char {
-                           float t = stretch ? (v - lo) * inv_range : v;
-                           if (!(t > 0.0f)) t = 0.0f;
-                           if (t > 1.0f) t = 1.0f;
-                           return table[static_cast<int>(t * kLutSize + 0.5f)];
-                       };
-                       if (channels >= 3) {
-                           const float* r = f->row(0, y);
-                           const float* g = f->row(1, y);
-                           const float* b = f->row(2, y);
-                           for (int x = 0; x < w; ++x) {
-                               dst[x * 4 + 0] = map(r[x]);
-                               dst[x * 4 + 1] = map(g[x]);
-                               dst[x * 4 + 2] = map(b[x]);
-                               dst[x * 4 + 3] = 255;
-                           }
-                       } else {
-                           const float* v = f->row(0, y);
-                           for (int x = 0; x < w; ++x) {
-                               const unsigned char g = map(v[x]);
-                               dst[x * 4 + 0] = g;
-                               dst[x * 4 + 1] = g;
-                               dst[x * 4 + 2] = g;
-                               dst[x * 4 + 3] = 255;
-                           }
-                       }
-                   });
-
-    CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(pixels.data(), w, h, 8, w * 4, space,
-                                             kCGImageAlphaNoneSkipLast);
-    if (ctx) {
-        _image = CGBitmapContextCreateImage(ctx);
-        CGContextRelease(ctx);
-    }
-    CGColorSpaceRelease(space);
+    // 縮小段は描くときに要る分だけ作る（imageForDeviceScale:）。
+    _display = LSMakePreviewImage(frame, mapping, 0.0);
     [self setNeedsDisplay:YES];
 }
 
 // 縮小表示用の画像（UI設計書 §5.3 のミップマップ相当）。
 // 大きな画像を毎回全画素から縮めて描くと重いので、段ごとに1回だけ作って使い回す。
 - (CGImageRef)imageForDeviceScale:(double)deviceScale {
-    if (!_image || deviceScale >= 0.5) return _image;
-    int level = 0;
-    double s = deviceScale;
-    while (s < 0.5 && level < kMipLevels) {
-        s *= 2.0;
-        ++level;
-    }
-    if (level == 0) return _image;
-    CGImageRef& slot = _mips[level - 1];
-    if (!slot) {
-        const int w = std::max(1, _imageWidth >> level);
-        const int h = std::max(1, _imageHeight >> level);
-        CGColorSpaceRef space = CGColorSpaceCreateDeviceRGB();
-        CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, 0, space, kCGImageAlphaNoneSkipLast);
-        if (ctx) {
-            CGContextSetInterpolationQuality(ctx, kCGInterpolationHigh);
-            CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), _image);
-            slot = CGBitmapContextCreateImage(ctx);
-            CGContextRelease(ctx);
-        }
-        CGColorSpaceRelease(space);
-    }
-    return slot ? slot : _image;
+    if (!_display) return NULL;
+    return _display->level(MipLevelForDeviceScale(deviceScale));
 }
 
 - (void)setZoom:(double)zoom {
@@ -371,7 +472,7 @@ constexpr double kMaxZoom = 32.0;
 
 // 1段 = √2倍。2回で2倍になる。
 - (void)zoomInStep {
-    if (!_image) return;
+    if (!_display) return;
     const NSRect b = [self bounds];
     const NSPoint center = NSMakePoint(NSMidX(b), NSMidY(b));
     [self setZoom:[self effectiveDeviceZoom] * M_SQRT2
@@ -380,7 +481,7 @@ constexpr double kMaxZoom = 32.0;
 }
 
 - (void)zoomOutStep {
-    if (!_image) return;
+    if (!_display) return;
     const NSRect b = [self bounds];
     const NSPoint center = NSMakePoint(NSMidX(b), NSMidY(b));
     [self setZoom:[self effectiveDeviceZoom] / M_SQRT2
@@ -519,7 +620,7 @@ constexpr double kMaxZoom = 32.0;
     [[NSColor colorWithCalibratedWhite:0.12 alpha:1.0] setFill];
     NSRectFill(bounds);
 
-    if (!_image || _imageWidth == 0) {
+    if (!_display || _imageWidth == 0) {
         NSString* message = LSLocalizedString(@"動画を追加して［品質評価］を押してください");
         NSMutableParagraphStyle* style =
             [[[NSMutableParagraphStyle alloc] init] autorelease];
@@ -667,7 +768,7 @@ constexpr double kMaxZoom = 32.0;
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
     [[self window] makeFirstResponder:self];
 
-    if (_apEditing && _image) {
+    if (_apEditing && _display) {
         const NSInteger hit = [self apIndexAtViewPoint:p];
         if (hit >= 0) {
             _selectedAp = hit;
@@ -714,7 +815,7 @@ constexpr double kMaxZoom = 32.0;
 
 // ホイール: 拡大中はパン、⌘を押しながらならカーソル位置を中心にズーム。
 - (void)scrollWheel:(NSEvent*)event {
-    if (!_image) return;
+    if (!_display) return;
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
     if ([event modifierFlags] & NSEventModifierFlagCommand) {
         const double delta = [event hasPreciseScrollingDeltas] ? [event scrollingDeltaY] / 50.0
@@ -733,7 +834,7 @@ constexpr double kMaxZoom = 32.0;
 
 // トラックパッドのピンチ。
 - (void)magnifyWithEvent:(NSEvent*)event {
-    if (!_image) return;
+    if (!_display) return;
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
     [self setZoom:[self effectiveDeviceZoom] * (1.0 + [event magnification])
         keepingImagePoint:[self imagePointFromViewPoint:p]
@@ -744,7 +845,7 @@ constexpr double kMaxZoom = 32.0;
     if (![_delegate respondsToSelector:@selector(previewView:hoverDescription:)]) return;
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
     NSString* text = nil;
-    if (_source && _image) {
+    if (_source && _display) {
         const NSPoint img = [self imagePointFromViewPoint:p];
         const int x = static_cast<int>(std::floor(img.x));
         const int y = static_cast<int>(std::floor(img.y));

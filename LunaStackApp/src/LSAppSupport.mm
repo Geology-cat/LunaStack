@@ -13,6 +13,26 @@
 }
 @end
 
+@implementation VerticalClipView
+- (NSRect)constrainBoundsRect:(NSRect)proposedBounds {
+    NSRect r = [super constrainBoundsRect:proposedBounds];
+    r.origin.x = 0.0;
+    return r;
+}
+
+// スクロールの経路によっては constrainBoundsRect: を通らずに原点が設定されるので、
+// 原点を動かす入口でも x を 0 に戻す。
+- (void)scrollToPoint:(NSPoint)newOrigin {
+    newOrigin.x = 0.0;
+    [super scrollToPoint:newOrigin];
+}
+
+- (void)setBoundsOrigin:(NSPoint)newOrigin {
+    newOrigin.x = 0.0;
+    [super setBoundsOrigin:newOrigin];
+}
+@end
+
 
 void write_output_image(const std::string& path, const stackcore::FrameBuffer& image,
                         OutputFormat format, const stackcore::ImageMetadata& metadata) {

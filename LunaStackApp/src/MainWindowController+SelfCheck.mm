@@ -322,28 +322,101 @@
 
 // スライダーをドラッグしている間も、プレビューが途切れずに更新され続けるか。
 // 60Hz相当で値を変えながら描画を要求し、その間に画面へ出た回数を数える。
+namespace {
+
+// 高周波の量（輝度の4近傍ラプラシアンの絶対値の平均）。ウェーブレットの強調が
+// 画面に出ているかを数値で見る。
+double HighFrequency(const stackcore::FrameBuffer& f) {
+    if (f.width() < 3 || f.height() < 3) return 0.0;
+    // 大きな画像では間引いて数える（検査そのものが画面の更新を遅らせないように）。
+    const int step = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(f.width()) * f.height() / 250000.0)));
+    double sum = 0.0;
+    std::size_t n = 0;
+    for (int y = 1; y + 1 < f.height(); y += step) {
+        for (int x = 1; x + 1 < f.width(); x += step) {
+            double lap = 0.0;
+            for (int c = 0; c < f.channels(); ++c) {
+                const float* r = f.row(c, y);
+                lap += 4.0 * r[x] - r[x - 1] - r[x + 1] - f.row(c, y - 1)[x] - f.row(c, y + 1)[x];
+            }
+            sum += std::fabs(lap);
+            ++n;
+        }
+    }
+    return n > 0 ? sum / n : 0.0;
+}
+
+}  // namespace
+
+// つまみを動かし続けても、画面が途切れず、しかも「動かす前 → 動かした後」とだけ
+// 移り変わるか。強調を上げていくだけの操作なので、途中で強調の無い画像
+// （スタックそのまま・縮小版の下書き）が一瞬でも出れば高周波の量が下がる。
 - (BOOL)selfCheckContinuousPreview {
     if (!_stacked || !_finishing) return NO;
     [_viewModeSegment setSelectedSegment:2];
     [_waveletPreviewCheck setState:NSControlStateValueOn];
+    [_sharpenSliders[0] setDoubleValue:2.0];
+    [self updateFinishingValueLabels];
+    [self waitForFinishingForTesting];
+    const double before = _displayed ? HighFrequency(*_displayed) : 0.0;
+
+    double lowest = 1e300;
+    double previous = before;
+    int drops = 0;
+    _previewUpdateHook = [&](const stackcore::FrameBuffer& shown) {
+        const double hf = HighFrequency(shown);
+        lowest = std::min(lowest, hf);
+        // 強調は単調に上げているので、表示の高周波も下がらないはず（丸めの揺れは許す）。
+        if (hf < previous * 0.999) ++drops;
+        previous = hf;
+    };
     _previewUpdates = 0;
     const int steps = 60;
+    const NSTimeInterval dragStart = [NSDate timeIntervalSinceReferenceDate];
     for (int i = 0; i < steps; ++i) {
-        [_sharpenSliders[0] setDoubleValue:1.0 + 8.0 * i / steps];
-        [self updateFinishingValueLabels];
-        [self requestFinishingRender:YES];
+        [_sharpenSliders[0] setDoubleValue:2.0 + 8.0 * (i + 1) / steps];
+        [self waveletChanged:_sharpenSliders[0]];
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.0 / 60.0]];
     }
     const int duringDrag = _previewUpdates;
-    [self requestFinishingRender:NO];
+    const double dragSeconds = [NSDate timeIntervalSinceReferenceDate] - dragStart;
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
+    _previewUpdateHook = nullptr;
     [_sharpenSliders[0] setDoubleValue:1.0];
     [self updateFinishingValueLabels];
     [self waitForFinishingForTesting];
     // 1秒のドラッグで10回以上（＝おおむね10fps以上）描き直していれば「途切れない」とみなす。
-    const BOOL ok = duringDrag >= 10;
-    NSLog(@"連続プレビューの自己検証: ドラッグ中 %d 回更新（%d 回の操作）%@", duringDrag, steps,
-          ok ? @"" : @"— 途切れています");
+    const BOOL smooth = duringDrag >= 10;
+    const BOOL monotonic = drops == 0 && lowest >= before * 0.999;
+    NSLog(@"連続プレビューの自己検証: ドラッグ中 %d 回更新（%d 回の操作・%.2f 秒、%d×%d）、高周波 動かす前 %.5f / "
+          @"途中の最小 %.5f、下がった回数 %d %@",
+          duringDrag, steps, dragSeconds, _stacked->width(), _stacked->height(), before, lowest, drops,
+          !smooth ? @"— 途切れています" : (!monotonic ? @"— 強調の無い画像が挟まっています" : @""));
+    return smooth && monotonic;
+}
+
+// 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
+- (BOOL)selfCheckInspectorScrollsVerticallyOnly {
+    NSClipView* clip = [_inspectorScroll contentView];
+    [[_inspectorScroll window] layoutIfNeeded];
+    BOOL ok = YES;
+    for (int i = 0; i < 2; ++i) {
+        // 横方向（第2軸）に大きく動かす。1回目は左へ、2回目は右へ。
+        const int32_t dx = i == 0 ? -120 : 120;
+        CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2, 0, dx);
+        NSEvent* event = cg ? [NSEvent eventWithCGEvent:cg] : nil;
+        if (cg) CFRelease(cg);
+        if (event) [_inspectorScroll scrollWheel:event];
+        // 直接動かそうとしても x は 0 に戻されること。
+        [clip scrollToPoint:NSMakePoint(i == 0 ? 40.0 : -40.0, [clip bounds].origin.y)];
+        [_inspectorScroll reflectScrolledClipView:clip];
+        if ([clip bounds].origin.x != 0.0) ok = NO;
+    }
+    const CGFloat docWidth = NSWidth([[_inspectorScroll documentView] frame]);
+    const CGFloat clipWidth = NSWidth([clip bounds]);
+    if (docWidth > clipWidth + 0.5) ok = NO;
+    NSLog(@"設定パネルの自己検証（%@）: 横位置 %.1f、中身の幅 %.1f / 表示幅 %.1f %@", NSStringFromClass([clip class]), [clip bounds].origin.x,
+          docWidth, clipWidth, ok ? @"（横に動かない）" : @"— 横に動きます");
     return ok;
 }
 

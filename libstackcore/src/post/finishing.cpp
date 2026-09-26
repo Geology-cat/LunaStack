@@ -6,17 +6,24 @@
 
 #include "stackcore/resample.hpp"
 
+#include "../common/parallel_rows.hpp"
+
 namespace stackcore {
 namespace {
 
 void copy_frame(const FrameBuffer& src, FrameBuffer& out) {
     if (&src == &out) return;
-    out.reset(src.width(), src.height(), src.channels());
+    if (out.width() != src.width() || out.height() != src.height() ||
+        out.channels() != src.channels()) {
+        out.reset(src.width(), src.height(), src.channels());
+    }
     out.set_source_bit_depth(src.source_bit_depth());
     for (int c = 0; c < src.channels(); ++c) {
-        for (int y = 0; y < src.height(); ++y) {
-            std::copy(src.row(c, y), src.row(c, y) + src.width(), out.row(c, y));
-        }
+        detail::parallel_rows(src.height(), [&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                std::copy(src.row(c, y), src.row(c, y) + src.width(), out.row(c, y));
+            }
+        }, 32);
     }
     out.invalidate_luma();
 }
@@ -56,37 +63,48 @@ double object_threshold(const std::vector<float>& luma) {
     return background + 0.2 * (bright - background);
 }
 
-// 半径 r の最小・最大フィルタ（分離可能。端は範囲を縮める）。
+// 半径 r の最小・最大フィルタ（分離可能。端は範囲を縮める）。行ごとに並列に回す。
 void min_max_filter(const float* src, int w, int h, int r, std::vector<float>& lo,
                     std::vector<float>& hi) {
     const std::size_t n = static_cast<std::size_t>(w) * h;
     std::vector<float> tlo(n), thi(n);
-    for (int y = 0; y < h; ++y) {
-        const float* s = src + static_cast<std::size_t>(y) * w;
-        for (int x = 0; x < w; ++x) {
-            float a = s[x], b = s[x];
-            for (int k = std::max(0, x - r); k <= std::min(w - 1, x + r); ++k) {
-                a = std::min(a, s[k]);
-                b = std::max(b, s[k]);
+    detail::parallel_rows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const float* s = src + static_cast<std::size_t>(y) * w;
+            for (int x = 0; x < w; ++x) {
+                float a = s[x], b = s[x];
+                for (int k = std::max(0, x - r); k <= std::min(w - 1, x + r); ++k) {
+                    a = std::min(a, s[k]);
+                    b = std::max(b, s[k]);
+                }
+                tlo[static_cast<std::size_t>(y) * w + x] = a;
+                thi[static_cast<std::size_t>(y) * w + x] = b;
             }
-            tlo[static_cast<std::size_t>(y) * w + x] = a;
-            thi[static_cast<std::size_t>(y) * w + x] = b;
         }
-    }
+    });
     lo.assign(n, 0.0f);
     hi.assign(n, 0.0f);
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            float a = tlo[static_cast<std::size_t>(y) * w + x];
-            float b = thi[static_cast<std::size_t>(y) * w + x];
-            for (int k = std::max(0, y - r); k <= std::min(h - 1, y + r); ++k) {
-                a = std::min(a, tlo[static_cast<std::size_t>(k) * w + x]);
-                b = std::max(b, thi[static_cast<std::size_t>(k) * w + x]);
+    detail::parallel_rows(h, [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const int k0 = std::max(0, y - r), k1 = std::min(h - 1, y + r);
+            float* dlo = lo.data() + static_cast<std::size_t>(y) * w;
+            float* dhi = hi.data() + static_cast<std::size_t>(y) * w;
+            const float* slo = tlo.data() + static_cast<std::size_t>(y) * w;
+            const float* shi = thi.data() + static_cast<std::size_t>(y) * w;
+            for (int x = 0; x < w; ++x) {
+                dlo[x] = slo[x];
+                dhi[x] = shi[x];
             }
-            lo[static_cast<std::size_t>(y) * w + x] = a;
-            hi[static_cast<std::size_t>(y) * w + x] = b;
+            for (int k = k0; k <= k1; ++k) {
+                const float* rlo = tlo.data() + static_cast<std::size_t>(k) * w;
+                const float* rhi = thi.data() + static_cast<std::size_t>(k) * w;
+                for (int x = 0; x < w; ++x) {
+                    dlo[x] = std::min(dlo[x], rlo[x]);
+                    dhi[x] = std::max(dhi[x], rhi[x]);
+                }
+            }
         }
-    }
+    });
 }
 
 }  // namespace
@@ -245,25 +263,31 @@ void apply_color(const FrameBuffer& src, const ColorAdjust& color, FrameBuffer& 
         copy_frame(src, out);
         return;
     }
-    FrameBuffer result(src.width(), src.height(), 3);
-    result.set_source_bit_depth(src.source_bit_depth());
+    // 画素ごとに独立なので、src と out が同じ（その場で書き換える）でもよい。
+    if (&src != &out &&
+        (out.width() != src.width() || out.height() != src.height() || out.channels() != 3)) {
+        out.reset(src.width(), src.height(), 3);
+    }
     const double s = color.saturation;
-    for (int y = 0; y < src.height(); ++y) {
-        const float* in[3] = {src.row(0, y), src.row(1, y), src.row(2, y)};
-        float* o[3] = {result.row(0, y), result.row(1, y), result.row(2, y)};
-        for (int x = 0; x < src.width(); ++x) {
-            double v[3];
-            for (int c = 0; c < 3; ++c) v[c] = in[c][x] * color.gain[c];
-            // 彩度は輝度を保ったまま色差を伸縮する。
-            const double l = 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
-            for (int c = 0; c < 3; ++c) {
-                const double t = l + s * (v[c] - l);
-                o[c][x] = static_cast<float>(t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t));
+    const int width = src.width();
+    detail::parallel_rows(src.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            const float* in[3] = {src.row(0, y), src.row(1, y), src.row(2, y)};
+            float* o[3] = {out.row(0, y), out.row(1, y), out.row(2, y)};
+            for (int x = 0; x < width; ++x) {
+                double v[3];
+                for (int c = 0; c < 3; ++c) v[c] = in[c][x] * color.gain[c];
+                // 彩度は輝度を保ったまま色差を伸縮する。
+                const double l = 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+                for (int c = 0; c < 3; ++c) {
+                    const double t = l + s * (v[c] - l);
+                    o[c][x] = static_cast<float>(t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t));
+                }
             }
         }
-    }
-    result.invalidate_luma();
-    out = std::move(result);
+    });
+    out.set_source_bit_depth(src.source_bit_depth());
+    out.invalidate_luma();
 }
 
 // ---- 形 --------------------------------------------------------------------
@@ -321,20 +345,22 @@ void apply_geometry(const FrameBuffer& src, const Geometry& g, FrameBuffer& out)
     FrameBuffer result(ow, oh, src.channels());
     result.set_source_bit_depth(src.source_bit_depth());
     for (int c = 0; c < src.channels(); ++c) {
-        for (int oy = 0; oy < oh; ++oy) {
-            float* dst = result.row(c, oy);
-            for (int ox = 0; ox < ow; ++ox) {
-                // 反転は回転後の座標で掛けるので、先に反転を戻す。
-                const int rx = g.flip_horizontal ? ow - 1 - ox : ox;
-                const int ry = g.flip_vertical ? oh - 1 - oy : oy;
-                // 時計回りの回転を戻して、クロップ後の座標 (sx, sy) を求める。
-                int sx = rx, sy = ry;
-                if (turns == 1) { sx = ry; sy = ch - 1 - rx; }
-                else if (turns == 2) { sx = cw - 1 - rx; sy = ch - 1 - ry; }
-                else if (turns == 3) { sx = cw - 1 - ry; sy = rx; }
-                dst[ox] = src.row(c, cy + sy)[cx + sx];
+        detail::parallel_rows(oh, [&](int y0, int y1) {
+            for (int oy = y0; oy < y1; ++oy) {
+                float* dst = result.row(c, oy);
+                for (int ox = 0; ox < ow; ++ox) {
+                    // 反転は回転後の座標で掛けるので、先に反転を戻す。
+                    const int rx = g.flip_horizontal ? ow - 1 - ox : ox;
+                    const int ry = g.flip_vertical ? oh - 1 - oy : oy;
+                    // 時計回りの回転を戻して、クロップ後の座標 (sx, sy) を求める。
+                    int sx = rx, sy = ry;
+                    if (turns == 1) { sx = ry; sy = ch - 1 - rx; }
+                    else if (turns == 2) { sx = cw - 1 - rx; sy = ch - 1 - ry; }
+                    else if (turns == 3) { sx = cw - 1 - ry; sy = rx; }
+                    dst[ox] = src.row(c, cy + sy)[cx + sx];
+                }
             }
-        }
+        });
     }
     result.invalidate_luma();
     out = std::move(result);
@@ -342,34 +368,61 @@ void apply_geometry(const FrameBuffer& src, const Geometry& g, FrameBuffer& out)
 
 // ---- デリンギング ------------------------------------------------------------
 
+namespace {
+
+// デリンギングの許容範囲（元画像の近傍の最小・最大）。チャンネルごとに w×h の連続配列。
+void dering_bounds(const FrameBuffer& original, int radius, std::vector<float>& lo,
+                   std::vector<float>& hi) {
+    const int w = original.width(), h = original.height();
+    const std::size_t plane_size = static_cast<std::size_t>(w) * h;
+    lo.assign(plane_size * original.channels(), 0.0f);
+    hi.assign(plane_size * original.channels(), 0.0f);
+    std::vector<float> plane(plane_size), plo, phi;
+    for (int c = 0; c < original.channels(); ++c) {
+        for (int y = 0; y < h; ++y) {
+            std::copy(original.row(c, y), original.row(c, y) + w,
+                      plane.begin() + static_cast<std::ptrdiff_t>(y) * w);
+        }
+        min_max_filter(plane.data(), w, h, radius, plo, phi);
+        std::copy(plo.begin(), plo.end(), lo.begin() + static_cast<std::ptrdiff_t>(c * plane_size));
+        std::copy(phi.begin(), phi.end(), hi.begin() + static_cast<std::ptrdiff_t>(c * plane_size));
+    }
+}
+
+void apply_dering_bounds(const std::vector<float>& lo, const std::vector<float>& hi,
+                         double strength, FrameBuffer& sharpened) {
+    const int w = sharpened.width(), h = sharpened.height();
+    const std::size_t plane_size = static_cast<std::size_t>(w) * h;
+    const float keep = static_cast<float>(1.0 - strength);
+    for (int c = 0; c < sharpened.channels(); ++c) {
+        const float* clo = lo.data() + c * plane_size;
+        const float* chi = hi.data() + c * plane_size;
+        detail::parallel_rows(h, [&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                float* d = sharpened.row(c, y);
+                for (int x = 0; x < w; ++x) {
+                    const float a = clo[static_cast<std::size_t>(y) * w + x];
+                    const float b = chi[static_cast<std::size_t>(y) * w + x];
+                    if (d[x] > b) d[x] = b + (d[x] - b) * keep;
+                    else if (d[x] < a) d[x] = a - (a - d[x]) * keep;
+                }
+            }
+        });
+    }
+    sharpened.invalidate_luma();
+}
+
+}  // namespace
+
 void dering(const FrameBuffer& original, double strength, int radius, FrameBuffer& sharpened) {
     if (strength <= 0.0) return;
     if (original.width() != sharpened.width() || original.height() != sharpened.height() ||
         original.channels() != sharpened.channels()) {
         throw std::invalid_argument("デリンギング: 画像の寸法が一致しません");
     }
-    strength = std::min(1.0, strength);
-    radius = std::max(1, radius);
-    const int w = original.width(), h = original.height();
-    std::vector<float> plane(static_cast<std::size_t>(w) * h), lo, hi;
-    for (int c = 0; c < original.channels(); ++c) {
-        for (int y = 0; y < h; ++y) {
-            std::copy(original.row(c, y), original.row(c, y) + w,
-                      plane.begin() + static_cast<std::ptrdiff_t>(y) * w);
-        }
-        min_max_filter(plane.data(), w, h, radius, lo, hi);
-        const float keep = static_cast<float>(1.0 - strength);
-        for (int y = 0; y < h; ++y) {
-            float* d = sharpened.row(c, y);
-            for (int x = 0; x < w; ++x) {
-                const float a = lo[static_cast<std::size_t>(y) * w + x];
-                const float b = hi[static_cast<std::size_t>(y) * w + x];
-                if (d[x] > b) d[x] = b + (d[x] - b) * keep;
-                else if (d[x] < a) d[x] = a - (a - d[x]) * keep;
-            }
-        }
-    }
-    sharpened.invalidate_luma();
+    std::vector<float> lo, hi;
+    dering_bounds(original, std::max(1, radius), lo, hi);
+    apply_dering_bounds(lo, hi, std::min(1.0, strength), sharpened);
 }
 
 // ---- 全体 ------------------------------------------------------------------
@@ -388,6 +441,7 @@ void FinishingPipeline::set_input(std::shared_ptr<const FrameBuffer> stacked, in
     layers_ = wavelet_layers;
     aligned_valid_ = false;
     wavelet_valid_ = false;
+    dering_radius_ = 0;
     aligned_.clear();
 }
 
@@ -398,6 +452,7 @@ void FinishingPipeline::ensure_aligned(const ChannelOffsets& offsets) {
     aligned_offsets_ = offsets;
     aligned_valid_ = true;
     wavelet_valid_ = false;
+    dering_radius_ = 0;
 }
 
 const FrameBuffer& FinishingPipeline::aligned() {
@@ -408,8 +463,11 @@ const FrameBuffer& FinishingPipeline::aligned() {
 void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out) {
     ensure_aligned(s.channels);
 
-    FrameBuffer work;
-    bool has_work = false;
+    // 途中の画像は使い回しの作業領域に置く（大きな画像で毎回確保すると遅い）。
+    // 形を変えないときは out に直接書いて、最後の写しを省く。
+    const bool reshape = !s.geometry.identity();
+    FrameBuffer& work = reshape ? work_ : out;
+
     bool wavelet_changes = false;
     for (const WaveletLayerParams& p : s.wavelet) {
         if (p.sharpen != 1.0 || p.denoise != 0.0) wavelet_changes = true;
@@ -430,29 +488,23 @@ void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out) {
             for (std::size_t j = 0; j < s.wavelet.size(); ++j) {
                 if (s.wavelet[j].sharpen > 1.0) radius = std::min(8, 1 << j);
             }
-            dering(aligned_, s.dering, std::max(1, radius), work);
+            // 許容範囲は元画像と半径だけで決まるので、つまみを動かすあいだは使い回す。
+            if (dering_radius_ != radius) {
+                dering_bounds(aligned_, radius, dering_lo_, dering_hi_);
+                dering_radius_ = radius;
+            }
+            apply_dering_bounds(dering_lo_, dering_hi_, std::min(1.0, s.dering), work);
         }
-        has_work = true;
-    }
-    const FrameBuffer& base = has_work ? work : aligned_;
-
-    FrameBuffer colored;
-    const FrameBuffer* current = &base;
-    if (!s.color.identity() && base.channels() == 3) {
-        apply_color(*current, s.color, colored);
-        current = &colored;
-    }
-    FrameBuffer stretched;
-    if (s.stretch) {
-        stretch_histogram(*current, s.black, s.white, s.gamma, stretched);
-        current = &stretched;
-    }
-    if (!s.geometry.identity()) {
-        apply_geometry(*current, s.geometry, out);
     } else {
-        copy_frame(*current, out);
+        copy_frame(aligned_, work);
     }
+
+    // 色と階調は画素ごとの処理なので、その場で書き換える。
+    if (!s.color.identity() && work.channels() == 3) apply_color(work, s.color, work);
+    if (s.stretch) stretch_histogram(work, s.black, s.white, s.gamma, work);
+    if (reshape) apply_geometry(work, s.geometry, out);
     out.set_source_bit_depth(input_->source_bit_depth());
+    out.invalidate_luma();
 }
 
 }  // namespace stackcore

@@ -7,9 +7,6 @@
 
 namespace {
 
-// ドラッグ中に縮小版で追従させる大きさの目安（画素数）。これより小さければ常に本解像度。
-constexpr double kDraftPixels = 3.0e6;
-
 // 仕上げを掛けない（変化なし）ときの既定の配分。連動で強さを上げたときの形。
 const double kLinkedProfile[kWaveletLayers] = {7.0, 3.0, 1.0, 0.0, 0.0, 0.0};
 
@@ -18,55 +15,6 @@ double ParseField(NSTextField* field) {
     double v = 0.0;
     if (![scanner scanDouble:&v] || !std::isfinite(v)) return 0.0;
     return std::max(-64.0, std::min(64.0, v));
-}
-
-// 2×2の平均で半分に縮める（ドラッグ中の下書き用）。
-std::shared_ptr<stackcore::FrameBuffer> HalfSize(const stackcore::FrameBuffer& src) {
-    const int w = std::max(1, src.width() / 2), h = std::max(1, src.height() / 2);
-    auto out = std::make_shared<stackcore::FrameBuffer>(w, h, src.channels());
-    for (int c = 0; c < src.channels(); ++c) {
-        for (int y = 0; y < h; ++y) {
-            const float* a = src.row(c, std::min(src.height() - 1, 2 * y));
-            const float* b = src.row(c, std::min(src.height() - 1, 2 * y + 1));
-            float* d = out->row(c, y);
-            for (int x = 0; x < w; ++x) {
-                const int x0 = std::min(src.width() - 1, 2 * x), x1 = std::min(src.width() - 1, 2 * x + 1);
-                d[x] = 0.25f * (a[x0] + a[x1] + b[x0] + b[x1]);
-            }
-        }
-    }
-    out->set_source_bit_depth(src.source_bit_depth());
-    return out;
-}
-
-// 下書きを元の大きさに戻す（双線形）。表示専用なので精度より連続性を取る。
-std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& src, int w, int h) {
-    if (src.empty() || w <= 0 || h <= 0) return std::make_shared<stackcore::FrameBuffer>();
-    auto out = std::make_shared<stackcore::FrameBuffer>(w, h, src.channels());
-    const double sx = static_cast<double>(src.width()) / w;
-    const double sy = static_cast<double>(src.height()) / h;
-    for (int c = 0; c < src.channels(); ++c) {
-        for (int y = 0; y < h; ++y) {
-            const double fy = std::max(0.0, (y + 0.5) * sy - 0.5);
-            const int y0 = std::min(src.height() - 1, static_cast<int>(fy));
-            const int y1 = std::min(src.height() - 1, y0 + 1);
-            const float ty = static_cast<float>(fy - y0);
-            const float* r0 = src.row(c, y0);
-            const float* r1 = src.row(c, y1);
-            float* d = out->row(c, y);
-            for (int x = 0; x < w; ++x) {
-                const double fx = std::max(0.0, (x + 0.5) * sx - 0.5);
-                const int x0 = std::min(src.width() - 1, static_cast<int>(fx));
-                const int x1 = std::min(src.width() - 1, x0 + 1);
-                const float tx = static_cast<float>(fx - x0);
-                const float top = r0[x0] + (r0[x1] - r0[x0]) * tx;
-                const float bottom = r1[x0] + (r1[x1] - r1[x0]) * tx;
-                d[x] = top + (bottom - top) * ty;
-            }
-        }
-    }
-    out->set_source_bit_depth(src.source_bit_depth());
-    return out;
 }
 
 }  // namespace
@@ -132,7 +80,7 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
     }
     [_viewModeSegment setSelectedSegment:2];
     _displayed.reset();
-    [self requestFinishingRender:NO];
+    [self requestFinishingRender];
     [self updateFrameInfoLabel];
     [_statusLabel setStringValue:LSLocalizedString(on ? @"ウェーブレットの効果ありのプレビュー"
                                                      : @"ウェーブレットの効果なしのプレビュー（ほかの仕上げは掛けたまま）")];
@@ -144,11 +92,11 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
     _renderPending = NO;
     _stackedDisplayLow = 0.0f;
     _stackedDisplayHigh = 0.0f;
-    _lastFullRenderSeconds = 0.0;
     _stacked.reset();
     _displayed.reset();
     _finishing.reset();
-    _finishingDraft.reset();
+    _renderTargets[0].reset();
+    _renderTargets[1].reset();
     [_stackedInfo release];
     _stackedInfo = nil;
     _stackedFrames.clear();
@@ -160,7 +108,7 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
 // ---- 描画 -----------------------------------------------------------------
 
 - (void)applyWavelet {
-    [self requestFinishingRender:NO];
+    [self requestFinishingRender];
 }
 
 // 仕上げ済みの画像を作る。重い処理なので直列キューで行う。
@@ -172,119 +120,92 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
 // いまは「描いている間に動いた分」を次の1枚でまとめて描くので、描画の速さなりに
 // 途切れず追従する。
 //
-// draft が YES（ドラッグ中）で、画像が大きいか直前の描画が遅かったときは、
-// 半分の解像度で描いてから元の大きさに拡大して出す（UI設計書 §4.5）。
-// 大きさを変えずに出すので、等倍表示でも表示位置が飛ばない。
-- (void)requestFinishingRender:(BOOL)draft {
+// **常に本解像度で描く。** 以前はドラッグ中だけ半分の解像度の下書きを出していたが、
+// 半分の解像度では最も細かいレイヤー（レイヤー1）の効果が表せず、拡大し直すと
+// ぼやけるので、動かした瞬間に「ウェーブレットを掛けていない画像」が一瞬見えていた。
+// 画面は「動かす前の仕上げ → 動かした後の仕上げ」とだけ移り変わる。
+- (void)requestFinishingRender {
     if (!_finishing || !_stacked) return;
     if (_renderInFlight) {
         _renderPending = YES;
-        // ドラッグをやめたあとの要求（本解像度）は、下書きの要求で上書きしない。
-        _pendingDraft = _pendingDraft && draft;
         return;
     }
-    [self startFinishingRender:draft];
+    [self startFinishingRender];
 }
 
-// 仕上げ後の大きさ（回転・切り抜き込み）。下書きを元の大きさへ戻すのに使う。
-- (NSSize)finishedSizeForSettings:(const stackcore::FinishingSettings&)s {
-    int w = _stacked->width(), h = _stacked->height();
-    if (s.geometry.crop) {
-        w = std::max(1, std::min(s.geometry.crop_width, w - std::max(0, s.geometry.crop_x)));
-        h = std::max(1, std::min(s.geometry.crop_height, h - std::max(0, s.geometry.crop_y)));
-    }
-    if (s.geometry.rotate_quarter_turns % 2 != 0) std::swap(w, h);
-    return NSMakeSize(w, h);
-}
-
-- (void)startFinishingRender:(BOOL)draft {
+- (void)startFinishingRender {
     const stackcore::FinishingSettings settings = [self previewFinishingSettings];
     const long generation = _renderGeneration;
-    const double pixels = static_cast<double>(_stacked->width()) * _stacked->height();
-    const bool useDraft = draft && (pixels > kDraftPixels || _lastFullRenderSeconds > 0.08);
-    const NSSize fullSize = [self finishedSizeForSettings:settings];
-
     std::shared_ptr<stackcore::FinishingPipeline> pipeline = _finishing;
-    stackcore::FinishingSettings job = settings;
-    if (useDraft) {
-        if (!_finishingDraft) {
-            _finishingDraft = std::make_shared<stackcore::FinishingPipeline>();
-            _finishingDraft->set_input(HalfSize(*_stacked), kWaveletLayers);
-        }
-        pipeline = _finishingDraft;
-        // 半分の解像度では、細かい順に1段ずつずれた層が同じ大きさの構造に当たる。
-        for (int j = 0; j < kWaveletLayers; ++j) {
-            job.wavelet[static_cast<std::size_t>(j)] =
-                j + 1 < kWaveletLayers ? settings.wavelet[static_cast<std::size_t>(j + 1)]
-                                       : stackcore::WaveletLayerParams();
-        }
-        job.channels.red_dx /= 2.0;
-        job.channels.red_dy /= 2.0;
-        job.channels.blue_dx /= 2.0;
-        job.channels.blue_dy /= 2.0;
-        if (job.geometry.crop) {
-            job.geometry.crop_x /= 2;
-            job.geometry.crop_y /= 2;
-            job.geometry.crop_width = std::max(1, job.geometry.crop_width / 2);
-            job.geometry.crop_height = std::max(1, job.geometry.crop_height / 2);
+    // 出力先は使い回す（大きな画像で毎回確保すると、それだけで遅くなる）。
+    // 画面や書き出しがまだ持っている画像には書き込まない。
+    std::shared_ptr<stackcore::FrameBuffer> out;
+    for (int i = 0; i < 2; ++i) {
+        if (_renderTargets[i] && _renderTargets[i].use_count() == 1) {
+            out = _renderTargets[i];
+            break;
         }
     }
+    if (!out) {
+        out = std::make_shared<stackcore::FrameBuffer>();
+        const int slot = _renderTargets[0] ? (_renderTargets[1] ? (_nextRenderSlot++ & 1) : 1) : 0;
+        _renderTargets[slot] = out;
+    }
+
+    // 画面用の8bit画像も描画と同じ裏のスレッドで作る（大きな画像でメインが詰まらないように）。
+    // 明るさの対応は表示するときと同じものを使う。違っていれば表示の側で作り直す。
+    [self applyFinishingDisplayRange];
+    LSDisplayMapping mapping;
+    const bool prepare = [_preview currentDisplayMapping:&mapping] ? true : false;
+    const double deviceScale = [_preview effectiveDeviceZoom];
 
     _renderInFlight = YES;
     _renderPending = NO;
-    _pendingDraft = YES;
     MainWindowController* controller = self;
-    const int fullW = static_cast<int>(fullSize.width), fullH = static_cast<int>(fullSize.height);
     dispatch_async(_finishQueue, ^{
-        const NSTimeInterval start = [NSDate timeIntervalSinceReferenceDate];
-        auto out = std::make_shared<stackcore::FrameBuffer>();
         std::string error;
+        std::shared_ptr<LSPreviewImage> prepared;
         try {
-            pipeline->render(job, *out);
-            if (useDraft) out = ScaleTo(*out, fullW, fullH);
+            pipeline->render(settings, *out);
+            if (prepare) prepared = LSMakePreviewImage(*out, mapping, deviceScale);
         } catch (const std::exception& e) {
             error = e.what();
         }
-        const double seconds = [NSDate timeIntervalSinceReferenceDate] - start;
         // メインのランループへ直接渡す（共通モード）。スライダーのドラッグ追跡中や、
         // 入れ子で回っているランループの中でも、描き上がった結果がすぐ届く。
         CFRunLoopRef mainLoop = CFRunLoopGetMain();
         CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{
-            [controller finishedRender:out generation:generation draft:useDraft seconds:seconds error:error];
+            [controller finishedRender:out prepared:prepared generation:generation error:error];
         });
         CFRunLoopWakeUp(mainLoop);
     });
 }
 
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
+              prepared:(std::shared_ptr<LSPreviewImage>)prepared
             generation:(long)generation
-                 draft:(bool)draft
-               seconds:(double)seconds
                  error:(const std::string&)error {
     _renderInFlight = NO;
-    if (!draft) _lastFullRenderSeconds = seconds;
     // 結果を捨てるのは、入力そのものが変わったとき（新しいスタック・クリア）だけ。
     const BOOL current = generation == _renderGeneration;
     if (current && !error.empty()) {
         [_statusLabel setStringValue:[NSString stringWithUTF8String:error.c_str()]];
     } else if (current) {
-        if (!draft && !_renderPending) _displayed = out;
+        // 描き上がった最新の仕上げ。表示の切り替えなどで描き直すときも、スタックそのままの
+        // 画像へ戻さずこれを出す。
+        _displayed = out;
         if ([_viewModeSegment selectedSegment] == 2 &&
             [_waveletPreviewCheck state] == NSControlStateValueOn) {
             ++_previewUpdates;
             [self applyFinishingDisplayRange];
-            [_preview showSharedFrame:out];
+            [_preview showSharedFrame:out prepared:prepared];
             [self updateApOverlay];
+            if (_previewUpdateHook) _previewUpdateHook(*out);
         }
     }
     if (!_finishing || !_stacked) return;
-    if (_renderPending) {
-        // 描いている間にまた動いた。最新の設定ですぐ次を描く。
-        [self startFinishingRender:_pendingDraft];
-    } else if (draft) {
-        // 下書きのまま止まった（最後の要求が下書きだった）。本解像度で確定する。
-        [self startFinishingRender:NO];
-    }
+    // 描いている間にまた動いた。最新の設定ですぐ次を描く。
+    if (_renderPending) [self startFinishingRender];
 }
 
 // 仕上げの表示では、明るさの基準をスタック結果に固定する（強調するたびに明るさが揺れない）。
@@ -343,18 +264,12 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
         [_preview showSharedFrame:_displayed];
     } else {
         [_preview showSharedFrame:_stacked];
-        if (showEffect) [self requestFinishingRender:NO];
+        if (showEffect) [self requestFinishingRender];
     }
     [self updateApOverlay];
 }
 
 // ---- つまみの操作 -----------------------------------------------------------
-
-// ドラッグ中か（離したら本解像度で描き直す）。
-- (BOOL)sliderIsDragging {
-    const NSEventType type = [[NSApp currentEvent] type];
-    return type == NSEventTypeLeftMouseDragged || type == NSEventTypeLeftMouseDown;
-}
 
 - (void)updateFinishingValueLabels {
     // ±ボタン・数値欄つきのつまみ。入力中の数値欄は書き換えない（打っている途中で消えないように）。
@@ -499,13 +414,13 @@ std::shared_ptr<stackcore::FrameBuffer> ScaleTo(const stackcore::FrameBuffer& sr
         }
     }
     [self updateFinishingValueLabels];
-    [self requestFinishingRender:[self sliderIsDragging]];
+    [self requestFinishingRender];
 }
 
 - (void)finishingChanged:(id)sender {
     (void)sender;
     [self updateFinishingValueLabels];
-    [self requestFinishingRender:[self sliderIsDragging]];
+    [self requestFinishingRender];
 }
 
 - (void)waveletPreviewChanged:(id)sender {

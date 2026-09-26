@@ -10,6 +10,30 @@
 
 @class PreviewView;
 
+// 画面に出すときの明るさの対応（float → 8bit）。
+struct LSDisplayMapping {
+    bool stretch = false;  // false なら 0..1 をそのまま切り詰める
+    float lo = 0.0f;
+    float hi = 1.0f;
+    float gamma = 1.0f;
+    bool operator==(const LSDisplayMapping& o) const {
+        return stretch == o.stretch && lo == o.lo && hi == o.hi && gamma == o.gamma;
+    }
+};
+
+// 画面用に8bitへ落とした画像と縮小段（1/2, 1/4, …）。
+//
+// **背景のスレッドで前もって作れる。** 大きな画像（2600万画素）では、8bitへの変換と
+// 縮小に1回あたり数十〜数百ミリ秒かかる。これをメインスレッドでやると、仕上げの
+// つまみを動かしている間じゅう画面が引っかかる。
+class LSPreviewImage;
+
+// frame を mapping で8bitにし、device_scale（画面の実画素／画像の画素）で描くのに
+// 要る縮小段まで作る。どのスレッドから呼んでもよい。
+std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer& frame,
+                                                   const LSDisplayMapping& mapping,
+                                                   double device_scale);
+
 @protocol PreviewViewDelegate <NSObject>
 // 画像座標 (x, y) にAPを追加したい。
 - (void)previewView:(PreviewView*)view didAddApAtX:(int)x y:(int)y;
@@ -41,6 +65,11 @@
 - (void)showFrameBuffer:(const stackcore::FrameBuffer&)frame;
 // 共有して表示する（複製しない）。大きなスタック結果ではこちらを使う。
 - (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame;
+// 前もって作った画面用の画像ごと差し替える。明るさの対応がいまの設定と違えば作り直す。
+- (void)showSharedFrame:(std::shared_ptr<const stackcore::FrameBuffer>)frame
+               prepared:(std::shared_ptr<LSPreviewImage>)prepared;
+// いまの明るさの対応。画像ごとに測り直す（固定していない）自動ストレッチなら NO。
+- (BOOL)currentDisplayMapping:(LSDisplayMapping*)mapping;
 - (void)clearImage;
 - (BOOL)hasImage;
 - (int)imageWidth;

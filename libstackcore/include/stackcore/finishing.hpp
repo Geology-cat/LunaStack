@@ -61,6 +61,7 @@ struct ColorAdjust {
 // 灰色になる倍率を返す（Gを1とする）。3ch以外なら {1,1,1}。
 void estimate_white_balance(const FrameBuffer& rgb, double gains[3]);
 
+// src と out に同じ画像を渡すと、その場で書き換える。
 void apply_color(const FrameBuffer& src, const ColorAdjust& color, FrameBuffer& out);
 
 // 形の変更。クロップは**回転前の**画像座標で指定する（自動クロップの結果を
@@ -141,6 +142,11 @@ private:
     FrameBuffer aligned_;
     bool wavelet_valid_ = false;
     WaveletSharpener wavelet_;
+    // デリンギングの許容範囲（半径ごと。0 は未計算）。
+    int dering_radius_ = 0;
+    std::vector<float> dering_lo_, dering_hi_;
+    // 形を変えるときの途中の画像（使い回す）。
+    FrameBuffer work_;
 };
 
 }  // namespace stackcore

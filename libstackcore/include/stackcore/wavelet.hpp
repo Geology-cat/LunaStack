@@ -23,7 +23,7 @@ struct WaveletLayerParams {
 // à trous（undecimated）ウェーブレットによるシャープニング（仕様書 §4.10）。
 //
 //   分解: c_0 = I, c_j = h_j * c_{j-1}, w_j = c_{j-1} - c_j
-//   再構成: I' = c_J + Σ g_j·w_j
+//   再構成: I' = c_J + Σ g_j·w_j（計算は I + Σ (g_j·w_j − w_j) で、変えたレイヤーだけ読む）
 //
 // ダウンサンプリングしないので位置不変であり、天体のシャープニングに向く。
 // レイヤー j のカーネルは B3スプライン [1,4,6,4,1]/16 のタップを
@@ -54,7 +54,8 @@ public:
     double layer_noise(int layer) const;
 
     // 再構成する。軽い側の処理。params の要素数は layers() と同じであること。
-    // すべて sharpen=1.0 / denoise=0.0 なら、出力は入力と一致する（可逆性）。
+    // すべて sharpen=1.0 / denoise=0.0 なら、出力は入力とビット単位で一致する（可逆性）。
+    // 読むのは元画像と、初期値から変えたレイヤーだけ（変えていないレイヤーは差分0）。
     void synthesize(const std::vector<WaveletLayerParams>& params, FrameBuffer& out) const;
 
 private:
@@ -63,8 +64,8 @@ private:
 
     // w_[j] は j 番目の詳細レイヤー（channels_ 面ぶん連続）。
     std::vector<std::vector<float>> detail_;
-    // 最も粗い残差 c_J。
-    std::vector<float> residual_;
+    // 分解した元画像 I（= c_J + Σ w_j）。再構成は I に変えたレイヤーの差分を足して行う。
+    std::vector<float> base_;
     std::vector<double> noise_;
 };
 
@@ -73,6 +74,7 @@ private:
 // black / white は 0..1 の入力レンジ、gamma は 0 より大きい値。
 // out = ((in - black) / (white - black)) ^ (1/gamma)
 // 範囲外は 0..1 に切り詰める。
+// src と out に同じ画像を渡すと、その場で書き換える。
 void stretch_histogram(const FrameBuffer& src, double black, double white, double gamma,
                        FrameBuffer& out);
 

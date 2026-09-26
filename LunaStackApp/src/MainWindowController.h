@@ -55,6 +55,7 @@
 - (BOOL)selfCheckWaveletPreviewToggle;
 - (BOOL)selfCheckContinuousPreview;
 - (BOOL)selfCheckWaveletControls;
+- (BOOL)selfCheckInspectorScrollsVerticallyOnly;
 - (BOOL)selfCheckClearResetsEverything;
 // 仕上げの描画を待ってから表示に反映する（スナップショット前に呼ぶ）。
 - (void)waitForFinishingForTesting;
