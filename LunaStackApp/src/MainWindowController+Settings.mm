@@ -769,13 +769,45 @@ static void SetText(NSTextField* field, id value) {
     if ([value isKindOfClass:[NSString class]]) [field setStringValue:value];
 }
 
+// 設定のJSON（プリセット・サイドカーの設定）は手で書き換えられうる。数値の欄に配列・辞書・null が
+// 入っていると、doubleValue などを送った時点で Objective-C の例外になる（サイドカーは開くだけで読む）。
+// 数値・文字列と、それらの（入れ子の）並びだけを残す。並びの中の不正な要素は 0 に置き換える。
+static id SanitizedSettingValue(id value, int depth) {
+    if ([value isKindOfClass:[NSNumber class]] || [value isKindOfClass:[NSString class]]) return value;
+    if (depth < 3 && [value isKindOfClass:[NSArray class]]) {
+        NSMutableArray* out = [NSMutableArray arrayWithCapacity:[(NSArray*)value count]];
+        for (id element in (NSArray*)value) {
+            id clean = SanitizedSettingValue(element, depth + 1);
+            [out addObject:clean ? clean : @0];
+        }
+        return out;
+    }
+    return nil;
+}
+
+static NSDictionary* SanitizedSettings(NSDictionary* d) {
+    if (![d isKindOfClass:[NSDictionary class]]) return @{};
+    // 並びを受け取る欄。それ以外の欄は数値か文字列だけを通す（並びに integerValue などを送ると例外）。
+    static NSSet* arrayKeys = [[NSSet alloc] initWithArray:@[ @"sharpen", @"denoise", @"channelOffsets", @"gains", @"levels" ]];
+    NSMutableDictionary* out = [NSMutableDictionary dictionaryWithCapacity:[d count]];
+    for (id key in d) {
+        if (![key isKindOfClass:[NSString class]]) continue;
+        id clean = SanitizedSettingValue(d[key], 0);
+        if (!clean) continue;
+        if ([clean isKindOfClass:[NSArray class]] != [arrayKeys containsObject:key]) continue;
+        out[key] = clean;
+    }
+    return out;
+}
+
 // includePostProcessing が NO のとき、仕上げのつまみは触らない。
 //
 // サイドカーの読み込みで使う。解析結果に付いてきた設定を戻すのは
 // 「画面と中身を一致させる」ためであって、**仕上げは解析と無関係**である。
 // 触っていた仕上げが、ファイルを開き直しただけで勝手に動くのは
 // 「後処理は非破壊」（UI設計書 §1.5）に反する。
-- (void)applySettingsDictionary:(NSDictionary*)d includePostProcessing:(BOOL)includePost {
+- (void)applySettingsDictionary:(NSDictionary*)raw includePostProcessing:(BOOL)includePost {
+    NSDictionary* d = SanitizedSettings(raw);
     const BOOL wasRestoring = _restoringSettings;
     _restoringSettings = YES;
     SelectIndex(_methodPopup, d[@"method"]);
@@ -1033,8 +1065,8 @@ static void SetText(NSTextField* field, id value) {
         if (recordedSettings[key]) settings[key] = recordedSettings[key];
     }
     // 補正の素材が今と違えば、この解析結果は使えない。
-    NSString* dark = meta[@"darkPath"];
-    NSString* flat = meta[@"flatPath"];
+    NSString* dark = [meta[@"darkPath"] isKindOfClass:[NSString class]] ? meta[@"darkPath"] : nil;
+    NSString* flat = [meta[@"flatPath"] isKindOfClass:[NSString class]] ? meta[@"flatPath"] : nil;
     if (![(dark ? dark : @"") isEqualToString:_darkPath ? _darkPath : @""] ||
         ![(flat ? flat : @"") isEqualToString:_flatPath ? _flatPath : @""]) {
         return;
@@ -1056,6 +1088,7 @@ static void SetText(NSTextField* field, id value) {
     [self applySettingsDictionary:settings includePostProcessing:NO];
     NSArray* roi = meta[@"roi"];
     _roiRect = NSZeroRect;
+    roi = SanitizedSettingValue(roi, 0);
     if ([roi isKindOfClass:[NSArray class]] && [roi count] == 4) {
         _roiRect = NSMakeRect([roi[0] doubleValue], [roi[1] doubleValue], [roi[2] doubleValue], [roi[3] doubleValue]);
     }
@@ -1078,9 +1111,9 @@ static void SetText(NSTextField* field, id value) {
     _analysisSignature = [[self analysisSignature] copy];
 
     NSString* recorded = meta[@"signature"];
-    if ([recorded isKindOfClass:[NSString class]] &&
+    if (![recorded isKindOfClass:[NSString class]] ||
         ![recorded isEqualToString:_analysisSignature]) {
-        // 設定を戻しても一致しないなら、信用せずに捨てる。
+        // 設定を戻しても一致しない（または照合用の署名が無い）なら、信用せずに捨てる。
         _analysis.reset();
         [_analysisSignature release];
         _analysisSignature = nil;
