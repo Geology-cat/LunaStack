@@ -56,6 +56,12 @@ void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat fo
     const std::size_t data_bytes = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
                                    static_cast<std::size_t>(n) * sample_bytes;
 
+    // TIFF（BigTIFFでない）はファイル内の位置を32bitで持つので、4GBを超えると位置があふれて
+    // 壊れたファイルを黙って書いてしまう。タグ・メタデータの分も見込んで手前で断る。
+    if (data_bytes > 0xFFFFFFFFull - (1ull << 20)) {
+        throw std::runtime_error("TIFF: 4GBを超える画像は書き出せません（32bit float FITSで書き出してください）");
+    }
+
     // 平面（planar）配置の float から、TIFFのインターリーブ配置へ変換する。
     std::vector<std::uint8_t> pixels(data_bytes);
     std::vector<const float*> rows(static_cast<std::size_t>(n));
@@ -66,7 +72,8 @@ void write_tiff(const std::string& path, const FrameBuffer& image, TiffFormat fo
             for (int c = 0; c < n; ++c) {
                 const float v = rows[static_cast<std::size_t>(c)][x];
                 if (is_uint16) {
-                    const float clamped = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+                    // NaN は比較が偽になるので 0 にする（整数への変換で未定義動作にしない）。
+                    const float clamped = v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0f;
                     const std::uint16_t u =
                         static_cast<std::uint16_t>(clamped * 65535.0f + 0.5f);
                     pixels[o++] = static_cast<std::uint8_t>(u & 0xFF);

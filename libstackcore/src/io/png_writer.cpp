@@ -172,7 +172,8 @@ void write_png16(const std::string& path, const FrameBuffer& image,
             for (int x = 0; x < width; ++x) {
                 for (int c = 0; c < channels; ++c) {
                     const float value = image.row(c, y)[x];
-                    const float clamped = value < 0.0f ? 0.0f : (value > 1.0f ? 1.0f : value);
+                    // NaN は比較が偽になるので 0 にする（整数への変換で未定義動作にしない）。
+                    const float clamped = value > 0.0f ? (value < 1.0f ? value : 1.0f) : 0.0f;
                     const std::uint16_t sample =
                         static_cast<std::uint16_t>(clamped * 65535.0f + 0.5f);
                     append_byte(static_cast<std::uint8_t>((sample >> 8) & 0xffu));
