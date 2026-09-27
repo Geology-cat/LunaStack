@@ -82,6 +82,16 @@ void normalize_float_scale(FrameBuffer& out) {
     }
 }
 
+// 画像の寸法の上限。ヘッダの数値だけで確保量が決まるので、数十バイトの壊れたファイルでも
+// 数十GBを確保して0で埋めにいき、Macがメモリを使い果たしてしまう。実在する天体写真
+// （最大でも1億5千万画素ほど）より十分大きく、確保が現実的な範囲に収める。
+void check_image_size(const char* format, std::int64_t w, std::int64_t h) {
+    if (w <= 0 || h <= 0) fail(format, "画像の寸法がありません");
+    if (w > 100000 || h > 100000 || w * h > 300000000) {
+        fail(format, "画像が大きすぎます (" + std::to_string(w) + " x " + std::to_string(h) + ")");
+    }
+}
+
 // ---- TIFF ------------------------------------------------------------------
 
 struct TiffReader {
@@ -245,16 +255,16 @@ void read_tiff(const std::vector<std::uint8_t>& data, FrameBuffer& out, ImageFil
     const int w = static_cast<int>(scalar(256, 0));
     const int h = static_cast<int>(scalar(257, 0));
     const int spp = static_cast<int>(scalar(277, 1));
-    const TiffTag* bits_tag = find(258);
-    const int bits = bits_tag ? static_cast<int>(tiff_values(r, *bits_tag)[0]) : 1;
+    // 値の個数が0の欄は無いものとして扱う（空の並びの先頭を読まない）。
+    const int bits = static_cast<int>(scalar(258, 1));
     const std::uint32_t compression = scalar(259, 1);
     const std::uint32_t photometric = scalar(262, 1);
     const std::uint32_t planar = scalar(284, 1);
     const std::uint32_t predictor = scalar(317, 1);
-    const TiffTag* fmt_tag = find(339);
-    const std::uint32_t sample_format = fmt_tag ? tiff_values(r, *fmt_tag)[0] : 1;
+    const std::uint32_t sample_format = scalar(339, 1);
 
-    if (w <= 0 || h <= 0) fail("TIFF", "画像の寸法がありません");
+    check_image_size("TIFF", static_cast<std::uint32_t>(scalar(256, 0)), static_cast<std::uint32_t>(scalar(257, 0)));
+    if (spp < 1 || spp > 16) fail("TIFF", "1画素あたりの標本数が不正です");
     if (bits != 8 && bits != 16 && bits != 32) {
         fail("TIFF", "対応していないビット深度です (" + std::to_string(bits) + "bit)");
     }
@@ -274,7 +284,9 @@ void read_tiff(const std::vector<std::uint8_t>& data, FrameBuffer& out, ImageFil
     const bool tiled = find(322) != nullptr;
     const int chunk_w = tiled ? static_cast<int>(scalar(322, 0)) : w;
     const int chunk_h = tiled ? static_cast<int>(scalar(323, 0)) : static_cast<int>(std::min<std::uint32_t>(scalar(278, static_cast<std::uint32_t>(h)), static_cast<std::uint32_t>(h)));
-    if (chunk_w <= 0 || chunk_h <= 0) fail("TIFF", "タイルまたはストリップの大きさが不正です");
+    if (chunk_w <= 0 || chunk_h <= 0 || chunk_w > std::max(w, 4096) || chunk_h > std::max(h, 4096)) {
+        fail("TIFF", "タイルまたはストリップの大きさが不正です");
+    }
     const TiffTag* offsets_tag = find(tiled ? 324 : 273);
     const TiffTag* counts_tag = find(tiled ? 325 : 279);
     if (!offsets_tag || !counts_tag) fail("TIFF", "画素データの位置がありません");
@@ -287,7 +299,7 @@ void read_tiff(const std::vector<std::uint8_t>& data, FrameBuffer& out, ImageFil
     const int across = (w + chunk_w - 1) / chunk_w;
     const int down = (h + chunk_h - 1) / chunk_h;
     const int planes = planar == 2 ? spp : 1;
-    if (offsets.size() < static_cast<std::size_t>(across * down * planes)) {
+    if (offsets.size() < static_cast<std::size_t>(across) * static_cast<std::size_t>(down) * static_cast<std::size_t>(planes)) {
         fail("TIFF", "ストリップの数が足りません");
     }
 
@@ -464,7 +476,8 @@ void read_png(const std::vector<std::uint8_t>& data, FrameBuffer& out, ImageFile
         }
         pos += 12 + len;
     }
-    if (!seen_ihdr || w <= 0 || h <= 0) fail("PNG", "IHDRがありません");
+    if (!seen_ihdr) fail("PNG", "IHDRがありません");
+    check_image_size("PNG", static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
     const int channels_in = color == 0 ? 1 : color == 2 ? 3 : color == 3 ? 1 : color == 4 ? 2 : color == 6 ? 4 : 0;
     if (channels_in == 0) fail("PNG", "不明な色形式です");
     const int color_out = (color == 2 || color == 3 || color == 6) ? 3 : 1;

@@ -3,6 +3,7 @@
 // 試験画像（tests/data）は PIL・tifffile・libtiff の tiffcp で作ったもので、
 // LunaStack 自身の書き出しではない。「他のソフトが書いたファイルを読める」ことの確認である。
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -224,4 +225,67 @@ MT_TEST(image_壊れたファイルと未対応形式を拒否する) {
     std::remove(bad.c_str());
     MT_CHECK(!stackcore::is_supported_image_path("movie.ser"));
     MT_CHECK(stackcore::is_supported_image_path("IMG_0001.TIF"));
+}
+
+namespace {
+
+// 最小のリトルエンディアンTIFF（1ストリップ・8bitグレー）を、タグを差し替えて作る。
+// tags: {タグ番号, 型, 個数, 値}（値は4バイト以内に収まるものだけ）
+std::vector<std::uint8_t> tiny_tiff(const std::vector<std::array<std::uint32_t, 4>>& tags) {
+    std::vector<std::uint8_t> b = {'I', 'I', 42, 0, 8, 0, 0, 0};
+    const auto u16 = [&](std::uint32_t v) { b.push_back(v & 0xff); b.push_back((v >> 8) & 0xff); };
+    const auto u32 = [&](std::uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back((v >> (8 * i)) & 0xff); };
+    u16(static_cast<std::uint32_t>(tags.size()));
+    for (const auto& t : tags) {
+        u16(t[0]);
+        u16(t[1]);
+        u32(t[2]);
+        u32(t[3]);
+    }
+    u32(0);
+    b.push_back(0x55);  // 画素データ（1バイト）
+    return b;
+}
+
+bool rejects_bytes(const std::vector<std::uint8_t>& bytes, const char* name) {
+    const std::string path = temp_path(name);
+    std::FILE* fp = std::fopen(path.c_str(), "wb");
+    std::fwrite(bytes.data(), 1, bytes.size(), fp);
+    std::fclose(fp);
+    FrameBuffer f;
+    ImageFileInfo info;
+    bool thrown = false;
+    try {
+        stackcore::read_image_file(path, f, info);
+    } catch (const std::exception&) {
+        thrown = true;
+    }
+    std::remove(path.c_str());
+    return thrown;
+}
+
+}  // namespace
+
+MT_TEST(image_壊れたヘッダで範囲外を読んだり巨大な確保をしたりしない) {
+    const std::uint32_t data_offset = 8 + 2 + 12 * 8 + 4;
+    // 正しい1×1のTIFFは読める（組み立て方の確認）。
+    const std::vector<std::array<std::uint32_t, 4>> good = {
+        {256, 4, 1, 1}, {257, 4, 1, 1}, {258, 3, 1, 8}, {259, 3, 1, 1},
+        {262, 3, 1, 1}, {273, 4, 1, data_offset}, {278, 4, 1, 1}, {279, 4, 1, 1}};
+    MT_CHECK(!rejects_bytes(tiny_tiff(good), "tiny_ok.tif"));
+    // ビット深度の欄の値の個数が0（以前は空の並びの先頭を読んでいた）。
+    std::vector<std::array<std::uint32_t, 4>> zero_count = good;
+    zero_count[2] = {258, 3, 0, 8};
+    // 値が無いのでビット深度は既定の1bitとみなし、非対応として断る。
+    MT_CHECK(rejects_bytes(tiny_tiff(zero_count), "tiny_zero.tif"));
+    // 7万×7万と書いてあるが、中身は1バイト（以前は数十GBを確保しにいった）。
+    std::vector<std::array<std::uint32_t, 4>> huge = good;
+    huge[0] = {256, 4, 1, 70000};
+    huge[1] = {257, 4, 1, 70000};
+    MT_CHECK(rejects_bytes(tiny_tiff(huge), "tiny_huge.tif"));
+    // PNG の IHDR が 6万×6万
+    std::vector<std::uint8_t> png = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 'I', 'H', 'D', 'R',
+                                     0, 0, 0xea, 0x60, 0, 0, 0xea, 0x60, 8, 0, 0, 0, 0, 0, 0, 0, 0};
+    for (int i = 0; i < 12; ++i) png.push_back(0);
+    MT_CHECK(rejects_bytes(png, "huge.png"));
 }
