@@ -8,7 +8,6 @@
 #include <atomic>
 #include <cmath>
 #include <exception>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -398,59 +397,12 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
     to_flat(reference, out.reference);
 }
 
-// 窓合成で使う、色補間まで済ませたフレームの控え。
-//
-// **窓合成は位置合わせ領域（AP）ごとに、選んだフレームを読む。** 読むたびに展開と色補間を
-// やり直すと、一眼レフの大きな画像では1回に0.3秒以上かかり、AP×フレームの回数だけ積み重なる。
-// 隣り合うAPは同じ良いフレームを選ぶことが多いので、使ったフレームを上限まで控えて使い回す。
-// 控えるのは読んだ画素そのものなので、結果は控えなしと同じになる（バイト単位で一致）。
-class PreparedFrameCache {
-public:
-    PreparedFrameCache(const VideoSource& source, bool raw_cfa, std::size_t budget)
-        : source_(source), raw_cfa_(raw_cfa), budget_(budget) {}
-
-    const FrameBuffer& get(int index) {
-        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-            if (it->index == index) {
-                entries_.splice(entries_.begin(), entries_, it);
-                return *entries_.front().frame;
-            }
-        }
-        auto cfa = std::make_shared<FrameBuffer>();
-        auto rgb = std::make_shared<FrameBuffer>();
-        const FrameBuffer* f = read_prepared_frame(source_, index, raw_cfa_, *cfa, *rgb);
-        std::shared_ptr<FrameBuffer> kept = f == rgb.get() ? rgb : cfa;
-        const std::size_t bytes =
-            kept->stride() * static_cast<std::size_t>(kept->height()) * kept->channels() * sizeof(float);
-        entries_.push_front(Entry{index, kept, bytes});
-        used_ += bytes;
-        // 上限を超えたら古いものから捨てる（いま読んだ1枚は残す）。
-        while (used_ > budget_ && entries_.size() > 1) {
-            used_ -= entries_.back().bytes;
-            entries_.pop_back();
-        }
-        return *entries_.front().frame;
-    }
-
-private:
-    struct Entry {
-        int index;
-        std::shared_ptr<FrameBuffer> frame;
-        std::size_t bytes;
-    };
-    const VideoSource& source_;
-    bool raw_cfa_;
-    std::size_t budget_;
-    std::size_t used_ = 0;
-    std::list<Entry> entries_;
-};
-
-// 控えの上限。物理メモリの1/8（最大2GB）。
-std::size_t prepared_cache_budget() {
+// 窓合成で同時に持つAPの足し込み（AP内の float64 バッファ）の上限。物理メモリの1/8（256MB〜2GB）。
+std::size_t stack_batch_budget() {
     std::uint64_t memory = 0;
     std::size_t len = sizeof(memory);
     if (sysctlbyname("hw.memsize", &memory, &len, nullptr, 0) != 0) memory = 8ull << 30;
-    return static_cast<std::size_t>(std::min<std::uint64_t>(2ull << 30, memory / 8));
+    return static_cast<std::size_t>(std::max<std::uint64_t>(256ull << 20, std::min<std::uint64_t>(2ull << 30, memory / 8)));
 }
 
 // 途中パス用の設定。
@@ -476,7 +428,6 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
     const std::vector<LocalMatch>& matrix = analysis.matrix;
     const std::vector<AlignmentPoint>& points = analysis.points;
     const int ap_size = analysis.ap_size;
-    PreparedFrameCache frames(source, settings.raw_cfa, prepared_cache_budget());
     // --- AP別に上位N%を選んで窓合成（§4.7・§4.8） ------------------------
     int keep = settings.ap_top_count > 0
                    ? settings.ap_top_count
@@ -489,7 +440,13 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
                             ap_size, settings.drizzle_scale, settings.pixfrac,
                             settings.stack_mode, settings.sigma_clip_threshold);
 
-    // AP順・フレーム順を固定する（決定論性の要件。実装計画書 §4.2）。
+    // 1. AP ごとに採用するフレームを決める。AP順・フレーム順を固定する
+    //    （決定論性の要件。実装計画書 §4.2）。
+    struct Plan {
+        std::vector<std::size_t> chosen;  // フレーム番号の昇順
+        double quality_sum = 0.0;
+    };
+    std::vector<Plan> plans(ap_count);
     std::vector<std::size_t> order(frame_count);
     for (std::size_t a = 0; a < ap_count; ++a) {
         for (std::size_t i = 0; i < frame_count; ++i) order[i] = i;
@@ -500,37 +457,88 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
             if (ql != qr) return ql > qr;
             return analyzed[l].index < analyzed[r].index;
         });
-        std::vector<std::size_t> chosen(order.begin(), order.begin() + keep);
-        std::sort(chosen.begin(), chosen.end(), [&](std::size_t l, std::size_t r) {
+        Plan& plan = plans[a];
+        plan.chosen.assign(order.begin(), order.begin() + keep);
+        std::sort(plan.chosen.begin(), plan.chosen.end(), [&](std::size_t l, std::size_t r) {
             return analyzed[l].index < analyzed[r].index;
         });
-
-        double quality_sum = 0.0;
         if (settings.stack_mode == StackMode::QualityWeighted) {
-            for (std::size_t fi : chosen) {
-                quality_sum += std::max(1e-12, static_cast<double>(matrix[base + fi].quality));
+            for (std::size_t fi : plan.chosen) {
+                plan.quality_sum += std::max(1e-12, static_cast<double>(matrix[base + fi].quality));
             }
         }
+    }
 
-        stacker.begin_ap(points[a].cx, points[a].cy);
-        for (std::size_t k = 0; k < chosen.size(); ++k) {
-            const std::size_t fi = chosen[k];
+    // 2. **フレームを1枚読んだら、そのフレームを選んだAPすべてへ足す。**
+    //    以前は AP ごとに選んだフレームを読み直していたので、読み込み（RAWの展開）と
+    //    色補間を AP×フレームの回数だけ繰り返していた。
+    //    AP の足し込みを同時に持つので、メモリの上限に収まるよう AP を番号順の組に分ける。
+    //    1つのAPの中ではフレーム番号の昇順に足し、確定はAP番号の昇順に行うので、
+    //    加算の順序は以前と同じで、出力はバイト単位で一致する。
+    std::vector<std::size_t> frame_order(frame_count);  // フレーム番号の昇順
+    for (std::size_t i = 0; i < frame_count; ++i) frame_order[i] = i;
+    std::stable_sort(frame_order.begin(), frame_order.end(),
+                     [&](std::size_t l, std::size_t r) { return analyzed[l].index < analyzed[r].index; });
+
+    const std::size_t budget = stack_batch_budget();
+    std::vector<std::pair<std::size_t, std::size_t>> batches;  // [AP の始め, 終わり)
+    {
+        std::size_t start = 0, used = 0;
+        for (std::size_t a = 0; a < ap_count; ++a) {
+            const std::size_t bytes = stacker.ap_bytes(static_cast<int>(plans[a].chosen.size()));
+            if (a > start && used + bytes > budget) {
+                batches.emplace_back(start, a);
+                start = a;
+                used = 0;
+            }
+            used += bytes;
+        }
+        if (start < ap_count) batches.emplace_back(start, ap_count);
+    }
+    // 進捗は「読んだフレームの数」で出す。
+    int total_reads = 0;
+    std::vector<std::vector<std::vector<std::size_t>>> users(batches.size());
+    for (std::size_t bi = 0; bi < batches.size(); ++bi) {
+        users[bi].assign(frame_count, std::vector<std::size_t>());
+        for (std::size_t a = batches[bi].first; a < batches[bi].second; ++a) {
+            for (std::size_t fi : plans[a].chosen) users[bi][fi].push_back(a);
+        }
+        for (std::size_t fi = 0; fi < frame_count; ++fi) {
+            if (!users[bi][fi].empty()) ++total_reads;
+        }
+    }
+
+    const char* stage = pass_index == 0 ? "窓合成スタック" : "窓合成スタック(2回目)";
+    FrameBuffer cfa, rgb;
+    int done = 0;
+    for (std::size_t bi = 0; bi < batches.size(); ++bi) {
+        const std::size_t a0 = batches[bi].first, a1 = batches[bi].second;
+        std::vector<WindowedStacker::Ap> aps(a1 - a0);
+        for (std::size_t a = a0; a < a1; ++a) stacker.start_ap(aps[a - a0], points[a].cx, points[a].cy);
+
+        for (std::size_t fi : frame_order) {
+            const std::vector<std::size_t>& list = users[bi][fi];
+            if (list.empty()) continue;
             const FrameInfo& info = analyzed[fi];
-            const LocalMatch& m = matrix[base + fi];
-            const FrameBuffer* f = &frames.get(info.index);
+            const FrameBuffer* f = read_prepared_frame(source, info.index, settings.raw_cfa, cfa, rgb);
             const double gain = settings.normalize_brightness && info.mean > 1e-9
                                     ? report.global.reference_mean / info.mean
                                     : 1.0;
-            double sample_weight = 1.0;
-            if (settings.stack_mode == StackMode::QualityWeighted && quality_sum > 0.0) {
-                sample_weight =
-                    std::max(1e-12, static_cast<double>(m.quality)) * chosen.size() / quality_sum;
-            }
-            stacker.add_frame(*f, m.dx, m.dy, gain, sample_weight);
+            // このフレームを選んだ AP へ足す。AP ごとの足し込みは互いに独立なので並列に回す。
+            parallel_alignment_points(list.size(), [&](std::size_t k) {
+                const std::size_t a = list[k];
+                const Plan& plan = plans[a];
+                const LocalMatch& m = matrix[a * frame_count + fi];
+                double sample_weight = 1.0;
+                if (settings.stack_mode == StackMode::QualityWeighted && plan.quality_sum > 0.0) {
+                    sample_weight = std::max(1e-12, static_cast<double>(m.quality)) *
+                                    plan.chosen.size() / plan.quality_sum;
+                }
+                stacker.accumulate(aps[a - a0], *f, m.dx, m.dy, gain, sample_weight);
+            });
+            notify(progress, stage, ++done, total_reads);
         }
-        stacker.end_ap();
-        notify(progress, pass_index == 0 ? "窓合成スタック" : "窓合成スタック(2回目)",
-               static_cast<int>(a) + 1, static_cast<int>(ap_count));
+        for (std::size_t a = a0; a < a1; ++a) stacker.commit_ap(aps[a - a0]);
     }
 
     FrameBuffer out;

@@ -60,6 +60,35 @@ public:
     int out_width() const noexcept { return out_width_; }
     int out_height() const noexcept { return out_height_; }
 
+    // ---- AP ごとの足し込みを独立して持つ口（フレームを1回だけ読む窓合成用） ----
+    //
+    // AP の足し込み（AP内の float64 バッファ）を AP ごとの Ap に持たせる。別々の Ap への
+    // accumulate は同時に呼んでよい（互いに干渉しない）。これで「フレームを1枚読んで、
+    // そのフレームを選んだ AP すべてへ足す」順に処理でき、AP ごとにフレームを読み直さずに済む。
+    //
+    // **1つの Ap の中ではフレーム番号の昇順に accumulate し、commit は AP 番号の昇順に
+    // 呼ぶこと。** そうすれば begin_ap/add_frame/end_ap と加算の順序が同じになり、
+    // 出力はバイト単位で一致する。
+    struct Ap {
+        int cx = 0, cy = 0;
+        int ox = 0, oy = 0;  // 出力グリッド上でのAP左上
+        int frames = 0;
+        double weight_sum = 0.0;
+        std::vector<double> accum;     // AP内のフレーム加算（float64）
+        std::vector<double> coverage;  // Drizzle・σクリップの被覆量
+        std::vector<float> samples;    // σクリップのときだけ、各フレームを保持
+        // 作業領域（AP ごとに持つので、並列に足してもぶつからない）
+        std::vector<float> patch;
+        std::vector<double> frame_accum, frame_coverage;
+    };
+    void start_ap(Ap& ap, int center_x, int center_y) const;
+    void accumulate(Ap& ap, const FrameBuffer& frame, double dx, double dy, double gain,
+                    double sample_weight = 1.0) const;
+    // AP の加算を確定して全体バッファへ足し込み、Ap のメモリを手放す。
+    void commit_ap(Ap& ap);
+    // AP 1つが（フレームを frames 枚足したとき）使うおよそのバイト数。組分けの目安。
+    std::size_t ap_bytes(int frames) const;
+
     // AP1点ぶんの加算を開始する。
     void begin_ap(int center_x, int center_y);
 
@@ -85,11 +114,11 @@ public:
                 const FrameBuffer* fallback) const;
 
 private:
-    void add_frame_lanczos(const FrameBuffer& frame, double dx, double dy, double gain,
-                           double sample_weight);
-    void add_frame_drizzle(const FrameBuffer& frame, double dx, double dy, double gain,
-                           double sample_weight);
-    void prepare_sigma_ap();
+    void add_frame_lanczos(Ap& ap, const FrameBuffer& frame, double dx, double dy, double gain,
+                           double sample_weight) const;
+    void add_frame_drizzle(Ap& ap, const FrameBuffer& frame, double dx, double dy, double gain,
+                           double sample_weight) const;
+    void prepare_sigma_ap(Ap& ap) const;
 
     // 入力サイズは持たない。Drizzle対応で出力グリッドを別に持つようにした際、
     // 参照するのは出力側だけになった。
@@ -102,24 +131,12 @@ private:
     StackMode mode_ = StackMode::Mean;
     double sigma_threshold_ = 2.0;
 
-    int cx_ = 0, cy_ = 0;
-    int ap_ox_ = 0, ap_oy_ = 0;  // 出力グリッド上でのAP左上
-    int frames_in_ap_ = 0;
-    double ap_weight_sum_ = 0.0;
     bool in_ap_ = false;
-
+    Ap current_;                      // begin_ap/add_frame/end_ap で使う AP
     std::vector<float> window_;       // ap_out_ x ap_out_ のHann窓
-    std::vector<double> ap_accum_;    // AP内のフレーム加算（float64）
-    std::vector<double> ap_coverage_; // Drizzleの被覆量（等倍では使わない）
-    // σクリップ時だけ、AP内の各フレームを保持する。
-    // 並びは frame → channel → pixel。Drizzleの未被覆値はNaN。
-    std::vector<float> ap_samples_;
-    std::vector<double> frame_accum_;
-    std::vector<double> frame_coverage_;
-
+    // σクリップ時の Ap::samples の並びは frame → channel → pixel。Drizzleの未被覆値はNaN。
     std::vector<float> sum_;         // 全体 S（float32）
     std::vector<float> weight_;      // 全体 W（float32）
-    std::vector<float> patch_;       // 切り出し作業バッファ
     int ap_count_ = 0;
     long long contributions_ = 0;
 };

@@ -72,34 +72,54 @@ WindowedStacker::WindowedStacker(int width, int height, int channels, int ap_siz
     sum_.assign(pixels * static_cast<std::size_t>(channels), 0.0f);
     weight_.assign(pixels, 0.0f);
 
+}
+
+void WindowedStacker::start_ap(Ap& ap, int center_x, int center_y) const {
+    ap.cx = center_x;
+    ap.cy = center_y;
+    // 出力グリッド上でのAP左上。等倍なら従来どおり cx - half。
+    ap.ox = static_cast<int>(std::lround((center_x - ap_size_ / 2) * scale_));
+    ap.oy = static_cast<int>(std::lround((center_y - ap_size_ / 2) * scale_));
+    ap.frames = 0;
+    ap.weight_sum = 0.0;
     const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
-    ap_accum_.assign(ap_pixels * static_cast<std::size_t>(channels), 0.0);
-    if (drizzle_ || mode_ == StackMode::SigmaClip) ap_coverage_.assign(ap_pixels, 0.0);
-    if (drizzle_ && mode_ == StackMode::SigmaClip) {
-        frame_accum_.assign(ap_pixels * static_cast<std::size_t>(channels_), 0.0);
-        frame_coverage_.assign(ap_pixels, 0.0);
+    ap.accum.assign(ap_pixels * static_cast<std::size_t>(channels_), 0.0);
+    if (drizzle_ || mode_ == StackMode::SigmaClip) ap.coverage.assign(ap_pixels, 0.0);
+    else ap.coverage.clear();
+    ap.samples.clear();
+    ap.patch.clear();
+    ap.frame_accum.clear();
+    ap.frame_coverage.clear();
+}
+
+std::size_t WindowedStacker::ap_bytes(int frames) const {
+    const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
+    std::size_t bytes = ap_pixels * static_cast<std::size_t>(channels_) * sizeof(double);
+    if (drizzle_ || mode_ == StackMode::SigmaClip) bytes += ap_pixels * sizeof(double);
+    if (mode_ == StackMode::SigmaClip) {
+        bytes += static_cast<std::size_t>(std::max(0, frames)) * channels_ * ap_pixels * sizeof(float);
     }
-    patch_.assign(ap_pixels, 0.0f);
+    bytes += static_cast<std::size_t>(ap_size_) * ap_size_ * sizeof(float);
+    if (drizzle_ && mode_ == StackMode::SigmaClip) {
+        bytes += ap_pixels * static_cast<std::size_t>(channels_ + 1) * sizeof(double);
+    }
+    return bytes;
 }
 
 void WindowedStacker::begin_ap(int center_x, int center_y) {
     if (in_ap_) throw std::logic_error("WindowedStacker: begin_ap が入れ子になっています");
-    cx_ = center_x;
-    cy_ = center_y;
-    // 出力グリッド上でのAP左上。等倍なら従来どおり cx - half。
-    ap_ox_ = static_cast<int>(std::lround((cx_ - ap_size_ / 2) * scale_));
-    ap_oy_ = static_cast<int>(std::lround((cy_ - ap_size_ / 2) * scale_));
-    frames_in_ap_ = 0;
-    ap_weight_sum_ = 0.0;
+    start_ap(current_, center_x, center_y);
     in_ap_ = true;
-    for (std::size_t i = 0; i < ap_accum_.size(); ++i) ap_accum_[i] = 0.0;
-    for (std::size_t i = 0; i < ap_coverage_.size(); ++i) ap_coverage_[i] = 0.0;
-    ap_samples_.clear();
 }
 
 void WindowedStacker::add_frame(const FrameBuffer& frame, double dx, double dy, double gain,
                                 double sample_weight) {
     if (!in_ap_) throw std::logic_error("WindowedStacker: begin_ap が呼ばれていません");
+    accumulate(current_, frame, dx, dy, gain, sample_weight);
+}
+
+void WindowedStacker::accumulate(Ap& ap, const FrameBuffer& frame, double dx, double dy,
+                                 double gain, double sample_weight) const {
     if (frame.channels() != channels_) {
         throw std::invalid_argument("WindowedStacker: チャンネル数が一致しません");
     }
@@ -107,60 +127,60 @@ void WindowedStacker::add_frame(const FrameBuffer& frame, double dx, double dy, 
         throw std::invalid_argument("WindowedStacker: フレーム重みは正の有限値が必要です");
     }
     if (drizzle_) {
-        add_frame_drizzle(frame, dx, dy, gain, sample_weight);
+        add_frame_drizzle(ap, frame, dx, dy, gain, sample_weight);
     } else {
-        add_frame_lanczos(frame, dx, dy, gain, sample_weight);
+        add_frame_lanczos(ap, frame, dx, dy, gain, sample_weight);
     }
-    if (!drizzle_ && mode_ != StackMode::SigmaClip) ap_weight_sum_ += sample_weight;
-    ++frames_in_ap_;
-    ++contributions_;
+    if (!drizzle_ && mode_ != StackMode::SigmaClip) ap.weight_sum += sample_weight;
+    ++ap.frames;
 }
 
-void WindowedStacker::add_frame_lanczos(const FrameBuffer& frame, double dx, double dy,
-                                        double gain, double sample_weight) {
+void WindowedStacker::add_frame_lanczos(Ap& ap, const FrameBuffer& frame, double dx, double dy,
+                                        double gain, double sample_weight) const {
     const int half = ap_size_ / 2;
     // 参照座標系でのAP左上に、そのフレームでの局所変位を足した位置を切り出す。
-    const double x0 = static_cast<double>(cx_ - half) + dx;
-    const double y0 = static_cast<double>(cy_ - half) + dy;
+    const double x0 = static_cast<double>(ap.cx - half) + dx;
+    const double y0 = static_cast<double>(ap.cy - half) + dy;
+    const std::size_t n = static_cast<std::size_t>(ap_size_) * ap_size_;
+    if (ap.patch.size() < n) ap.patch.assign(n, 0.0f);
 
     for (int c = 0; c < channels_; ++c) {
         resample_lanczos3(frame.plane(c), frame.width(), frame.height(), frame.stride(), x0, y0,
-                          patch_.data(), ap_size_, ap_size_,
+                          ap.patch.data(), ap_size_, ap_size_,
                           static_cast<std::size_t>(ap_size_));
 
-        const std::size_t n = static_cast<std::size_t>(ap_size_) * ap_size_;
         if (mode_ == StackMode::SigmaClip) {
             const std::size_t base =
-                (static_cast<std::size_t>(frames_in_ap_) * channels_ + c) * n;
-            if (ap_samples_.size() < base + n) ap_samples_.resize(base + n);
+                (static_cast<std::size_t>(ap.frames) * channels_ + c) * n;
+            if (ap.samples.size() < base + n) ap.samples.resize(base + n);
             for (std::size_t i = 0; i < n; ++i) {
-                ap_samples_[base + i] = static_cast<float>(patch_[i] * gain);
+                ap.samples[base + i] = static_cast<float>(ap.patch[i] * gain);
             }
         } else {
-            double* acc = ap_accum_.data() + static_cast<std::size_t>(c) * n;
+            double* acc = ap.accum.data() + static_cast<std::size_t>(c) * n;
             for (std::size_t i = 0; i < n; ++i) {
-                acc[i] += static_cast<double>(patch_[i]) * gain * sample_weight;
+                acc[i] += static_cast<double>(ap.patch[i]) * gain * sample_weight;
             }
         }
     }
 }
 
-void WindowedStacker::add_frame_drizzle(const FrameBuffer& frame, double dx, double dy,
-                                        double gain, double sample_weight) {
+void WindowedStacker::add_frame_drizzle(Ap& ap, const FrameBuffer& frame, double dx, double dy,
+                                        double gain, double sample_weight) const {
     // 入力画素を「面積を持った四角」としてAP内の拡大グリッドへ落とす（仕様書 §4.9）。
     //
     // 座標の対応:
     //   フレーム座標 ix ↔ 参照座標 (ix - dx) ↔ AP内座標 (ix - dx - (cx - half))
     //   → 出力グリッドでは × scale
     const int half = ap_size_ / 2;
-    const double origin_x = static_cast<double>(cx_ - half) + dx;
-    const double origin_y = static_cast<double>(cy_ - half) + dy;
+    const double origin_x = static_cast<double>(ap.cx - half) + dx;
+    const double origin_y = static_cast<double>(ap.cy - half) + dy;
     const double half_drop = pixfrac_ * 0.5;
     const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
 
     if (mode_ == StackMode::SigmaClip) {
-        std::fill(frame_accum_.begin(), frame_accum_.end(), 0.0);
-        std::fill(frame_coverage_.begin(), frame_coverage_.end(), 0.0);
+        ap.frame_accum.assign(ap_pixels * static_cast<std::size_t>(channels_), 0.0);
+        ap.frame_coverage.assign(ap_pixels, 0.0);
     }
 
     // このAPが必要とするフレーム側の範囲。少し広めに取る。
@@ -202,18 +222,18 @@ void WindowedStacker::add_frame_drizzle(const FrameBuffer& frame, double dx, dou
                     const double area = overlap_x * overlap_y;
                     const std::size_t index = static_cast<std::size_t>(oy) * ap_out_ + ox;
                     if (mode_ == StackMode::SigmaClip) {
-                        frame_coverage_[index] += area;
+                        ap.frame_coverage[index] += area;
                     } else {
-                        ap_coverage_[index] += area * sample_weight;
+                        ap.coverage[index] += area * sample_weight;
                     }
                     for (int c = 0; c < channels_; ++c) {
                         const double contribution =
                             static_cast<double>(frame.row(c, iy)[ix]) * gain * area;
                         if (mode_ == StackMode::SigmaClip) {
-                            frame_accum_[static_cast<std::size_t>(c) * ap_pixels + index] +=
+                            ap.frame_accum[static_cast<std::size_t>(c) * ap_pixels + index] +=
                                 contribution;
                         } else {
-                            ap_accum_[static_cast<std::size_t>(c) * ap_pixels + index] +=
+                            ap.accum[static_cast<std::size_t>(c) * ap_pixels + index] +=
                                 contribution * sample_weight;
                         }
                     }
@@ -224,39 +244,41 @@ void WindowedStacker::add_frame_drizzle(const FrameBuffer& frame, double dx, dou
 
     if (mode_ == StackMode::SigmaClip) {
         const float missing = std::numeric_limits<float>::quiet_NaN();
-        const std::size_t base = static_cast<std::size_t>(frames_in_ap_) * channels_ * ap_pixels;
-        ap_samples_.resize(base + static_cast<std::size_t>(channels_) * ap_pixels, missing);
+        const std::size_t base = static_cast<std::size_t>(ap.frames) * channels_ * ap_pixels;
+        ap.samples.resize(base + static_cast<std::size_t>(channels_) * ap_pixels, missing);
         for (std::size_t i = 0; i < ap_pixels; ++i) {
-            if (frame_coverage_[i] <= 0.0) continue;
+            if (ap.frame_coverage[i] <= 0.0) continue;
             for (int c = 0; c < channels_; ++c) {
-                ap_samples_[base + static_cast<std::size_t>(c) * ap_pixels + i] =
-                    static_cast<float>(frame_accum_[static_cast<std::size_t>(c) * ap_pixels + i] /
-                                       frame_coverage_[i]);
+                ap.samples[base + static_cast<std::size_t>(c) * ap_pixels + i] =
+                    static_cast<float>(ap.frame_accum[static_cast<std::size_t>(c) * ap_pixels + i] /
+                                       ap.frame_coverage[i]);
             }
         }
     }
 }
 
-void WindowedStacker::prepare_sigma_ap() {
-    std::fill(ap_accum_.begin(), ap_accum_.end(), 0.0);
-    std::fill(ap_coverage_.begin(), ap_coverage_.end(), 0.0);
+void WindowedStacker::prepare_sigma_ap(Ap& ap) const {
+    std::fill(ap.accum.begin(), ap.accum.end(), 0.0);
+    std::fill(ap.coverage.begin(), ap.coverage.end(), 0.0);
     const std::size_t pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
+    const int frames_in_ap = ap.frames;
+    const std::vector<float>& samples = ap.samples;
     std::vector<float> values;
     std::vector<float> deviations;
-    values.reserve(static_cast<std::size_t>(frames_in_ap_));
-    deviations.reserve(static_cast<std::size_t>(frames_in_ap_));
+    values.reserve(static_cast<std::size_t>(frames_in_ap));
+    deviations.reserve(static_cast<std::size_t>(frames_in_ap));
 
     for (std::size_t i = 0; i < pixels; ++i) {
         values.clear();
-        for (int frame = 0; frame < frames_in_ap_; ++frame) {
+        for (int frame = 0; frame < frames_in_ap; ++frame) {
             const std::size_t base = static_cast<std::size_t>(frame) * channels_ * pixels;
             float luma;
             if (channels_ == 1) {
-                luma = ap_samples_[base + i];
+                luma = samples[base + i];
             } else {
-                const float r = ap_samples_[base + i];
-                const float g = ap_samples_[base + pixels + i];
-                const float b = ap_samples_[base + 2 * pixels + i];
+                const float r = samples[base + i];
+                const float g = samples[base + pixels + i];
+                const float b = samples[base + 2 * pixels + i];
                 luma = 0.2126f * r + 0.7152f * g + 0.0722f * b;
             }
             if (std::isfinite(luma)) values.push_back(luma);
@@ -271,21 +293,21 @@ void WindowedStacker::prepare_sigma_ap() {
         const double robust_sigma = 1.4826 * deviations[deviations.size() / 2];
         const double threshold = std::max(1e-4, sigma_threshold_ * robust_sigma);
 
-        for (int frame = 0; frame < frames_in_ap_; ++frame) {
+        for (int frame = 0; frame < frames_in_ap; ++frame) {
             const std::size_t base = static_cast<std::size_t>(frame) * channels_ * pixels;
             float luma;
             if (channels_ == 1) {
-                luma = ap_samples_[base + i];
+                luma = samples[base + i];
             } else {
-                luma = 0.2126f * ap_samples_[base + i] +
-                       0.7152f * ap_samples_[base + pixels + i] +
-                       0.0722f * ap_samples_[base + 2 * pixels + i];
+                luma = 0.2126f * samples[base + i] +
+                       0.7152f * samples[base + pixels + i] +
+                       0.0722f * samples[base + 2 * pixels + i];
             }
             if (!std::isfinite(luma) || std::fabs(luma - median) > threshold) continue;
-            ap_coverage_[i] += 1.0;
+            ap.coverage[i] += 1.0;
             for (int c = 0; c < channels_; ++c) {
-                ap_accum_[static_cast<std::size_t>(c) * pixels + i] +=
-                    ap_samples_[base + static_cast<std::size_t>(c) * pixels + i];
+                ap.accum[static_cast<std::size_t>(c) * pixels + i] +=
+                    samples[base + static_cast<std::size_t>(c) * pixels + i];
             }
         }
     }
@@ -294,11 +316,16 @@ void WindowedStacker::prepare_sigma_ap() {
 void WindowedStacker::end_ap() {
     if (!in_ap_) throw std::logic_error("WindowedStacker: begin_ap が呼ばれていません");
     in_ap_ = false;
-    if (frames_in_ap_ == 0) return;
+    commit_ap(current_);
+}
 
-    if (mode_ == StackMode::SigmaClip) prepare_sigma_ap();
+void WindowedStacker::commit_ap(Ap& ap) {
+    contributions_ += ap.frames;
+    if (ap.frames == 0) return;
 
-    const double inv_weight = ap_weight_sum_ > 0.0 ? 1.0 / ap_weight_sum_ : 0.0;
+    if (mode_ == StackMode::SigmaClip) prepare_sigma_ap(ap);
+
+    const double inv_weight = ap.weight_sum > 0.0 ? 1.0 / ap.weight_sum : 0.0;
     const std::size_t out_pixels = static_cast<std::size_t>(out_width_) * out_height_;
     const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
 
@@ -309,10 +336,10 @@ void WindowedStacker::end_ap() {
     // Drizzleでは「フレーム数で割る」のではなく「被覆量で割る」。
     // 出力画素ごとに落ちてきた面積が違うため。
     for (int ay = 0; ay < ap_out_; ++ay) {
-        const int oy = ap_oy_ + ay;
+        const int oy = ap.oy + ay;
         if (oy < 0 || oy >= out_height_) continue;
         for (int ax = 0; ax < ap_out_; ++ax) {
-            const int ox = ap_ox_ + ax;
+            const int ox = ap.ox + ax;
             if (ox < 0 || ox >= out_width_) continue;
 
             const std::size_t ap_index = static_cast<std::size_t>(ay) * ap_out_ + ax;
@@ -321,7 +348,7 @@ void WindowedStacker::end_ap() {
 
             double norm;
             if (drizzle_ || mode_ == StackMode::SigmaClip) {
-                const double coverage = ap_coverage_[ap_index];
+                const double coverage = ap.coverage[ap_index];
                 // 一度も落ちてこなかった出力画素。窓の重みも足さない
                 // （足すと分母だけ増えて暗くなる）。
                 if (coverage <= 0.0) continue;
@@ -335,13 +362,20 @@ void WindowedStacker::end_ap() {
 
             for (int c = 0; c < channels_; ++c) {
                 const double mean =
-                    ap_accum_[static_cast<std::size_t>(c) * ap_pixels + ap_index] * norm;
+                    ap.accum[static_cast<std::size_t>(c) * ap_pixels + ap_index] * norm;
                 sum_[static_cast<std::size_t>(c) * out_pixels + out_index] +=
                     static_cast<float>(mean) * w;
             }
         }
     }
     ++ap_count_;
+    // 使い終わったAPのメモリを手放す（多くのAPを同時に持つときに効く）。
+    std::vector<double>().swap(ap.accum);
+    std::vector<double>().swap(ap.coverage);
+    std::vector<float>().swap(ap.samples);
+    std::vector<float>().swap(ap.patch);
+    std::vector<double>().swap(ap.frame_accum);
+    std::vector<double>().swap(ap.frame_coverage);
 }
 
 void WindowedStacker::finish(FrameBuffer& out, WindowedStackStats& stats,
