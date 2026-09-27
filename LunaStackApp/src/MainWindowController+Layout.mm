@@ -1096,18 +1096,20 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     }
     [self addToSection:key view:[self buttonRow:@[ _flipHCheck, _flipVCheck ]] box:box];
 
-    _cropCheck = [self checkboxWithTitle:@"切り抜く" state:NO];
-    [_cropCheck setTarget:self];
-    [_cropCheck setAction:@selector(finishingChanged:)];
-    _cropMarginField = [self numberFieldWithValue:@"16" action:@selector(autoCrop:)];
-    [self addToSection:key
-                  view:[self buttonRow:@[ _cropCheck, [self buttonWithTitle:@"対象を自動で囲む" action:@selector(autoCrop:)] ]]
-                   box:box];
-    [self addToSection:key view:[self labeledField:@"余白（px）" field:_cropMarginField] box:box];
-    _cropLabel = [self noteLabel:@"切り抜く範囲はまだありません"];
+    _cropModeCheck = [self checkboxWithTitle:@"プレビューで切り抜く枠を描く" state:NO];
+    [_cropModeCheck setTarget:self];
+    [_cropModeCheck setAction:@selector(cropModeChanged:)];
+    [self addToSection:key view:_cropModeCheck box:box];
+    _cropLabel = [self noteLabel:@"枠はまだありません"];
     [self addToSection:key view:_cropLabel box:box];
+    _cropApplyButton = [self buttonWithTitle:@"切り抜く" action:@selector(applyCrop:)];
+    _cropUndoButton = [self buttonWithTitle:@"元に戻す" action:@selector(undoCrop:)];
     [self addToSection:key
-                  view:[self buttonRow:@[ [self buttonWithTitle:@"切り抜きをやめる" action:@selector(clearCrop:)] ]]
+                  view:[self buttonRow:@[ _cropApplyButton, [self buttonWithTitle:@"枠を消す" action:@selector(clearCropBox:)],
+                                          _cropUndoButton ]]
+                   box:box];
+    [self addToSection:key
+                  view:[self noteLabel:@"枠の外をドラッグで新しく描き、内側で移動、辺や角で大きさを変えます。見えている向きのまま描けます。［切り抜く］でその場で画像が小さくなり、以降の仕上げも軽くなります。"]
                    box:box];
 }
 

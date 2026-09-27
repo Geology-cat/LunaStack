@@ -292,15 +292,14 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
 }
 
 - (void)updateApOverlay {
-    // 仕上げで回転・切り抜きをした結果の上では、AP枠の位置が合わないので描かない。
-    const BOOL transformed = [_viewModeSegment selectedSegment] == 2 && _stacked &&
-                             [_waveletPreviewCheck state] == NSControlStateValueOn &&
-                             ![self currentFinishingSettings].geometry.identity();
-    // 切り抜きの範囲は、仕上げを掛ける前のスタック結果に重ねて見せる。
-    const BOOL showCropRect = [_viewModeSegment selectedSegment] == 2 && _stacked &&
-                              [_cropCheck state] == NSControlStateValueOn &&
-                              [_waveletPreviewCheck state] != NSControlStateValueOn &&
-                              _cropRect.size.width > 0;
+    // 仕上げで回転・反転した結果や、切り抜いたスタック結果の上では、AP枠の位置が合わないので描かない。
+    const BOOL onResult = [_viewModeSegment selectedSegment] == 2 && _stacked;
+    const BOOL transformed = onResult && (_uncroppedStacked ||
+                                          ([_waveletPreviewCheck state] == NSControlStateValueOn &&
+                                           ![self currentFinishingSettings].geometry.identity()));
+    // 切り抜きの枠は、枠を描いている間だけスタック結果の上に見せる。
+    const BOOL showCropRect = onResult && [_cropModeCheck state] == NSControlStateValueOn;
+    [_preview setCropEditing:showCropRect];
     [_preview setCropOverlay:showCropRect ? _cropRect : NSZeroRect];
     if (transformed) {
         [_preview clearAlignmentPoints];

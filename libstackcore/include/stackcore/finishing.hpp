@@ -88,6 +88,17 @@ void detect_object_bounds(const FrameBuffer& image, int margin, int& x, int& y, 
 
 void apply_geometry(const FrameBuffer& src, const Geometry& geometry, FrameBuffer& out);
 
+// apply_geometry の出力の上の矩形 (x, y, w, h) が、入力のどの矩形に当たるか。
+// 画面で描いた切り抜きの枠（回転・反転した後の見た目の座標）を、回転前の画像の
+// 座標に戻すのに使う。回転は90°単位なので矩形は矩形に写る。
+// 出力の範囲に収めてから写す。入力の寸法は input_width × input_height。
+void geometry_output_rect_to_input(const Geometry& geometry, int input_width, int input_height,
+                                   int x, int y, int w, int h, int& in_x, int& in_y, int& in_w,
+                                   int& in_h);
+
+// src の (x, y) から w×h を切り出す（範囲に収める）。
+void crop_frame(const FrameBuffer& src, int x, int y, int w, int h, FrameBuffer& out);
+
 // ウェーブレット強調で明るい縁の外側にできる暗い輪（リンギング）を抑える。
 //
 // 強調後の値が、元画像の近傍（半径 radius）の最小〜最大から外へはみ出した分を

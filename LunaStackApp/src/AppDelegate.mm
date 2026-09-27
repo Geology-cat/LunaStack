@@ -150,6 +150,7 @@
             if (selfTest) [self check:[controller selfCheckWaveletControls]];
             if (selfTest) [self check:[controller selfCheckInspectorScrollsVerticallyOnly]];
             if (selfTest) [self check:[controller selfCheckMappingWaitsForResult]];
+            if (selfTest) [self check:[controller selfCheckCropApplies]];
             if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];
@@ -167,6 +168,7 @@
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
             if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];
+            if (const char* box = getenv("LUNASTACK_CROPBOX")) [controller showCropBoxForTesting:[NSString stringWithUTF8String:box]];
             [self writeSnapshotTo:path];
             if (selfTest) {
                 // 最後に［クリア］が設定まで初期値に戻すことを確かめる（画面は撮ったあと）。

@@ -44,6 +44,8 @@ std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer&
 - (void)previewView:(PreviewView*)view hoverDescription:(NSString*)text;
 // ←→キーでフレームを送りたい（Shiftで10枚、Optionで100枚）。
 - (void)previewView:(PreviewView*)view didRequestFrameStep:(int)step;
+// 切り抜きの枠を描いた・動かした（画像の画素座標、整数）。ドラッグ中も続けて呼ぶ。
+- (void)previewView:(PreviewView*)view didChangeCropRect:(NSRect)rect;
 // ホイールやピンチで倍率が変わった（ツールバーの表示を合わせるため）。
 - (void)previewViewZoomDidChange:(PreviewView*)view;
 @end
@@ -127,6 +129,9 @@ std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer&
 
 // クロップ範囲の枠（画像座標）。幅0で描かない。
 @property(nonatomic) NSRect cropOverlay;
+// 切り抜きの枠をマウスで描く（外側をドラッグで新しい枠、内側で移動、辺・角で大きさを変える）。
+// ONの間は枠の外を暗くして見せる。パンはホイール（トラックパッドの2本指）で行う。
+@property(nonatomic) BOOL cropEditing;
 
 @property(nonatomic, assign) id<PreviewViewDelegate> delegate;
 

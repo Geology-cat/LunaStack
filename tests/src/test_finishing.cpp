@@ -13,6 +13,10 @@ using stackcore::ChannelOffsets;
 using stackcore::FinishingPipeline;
 using stackcore::FinishingSettings;
 using stackcore::FrameBuffer;
+using stackcore::Geometry;
+using stackcore::apply_geometry;
+using stackcore::crop_frame;
+using stackcore::geometry_output_rect_to_input;
 
 namespace {
 
@@ -240,4 +244,43 @@ MT_TEST(finishing_処理系は変化なしなら入力と同じで_工程の順�
     s.channels.red_dx = 0.0;
     pipeline.render(s, again);
     MT_CHECK(!same_bytes(out, again));
+}
+
+MT_TEST(finishing_画面上の切り抜き枠を回転反転の前の座標に戻せる) {
+    // 画素ごとに値の違う画像（どの画素がどこへ行ったか分かる）。
+    FrameBuffer src(37, 23, 2);
+    for (int c = 0; c < 2; ++c) {
+        for (int y = 0; y < src.height(); ++y) {
+            for (int x = 0; x < src.width(); ++x) src.row(c, y)[x] = static_cast<float>(c * 10000 + y * 100 + x);
+        }
+    }
+    for (int turns = 0; turns < 4; ++turns) {
+        for (int flip = 0; flip < 4; ++flip) {
+            Geometry g;
+            g.rotate_quarter_turns = turns;
+            g.flip_horizontal = (flip & 1) != 0;
+            g.flip_vertical = (flip & 2) != 0;
+            FrameBuffer shown;
+            apply_geometry(src, g, shown);
+            // 画面で描いた枠（見た目の座標）。
+            const int x = 3, y = 5, w = std::min(11, shown.width() - 3), h = std::min(9, shown.height() - 5);
+            FrameBuffer expected;
+            crop_frame(shown, x, y, w, h, expected);
+            // 入力の座標に戻して先に切り抜き、あとから同じ向きにする。
+            int ix, iy, iw, ih;
+            geometry_output_rect_to_input(g, src.width(), src.height(), x, y, w, h, ix, iy, iw, ih);
+            FrameBuffer cut, result;
+            crop_frame(src, ix, iy, iw, ih, cut);
+            apply_geometry(cut, g, result);
+            MT_CHECK_EQ(result.width(), expected.width());
+            MT_CHECK_EQ(result.height(), expected.height());
+            for (int c = 0; c < 2; ++c) {
+                for (int yy = 0; yy < expected.height(); ++yy) {
+                    for (int xx = 0; xx < expected.width(); ++xx) {
+                        MT_CHECK_EQ(result.row(c, yy)[xx], expected.row(c, yy)[xx]);
+                    }
+                }
+            }
+        }
+    }
 }

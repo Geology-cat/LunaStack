@@ -366,6 +366,62 @@ void apply_geometry(const FrameBuffer& src, const Geometry& g, FrameBuffer& out)
     out = std::move(result);
 }
 
+void geometry_output_rect_to_input(const Geometry& g, int input_width, int input_height,
+                                   int x, int y, int w, int h, int& in_x, int& in_y, int& in_w,
+                                   int& in_h) {
+    int cx = 0, cy = 0, cw = input_width, ch = input_height;
+    if (g.crop) {
+        cx = std::max(0, std::min(g.crop_x, input_width - 1));
+        cy = std::max(0, std::min(g.crop_y, input_height - 1));
+        cw = std::max(1, std::min(g.crop_width, input_width - cx));
+        ch = std::max(1, std::min(g.crop_height, input_height - cy));
+    }
+    const int turns = ((g.rotate_quarter_turns % 4) + 4) % 4;
+    const int ow = (turns % 2 == 0) ? cw : ch;
+    const int oh = (turns % 2 == 0) ? ch : cw;
+    // 出力の範囲に収める。
+    int x0 = std::max(0, std::min(x, ow - 1)), y0 = std::max(0, std::min(y, oh - 1));
+    int x1 = std::max(x0, std::min(x + std::max(1, w) - 1, ow - 1));
+    int y1 = std::max(y0, std::min(y + std::max(1, h) - 1, oh - 1));
+    // apply_geometry と同じ式で、出力の画素 → 入力の画素を求める（角の2点を写す）。
+    const auto map = [&](int ox, int oy, int& sx, int& sy) {
+        const int rx = g.flip_horizontal ? ow - 1 - ox : ox;
+        const int ry = g.flip_vertical ? oh - 1 - oy : oy;
+        sx = rx;
+        sy = ry;
+        if (turns == 1) { sx = ry; sy = ch - 1 - rx; }
+        else if (turns == 2) { sx = cw - 1 - rx; sy = ch - 1 - ry; }
+        else if (turns == 3) { sx = cw - 1 - ry; sy = rx; }
+        sx += cx;
+        sy += cy;
+    };
+    int ax, ay, bx, by;
+    map(x0, y0, ax, ay);
+    map(x1, y1, bx, by);
+    in_x = std::min(ax, bx);
+    in_y = std::min(ay, by);
+    in_w = std::abs(bx - ax) + 1;
+    in_h = std::abs(by - ay) + 1;
+}
+
+void crop_frame(const FrameBuffer& src, int x, int y, int w, int h, FrameBuffer& out) {
+    if (src.empty()) throw std::invalid_argument("切り抜き: 空の画像です");
+    x = std::max(0, std::min(x, src.width() - 1));
+    y = std::max(0, std::min(y, src.height() - 1));
+    w = std::max(1, std::min(w, src.width() - x));
+    h = std::max(1, std::min(h, src.height() - y));
+    FrameBuffer result(w, h, src.channels());
+    result.set_source_bit_depth(src.source_bit_depth());
+    for (int c = 0; c < src.channels(); ++c) {
+        for (int yy = 0; yy < h; ++yy) {
+            const float* s = src.row(c, y + yy) + x;
+            std::copy(s, s + w, result.row(c, yy));
+        }
+    }
+    result.invalidate_luma();
+    out = std::move(result);
+}
+
 // ---- デリンギング ------------------------------------------------------------
 
 namespace {

@@ -211,6 +211,11 @@ namespace {
     // パン（表示位置のずらし量、ビュー座標）。
     NSPoint _pan;
     BOOL _panning;
+    // 切り抜きの枠の操作。0=なし 1=新しく描く 2=移動 3=大きさを変える
+    int _cropDrag;
+    int _cropEdges;       // 大きさを変える辺（1=左 2=右 4=上 8=下）
+    NSPoint _cropAnchor;  // 画像座標。新しく描くときの起点・移動の起点
+    NSRect _cropStart;    // 操作を始めたときの枠
     NSPoint _panStart;
     NSPoint _panOrigin;
 
@@ -228,6 +233,7 @@ namespace {
 @synthesize apHeatmap = _apHeatmap;
 @synthesize apEditing = _apEditing;
 @synthesize cropOverlay = _cropOverlay;
+@synthesize cropEditing = _cropEditing;
 @synthesize delegate = _delegate;
 
 - (instancetype)initWithFrame:(NSRect)frameRect {
@@ -665,18 +671,120 @@ namespace {
     if (_showAlignmentPoints && _apHeatmap && !_apQuality.empty()) [self drawHeatmapLegend];
 }
 
-- (void)drawCropOverlay {
+- (NSRect)cropViewRect {
     const NSPoint a = [self viewPointFromImagePoint:_cropOverlay.origin];
     const NSPoint b = [self viewPointFromImagePoint:NSMakePoint(NSMaxX(_cropOverlay),
                                                                 NSMaxY(_cropOverlay))];
-    const NSRect r = NSMakeRect(std::min(a.x, b.x), std::min(a.y, b.y), std::fabs(b.x - a.x),
-                                std::fabs(b.y - a.y));
+    return NSMakeRect(std::min(a.x, b.x), std::min(a.y, b.y), std::fabs(b.x - a.x),
+                      std::fabs(b.y - a.y));
+}
+
+- (void)setCropEditing:(BOOL)on {
+    _cropEditing = on;
+    _cropDrag = 0;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)drawCropOverlay {
+    const NSRect r = [self cropViewRect];
+    if (_cropEditing) {
+        // 枠の外を暗くして、切り抜いた後の見た目を分かりやすくする。
+        const NSRect image = [self imageDrawRect];
+        NSBezierPath* outside = [NSBezierPath bezierPathWithRect:image];
+        [outside appendBezierPathWithRect:r];
+        [outside setWindingRule:NSWindingRuleEvenOdd];
+        [[NSColor colorWithCalibratedWhite:0.0 alpha:0.5] setFill];
+        [outside fill];
+    }
     NSBezierPath* path = [NSBezierPath bezierPathWithRect:r];
     const CGFloat dash[2] = {6.0, 4.0};
     [path setLineDash:dash count:2 phase:0.0];
     [path setLineWidth:1.5];
     [[NSColor colorWithCalibratedRed:1.0 green:0.85 blue:0.2 alpha:0.95] setStroke];
     [path stroke];
+    if (_cropEditing) {
+        // 角と辺の中点に、つかめる印を出す。
+        [[NSColor colorWithCalibratedRed:1.0 green:0.85 blue:0.2 alpha:0.95] setFill];
+        const CGFloat xs[3] = {NSMinX(r), NSMidX(r), NSMaxX(r)};
+        const CGFloat ys[3] = {NSMinY(r), NSMidY(r), NSMaxY(r)};
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                if (i == 1 && j == 1) continue;
+                NSRectFill(NSMakeRect(xs[i] - 3.0, ys[j] - 3.0, 6.0, 6.0));
+            }
+        }
+    }
+}
+
+// 画像座標の2点から、画像の中に収めた整数の枠を作る。
+- (NSRect)clampedCropRectFrom:(NSPoint)a to:(NSPoint)b {
+    const double x0 = std::max(0.0, std::min<double>(_imageWidth, std::floor(std::min(a.x, b.x))));
+    const double y0 = std::max(0.0, std::min<double>(_imageHeight, std::floor(std::min(a.y, b.y))));
+    const double x1 = std::max(0.0, std::min<double>(_imageWidth, std::ceil(std::max(a.x, b.x))));
+    const double y1 = std::max(0.0, std::min<double>(_imageHeight, std::ceil(std::max(a.y, b.y))));
+    return NSMakeRect(x0, y0, x1 - x0, y1 - y0);
+}
+
+- (void)notifyCropChanged {
+    [self setNeedsDisplay:YES];
+    if ([_delegate respondsToSelector:@selector(previewView:didChangeCropRect:)]) {
+        [_delegate previewView:self didChangeCropRect:_cropOverlay];
+    }
+}
+
+- (void)cropMouseDown:(NSPoint)p {
+    const NSPoint img = [self imagePointFromViewPoint:p];
+    _cropStart = _cropOverlay;
+    _cropAnchor = img;
+    _cropEdges = 0;
+    if (_cropOverlay.size.width > 0 && _cropOverlay.size.height > 0) {
+        // 画面上で7ポイント以内なら辺・角をつかんだとみなす。
+        const NSRect r = [self cropViewRect];
+        const CGFloat grab = 7.0;
+        const BOOL withinY = p.y >= NSMinY(r) - grab && p.y <= NSMaxY(r) + grab;
+        const BOOL withinX = p.x >= NSMinX(r) - grab && p.x <= NSMaxX(r) + grab;
+        // 画面のy（下から上）と画像のy（上から下）は向きが逆。画像の上辺は画面の上側。
+        if (withinY && std::fabs(p.x - NSMinX(r)) <= grab) _cropEdges |= 1;
+        if (withinY && std::fabs(p.x - NSMaxX(r)) <= grab) _cropEdges |= 2;
+        if (withinX && std::fabs(p.y - NSMaxY(r)) <= grab) _cropEdges |= 4;
+        if (withinX && std::fabs(p.y - NSMinY(r)) <= grab) _cropEdges |= 8;
+        if (_cropEdges) {
+            _cropDrag = 3;
+            return;
+        }
+        if (NSPointInRect(p, r)) {
+            _cropDrag = 2;
+            return;
+        }
+    }
+    _cropDrag = 1;
+    _cropOverlay = [self clampedCropRectFrom:img to:img];
+    [self notifyCropChanged];
+}
+
+- (void)cropMouseDragged:(NSPoint)p {
+    const NSPoint img = [self imagePointFromViewPoint:p];
+    if (_cropDrag == 1) {
+        _cropOverlay = [self clampedCropRectFrom:_cropAnchor to:img];
+    } else if (_cropDrag == 2) {
+        // 大きさを保ったまま、画像の中で動かす。
+        double x = std::round(_cropStart.origin.x + (img.x - _cropAnchor.x));
+        double y = std::round(_cropStart.origin.y + (img.y - _cropAnchor.y));
+        x = std::max(0.0, std::min(x, _imageWidth - _cropStart.size.width));
+        y = std::max(0.0, std::min(y, _imageHeight - _cropStart.size.height));
+        _cropOverlay = NSMakeRect(x, y, _cropStart.size.width, _cropStart.size.height);
+    } else if (_cropDrag == 3) {
+        double left = NSMinX(_cropStart), right = NSMaxX(_cropStart);
+        double top = NSMinY(_cropStart), bottom = NSMaxY(_cropStart);
+        if (_cropEdges & 1) left = std::min(img.x, right - 1.0);
+        if (_cropEdges & 2) right = std::max(img.x, left + 1.0);
+        if (_cropEdges & 4) top = std::min(img.y, bottom - 1.0);
+        if (_cropEdges & 8) bottom = std::max(img.y, top + 1.0);
+        _cropOverlay = [self clampedCropRectFrom:NSMakePoint(left, top) to:NSMakePoint(right, bottom)];
+    } else {
+        return;
+    }
+    [self notifyCropChanged];
 }
 
 // 品質の色分けの凡例。色だけでは何が高いのか分からない。
@@ -780,6 +888,11 @@ namespace {
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
     [[self window] makeFirstResponder:self];
 
+    if (_cropEditing && _display) {
+        [self cropMouseDown:p];
+        return;
+    }
+
     if (_apEditing && _display) {
         const NSInteger hit = [self apIndexAtViewPoint:p];
         if (hit >= 0) {
@@ -804,8 +917,12 @@ namespace {
 }
 
 - (void)mouseDragged:(NSEvent*)event {
-    if (!_panning) return;
     const NSPoint p = [self convertPoint:[event locationInWindow] fromView:nil];
+    if (_cropEditing && _cropDrag) {
+        [self cropMouseDragged:p];
+        return;
+    }
+    if (!_panning) return;
     // クランプした値を保存する。生の値を貯めると、限界を超えてドラッグした分だけ
     // 戻すときに「効かない区間」ができて、操作が引っかかったように感じる。
     _pan = [self clampedPan:NSMakePoint(_panOrigin.x + (p.x - _panStart.x),
@@ -816,6 +933,12 @@ namespace {
 - (void)mouseUp:(NSEvent*)event {
     (void)event;
     _panning = NO;
+    if (_cropDrag == 1 && (_cropOverlay.size.width < 2 || _cropOverlay.size.height < 2)) {
+        // クリックだけ（ほとんど動かさなかった）なら枠を消す。
+        _cropOverlay = NSZeroRect;
+        [self notifyCropChanged];
+    }
+    _cropDrag = 0;
 }
 
 - (void)rightMouseDown:(NSEvent*)event {

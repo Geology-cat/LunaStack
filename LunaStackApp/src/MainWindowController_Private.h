@@ -145,8 +145,9 @@
     NSTextField* _rotationLabel;
     NSButton* _flipHCheck;
     NSButton* _flipVCheck;
-    NSButton* _cropCheck;
-    NSTextField* _cropMarginField;
+    NSButton* _cropModeCheck;       // プレビューで切り抜きの枠を描く
+    NSButton* _cropApplyButton;     // ［切り抜く］
+    NSButton* _cropUndoButton;      // ［元に戻す］
     NSTextField* _cropLabel;
     NSPopUpButton* _formatPopup;
     NSPopUpButton* _nameStylePopup;
@@ -235,7 +236,10 @@
     float _stackedDisplayLow;       // 仕上げの表示に使う明るさの基準（スタック結果の範囲）
     float _stackedDisplayHigh;
     int _rotationTurns;
-    NSRect _cropRect;               // スタック結果の座標。幅0で未指定
+    NSRect _cropRect;               // 描いた枠（いま画面に出ている画像の座標）。幅0で未指定
+    // 切り抜く前のスタック結果（［元に戻す］用）。切り抜いていなければ空。
+    std::shared_ptr<stackcore::FrameBuffer> _uncroppedStacked;
+    NSRect _appliedCrop;            // 切り抜いた範囲（元のスタック結果の座標。回転の前）
 
     // --- 実行状態 ---
     std::atomic<bool>* _cancelFlag;
@@ -426,7 +430,12 @@
 - (void)autoTone:(id)sender;
 - (void)rotateLeft:(id)sender;
 - (void)rotateRight:(id)sender;
-- (void)autoCrop:(id)sender;
+- (void)cropModeChanged:(id)sender;
+- (void)applyCrop:(id)sender;
+- (void)undoCrop:(id)sender;
+- (void)clearCropBox:(id)sender;
+- (void)replaceFinishingInput;
+- (void)updateCropControls;
 - (void)clearCrop:(id)sender;
 - (OutputFormat)currentOutputFormat;
 - (NSString*)outputExtension;

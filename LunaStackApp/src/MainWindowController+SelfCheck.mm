@@ -422,6 +422,64 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     return ok;
 }
 
+// 回転した見た目の上で描いた枠で切り抜くと、画面の見た目どおりの範囲が切り出され、
+// 書き出しも画面と一致し、［元に戻す］で元のスタック結果にそっくり戻るか。
+- (BOOL)selfCheckCropApplies {
+    if (!_stacked || !_finishing) return NO;
+    std::shared_ptr<stackcore::FrameBuffer> original = _stacked;
+    std::shared_ptr<stackcore::FrameBuffer> alreadyCropped = _uncroppedStacked;
+    const NSRect appliedBefore = _appliedCrop;
+    [_viewModeSegment setSelectedSegment:2];
+    [_waveletPreviewCheck setState:NSControlStateValueOn];
+    const int turnsBefore = _rotationTurns;
+    _rotationTurns = 1;
+    [self finishingChanged:nil];
+    // 比べるために、近傍を使う処理（ウェーブレット・チャンネル合わせ）を外した見た目で比べる。
+    stackcore::FinishingSettings pointwise = [self previewFinishingSettings];
+    pointwise.wavelet.assign(kWaveletLayers, stackcore::WaveletLayerParams());
+    pointwise.dering = 0.0;
+    pointwise.channels = stackcore::ChannelOffsets();
+    std::shared_ptr<stackcore::FrameBuffer> before = [self renderFinishingNowWithSettings:pointwise];
+    const int bx = before->width() / 5, by = before->height() / 7;
+    const int bw = std::max(2, before->width() / 2), bh = std::max(2, before->height() / 3);
+    _cropRect = NSMakeRect(bx, by, bw, bh);
+    [self applyCrop:nil];
+    [self waitForFinishingForTesting];
+    BOOL ok = _displayed && _displayed->width() == bw && _displayed->height() == bh;
+    // 切り抜いた後の見た目 = 切り抜く前の見た目の、枠の中。
+    std::shared_ptr<stackcore::FrameBuffer> after = [self renderFinishingNowWithSettings:pointwise];
+    double worst = 0.0;
+    for (int c = 0; ok && c < after->channels(); ++c) {
+        for (int y = 0; y < bh; ++y) {
+            for (int x = 0; x < bw; ++x) {
+                worst = std::max(worst, static_cast<double>(std::fabs(after->row(c, y)[x] - before->row(c, by + y)[bx + x])));
+            }
+        }
+    }
+    ok = ok && worst < 1e-6;
+    // 書き出しと画面が一致する。
+    std::shared_ptr<stackcore::FrameBuffer> exported = [self renderFinishingNow];
+    std::shared_ptr<stackcore::FrameBuffer> shown = [self renderFinishingNowWithSettings:[self previewFinishingSettings]];
+    ok = ok && exported->width() == shown->width() && exported->height() == shown->height();
+    // 元に戻す。
+    [self undoCrop:nil];
+    const BOOL restored = _stacked == (alreadyCropped ? alreadyCropped : original) && !_uncroppedStacked;
+    ok = ok && restored;
+    if (alreadyCropped) {
+        // 自己検証の前から切り抜いてあった場合は、その状態に戻しておく。
+        _uncroppedStacked = alreadyCropped;
+        _stacked = original;
+        _appliedCrop = appliedBefore;
+        [self replaceFinishingInput];
+    }
+    _rotationTurns = turnsBefore;
+    [self finishingChanged:nil];
+    [self waitForFinishingForTesting];
+    NSLog(@"切り抜きの自己検証: 枠 %d×%d、画面との差 最大 %.2g、元に戻す %@ %@", bw, bh, worst,
+          restored ? @"OK" : @"NG", ok ? @"" : @"— 合いません");
+    return ok;
+}
+
 // 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
 - (BOOL)selfCheckInspectorScrollsVerticallyOnly {
     NSClipView* clip = [_inspectorScroll contentView];
@@ -478,7 +536,7 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     [_waveletOnlyPreviewCheck setState:NSControlStateValueOff];
     [self clearWorkspace:nil];
 
-    BOOL ok = [_items count] == 0 && _rotationTurns == 0 && _cropRect.size.width == 0 &&
+    BOOL ok = [_items count] == 0 && _rotationTurns == 0 && _cropRect.size.width == 0 && !_uncroppedStacked &&
               !_darkPath && !_flatPath && !_stacked &&
               [_waveletOnlyPreviewCheck state] == NSControlStateValueOn &&
               [_waveletPreviewCheck state] == NSControlStateValueOn;
@@ -520,7 +578,18 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
             stackcore::estimate_white_balance(aligned, gains);
             [self applyGainsRed:gains[0] blue:gains[2]];
         } else if ([key isEqualToString:@"crop"]) {
-            [self autoCrop:nil];
+            // "center"（見えている画像の中央60%）または "x:y:w:h"（見えている画像の座標）。
+            [self waitForFinishingForTesting];
+            const int sw = [_preview imageWidth], sh = [_preview imageHeight];
+            if ([value isEqualToString:@"center"]) {
+                _cropRect = NSMakeRect(std::round(sw * 0.2), std::round(sh * 0.2), std::round(sw * 0.6), std::round(sh * 0.6));
+            } else {
+                NSArray* v = [value componentsSeparatedByString:@":"];
+                if ([v count] == 4) {
+                    _cropRect = NSMakeRect([v[0] doubleValue], [v[1] doubleValue], [v[2] doubleValue], [v[3] doubleValue]);
+                }
+            }
+            [self applyCrop:nil];
         } else if ([key isEqualToString:@"rotate"]) {
             _rotationTurns = (([value intValue] % 4) + 4) % 4;
             [self finishingChanged:nil];
@@ -591,6 +660,17 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     }
     [self updateFinishingValueLabels];
     [self waitForFinishingForTesting];
+}
+
+// 切り抜きの枠を描いた状態にする（画面を撮るため。切り抜きはしない）。"x:y:w:h"
+- (void)showCropBoxForTesting:(NSString*)spec {
+    NSArray* v = [spec componentsSeparatedByString:@":"];
+    if ([v count] != 4 || !_stacked) return;
+    [_cropModeCheck setState:NSControlStateValueOn];
+    [self cropModeChanged:nil];
+    _cropRect = NSMakeRect([v[0] doubleValue], [v[1] doubleValue], [v[2] doubleValue], [v[3] doubleValue]);
+    [self updateApOverlay];
+    [self updateCropControls];
 }
 
 - (void)setWaveletPreviewForTesting:(BOOL)on {

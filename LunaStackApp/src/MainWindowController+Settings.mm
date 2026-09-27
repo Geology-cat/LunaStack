@@ -581,8 +581,7 @@ static void SetText(NSTextField* field, id value) {
     // 辞書に入っていない状態も初期に戻す。
     _rotationTurns = 0;
     _cropRect = NSZeroRect;
-    [_cropCheck setState:NSControlStateValueOff];
-    [_cropMarginField setStringValue:@"16"];
+    [_cropModeCheck setState:NSControlStateValueOff];
     [_waveletPreviewCheck setState:NSControlStateValueOn];
     [_waveletOnlyPreviewCheck setState:NSControlStateValueOn];
     [_linkedCheck setState:NSControlStateValueOff];

@@ -49,13 +49,7 @@ double ParseField(NSTextField* field) {
     s.geometry.rotate_quarter_turns = _rotationTurns;
     s.geometry.flip_horizontal = [_flipHCheck state] == NSControlStateValueOn;
     s.geometry.flip_vertical = [_flipVCheck state] == NSControlStateValueOn;
-    if ([_cropCheck state] == NSControlStateValueOn && _cropRect.size.width > 0 && _stacked) {
-        s.geometry.crop = true;
-        s.geometry.crop_x = static_cast<int>(_cropRect.origin.x);
-        s.geometry.crop_y = static_cast<int>(_cropRect.origin.y);
-        s.geometry.crop_width = static_cast<int>(_cropRect.size.width);
-        s.geometry.crop_height = static_cast<int>(_cropRect.size.height);
-    }
+    // 切り抜きは［切り抜く］でスタック結果そのものに済ませるので、ここでは掛けない。
     return s;
 }
 
@@ -101,8 +95,12 @@ double ParseField(NSTextField* field) {
     _stackedInfo = nil;
     _stackedFrames.clear();
     _cropRect = NSZeroRect;
-    [_cropLabel setStringValue:LSLocalizedString(@"切り抜く範囲はまだありません")];
+    _uncroppedStacked.reset();
+    _appliedCrop = NSZeroRect;
+    [_cropModeCheck setState:NSControlStateValueOff];
+    [_preview setCropEditing:NO];
     [_preview setCropOverlay:NSZeroRect];
+    [self updateCropControls];
 }
 
 // ---- 描画 -----------------------------------------------------------------
@@ -308,11 +306,7 @@ double ParseField(NSTextField* field) {
                                              : [NSString stringWithFormat:LSLocalizedString(@"右へ %d°"),
                                                                           _rotationTurns * 90];
     [_rotationLabel setStringValue:rotation];
-    if (_cropRect.size.width > 0) {
-        [_cropLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"x %.0f, y %.0f から %.0f×%.0f px"),
-                                                              _cropRect.origin.x, _cropRect.origin.y,
-                                                              _cropRect.size.width, _cropRect.size.height]];
-    }
+    [self updateCropControls];
 }
 
 // ---- ±ボタン・数値欄・レイヤーの初期化 -----------------------------------------
@@ -583,25 +577,122 @@ double ParseField(NSTextField* field) {
     [self updateApOverlay];
 }
 
-- (void)autoCrop:(id)sender {
-    (void)sender;
-    if (!_stacked) return;
-    int x = 0, y = 0, w = 0, h = 0;
-    const int margin = std::max(0, std::min(4096, [_cropMarginField intValue]));
-    stackcore::detect_object_bounds(*_stacked, margin, x, y, w, h);
-    _cropRect = NSMakeRect(x, y, w, h);
-    [_cropCheck setState:NSControlStateValueOn];
-    [self finishingChanged:nil];
-    [self updateApOverlay];
+// ---- 切り抜き -------------------------------------------------------------------
+
+// 枠の大きさと、切り抜いたかどうかを表示し、ボタンの有効・無効を合わせる。
+- (void)updateCropControls {
+    NSString* box = _cropRect.size.width > 0
+        ? [NSString stringWithFormat:LSLocalizedString(@"枠: %.0f×%.0f px（x %.0f, y %.0f から）"),
+                                     _cropRect.size.width, _cropRect.size.height, _cropRect.origin.x, _cropRect.origin.y]
+        : LSLocalizedString(@"枠はまだありません");
+    if (_uncroppedStacked && _stacked) {
+        box = [box stringByAppendingFormat:LSLocalizedString(@" ／ 切り抜き済み %d×%d（元 %d×%d）"),
+                                           _stacked->width(), _stacked->height(),
+                                           _uncroppedStacked->width(), _uncroppedStacked->height()];
+    }
+    [_cropLabel setStringValue:box];
+    [_cropApplyButton setEnabled:_stacked && _cropRect.size.width >= 2 && _cropRect.size.height >= 2];
+    [_cropUndoButton setEnabled:_uncroppedStacked ? YES : NO];
 }
 
-- (void)clearCrop:(id)sender {
+- (void)cropModeChanged:(id)sender {
+    (void)sender;
+    const BOOL on = [_cropModeCheck state] == NSControlStateValueOn;
+    if (on && _stacked) {
+        // 枠はスタック結果（仕上げを掛けた見た目）の上に描く。AP配置の編集とは同時に使わない。
+        if ([_viewModeSegment selectedSegment] != 2) {
+            [_viewModeSegment setSelectedSegment:2];
+            [self viewModeChanged:nil];
+        }
+        if ([_apEditCheck state] == NSControlStateValueOn) {
+            [_apEditCheck setState:NSControlStateValueOff];
+            [self apDisplayChanged:nil];
+        }
+        [[self window] makeFirstResponder:_preview];
+    }
+    [_preview setCropEditing:on && _stacked];
+    [self updateApOverlay];
+    [self updateCropControls];
+}
+
+- (void)previewView:(PreviewView*)view didChangeCropRect:(NSRect)rect {
+    (void)view;
+    _cropRect = rect;
+    [self updateCropControls];
+}
+
+- (void)clearCropBox:(id)sender {
     (void)sender;
     _cropRect = NSZeroRect;
-    [_cropCheck setState:NSControlStateValueOff];
-    [_cropLabel setStringValue:LSLocalizedString(@"切り抜く範囲はまだありません")];
-    [self finishingChanged:nil];
+    [_preview setCropOverlay:NSZeroRect];
+    [self updateCropControls];
+}
+
+// スタック結果（切り抜いたもの）を仕上げの入力にし直す。
+//
+// **処理系は作り直す。** 描画中の処理系に set_input するとスレッドが競合する。
+// 番号を進めて、前の大きさで描いている途中の結果が後から表示されないようにする。
+// 表示の明るさの基準（_stackedDisplayLow/High）は元のスタック結果のまま保つ
+// （切り抜いて暗い空が減ると最小値が上がり、切り抜いた瞬間に明るさが変わってしまうため）。
+- (void)replaceFinishingInput {
+    ++_renderGeneration;
+    _renderPending = NO;
+    _renderTargets[0].reset();
+    _renderTargets[1].reset();
+    _displayed.reset();
+    _finishing = std::make_shared<stackcore::FinishingPipeline>();
+    _finishing->set_input(_stacked, kWaveletLayers);
+    [self showFinishedOrStacked];
+    [self requestFinishingRender];
     [self updateApOverlay];
+    [self updateCropControls];
+}
+
+// 描いた枠でスタック結果を切り抜く（その場で画像が小さくなる。書き出しにもそのまま入る）。
+- (void)applyCrop:(id)sender {
+    (void)sender;
+    if (!_stacked || _cropRect.size.width < 2 || _cropRect.size.height < 2) {
+        [_statusLabel setStringValue:LSLocalizedString(@"先にプレビューで切り抜く枠を描いてください")];
+        return;
+    }
+    // 枠は「いま画面に出ている画像」の座標。仕上げの効果をプレビューしているなら回転・反転の
+    // 後の見た目なので、回転・反転の前（スタック結果）の座標に戻す。
+    stackcore::Geometry shown;
+    if ([_waveletPreviewCheck state] == NSControlStateValueOn) shown = [self currentFinishingSettings].geometry;
+    int x = 0, y = 0, w = 0, h = 0;
+    stackcore::geometry_output_rect_to_input(shown, _stacked->width(), _stacked->height(),
+                                             static_cast<int>(_cropRect.origin.x), static_cast<int>(_cropRect.origin.y),
+                                             static_cast<int>(_cropRect.size.width), static_cast<int>(_cropRect.size.height),
+                                             x, y, w, h);
+    auto cut = std::make_shared<stackcore::FrameBuffer>();
+    stackcore::crop_frame(*_stacked, x, y, w, h, *cut);
+    if (!_uncroppedStacked) {
+        _uncroppedStacked = _stacked;
+        _appliedCrop = NSMakeRect(x, y, w, h);
+    } else {
+        // 切り抜きを重ねた。元のスタック結果の座標で持つ（まとめて書き出しで使う）。
+        _appliedCrop = NSMakeRect(_appliedCrop.origin.x + x, _appliedCrop.origin.y + y, w, h);
+    }
+    _stacked = cut;
+    _cropRect = NSZeroRect;
+    [_preview setCropOverlay:NSZeroRect];
+    [_cropModeCheck setState:NSControlStateValueOff];
+    [_preview setCropEditing:NO];
+    [self replaceFinishingInput];
+    [_statusLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"切り抜きました — %d×%d"), w, h]];
+}
+
+- (void)undoCrop:(id)sender {
+    (void)sender;
+    if (!_uncroppedStacked) return;
+    _stacked = _uncroppedStacked;
+    _uncroppedStacked.reset();
+    _appliedCrop = NSZeroRect;
+    _cropRect = NSZeroRect;
+    [_preview setCropOverlay:NSZeroRect];
+    [self replaceFinishingInput];
+    [_statusLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"切り抜く前に戻しました — %d×%d"),
+                                                            _stacked->width(), _stacked->height()]];
 }
 
 // ---- 書き出し -------------------------------------------------------------
@@ -821,7 +912,15 @@ double ParseField(NSTextField* field) {
     base.stage = JobStage::Stack;
     base.global = _globalStage;
     base.analysis = _analysis;
-    const stackcore::FinishingSettings finishing = [self currentFinishingSettings];
+    stackcore::FinishingSettings finishing = [self currentFinishingSettings];
+    // 画面で切り抜いた範囲は、ほかの枚数のスタックにも同じ位置で掛ける（回転の前に切る）。
+    if (_uncroppedStacked) {
+        finishing.geometry.crop = true;
+        finishing.geometry.crop_x = static_cast<int>(_appliedCrop.origin.x);
+        finishing.geometry.crop_y = static_cast<int>(_appliedCrop.origin.y);
+        finishing.geometry.crop_width = static_cast<int>(_appliedCrop.size.width);
+        finishing.geometry.crop_height = static_cast<int>(_appliedCrop.size.height);
+    }
     const OutputFormat format = [self currentOutputFormat];
     const stackcore::ImageMetadata metadata = [self metadataForExport];
     NSMutableArray* names = [NSMutableArray array];

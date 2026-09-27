@@ -22,7 +22,7 @@ LUNASTACK_AUTORUN=1 \
 LUNASTACK_MODE=staged \
 LUNASTACK_SELFTEST=1 \
 LUNASTACK_DRIZZLE=2 \
-LUNASTACK_FINISH="channel=auto,wb=auto,crop=auto,rotate=1,dering=0.5" \
+LUNASTACK_FINISH="channel=auto,wb=auto,crop=center,rotate=1,dering=0.5" \
 LUNASTACK_SIZE=1000x640 \
 "$APP" -AppleLanguages '(ja)'
 test -s "$WORK/snapshot.png"

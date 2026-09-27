@@ -214,7 +214,6 @@
 "RGBのずれを推定しています…" = "Estimating RGB offsets…";
 "RGBチャンネル合わせ（大気分散）" = "RGB Channel Alignment (dispersion)";
 "WinJUPOS形式（撮影時刻を先頭に）" = "WinJUPOS style (capture time first)";
-"x %.0f, y %.0f から %.0f×%.0f px" = "%.0f×%.0f px from x %.0f, y %.0f";
 "σクリップの閾値（σ）" = "Sigma-clip threshold (σ)";
 "↺ 左へ90°" = "↺ Rotate Left 90°";
 "ここでの調整は書き出す画像に入ります（プレビューの「表示を明るくする」は画面だけ）。" = "These adjustments are written to the exported image (the preview \"Brighten display\" option affects the screen only).";
@@ -276,7 +275,6 @@
 "位置合わせ領域の追加" = "Add Alignment Point";
 "位置合わせ領域をすべて消去" = "Clear Alignment Points";
 "低品質" = "Low quality";
-"余白（px）" = "Margin (px)";
 "使うフレームの範囲（空欄で全体）" = "Frame range (blank = all)";
 "例: Jupiter" = "e.g. Jupiter";
 "倍率 %.0f%%" = "Zoom %.0f%%";
@@ -288,9 +286,7 @@
 "処理を続ける" = "Keep Processing";
 "処理中です" = "Processing is in progress";
 "処理条件と撮影時刻をファイルに記録する" = "Record settings and capture time in the file";
-"切り抜きをやめる" = "Remove Crop";
 "切り抜く" = "Crop";
-"切り抜く範囲はまだありません" = "No crop area yet";
 "動画、静止画（複数選ぶと1本の連番になります）、またはフォルダを選んでください" = "Choose videos, images (multiple images become one sequence) or folders";
 "参照との類似度の下限" = "Minimum similarity to reference";
 "参照と似ていない（追跡失敗・雲・欠落）" = "not similar to the reference (tracking lost, clouds, dropout)";
@@ -311,7 +307,6 @@
 "外れ値判定を小さくすると、崩れたフレームをより厳しく除外します。位置ずれの上限は既定で短辺の1/4です。" = "Smaller values reject distorted frames more strictly. The default shift limit is 1/4 of the shorter side.";
 "実画素で等倍" = "Actual Pixels";
 "対応していないファイルを %d 件除外しました（SER・AVI・静止画のみ）" = "Skipped %d unsupported files (SER, AVI and images only)";
-"対象を自動で囲む" = "Auto-fit Object";
 "対象モード: %@（参照フレーム #%d）" = "Target mode: %@ (reference frame #%d)";
 "対象名（ファイル・メタデータ用）" = "Object name (file name and metadata)";
 "履歴を消去" = "Clear Menu";
@@ -393,3 +388,13 @@
 "少し下げる（押し続けると連続）" = "Decrease slightly (hold to repeat)";
 "少し上げる（押し続けると連続）" = "Increase slightly (hold to repeat)";
 "連番の形式をそろえるため %d 枚を除外しました（RAWがあればRAWだけを使います）" = "Excluded %d image(s) so that the sequence uses one format (RAW files are used when present)";
+"プレビューで切り抜く枠を描く" = "Draw crop box on preview";
+"枠はまだありません" = "No crop box yet";
+"枠を消す" = "Clear Box";
+"元に戻す" = "Undo Crop";
+"枠の外をドラッグで新しく描き、内側で移動、辺や角で大きさを変えます。見えている向きのまま描けます。［切り抜く］でその場で画像が小さくなり、以降の仕上げも軽くなります。" = "Drag outside the box to draw a new one, inside to move it, and on an edge or corner to resize it. Draw in the orientation you see. [Crop] trims the image immediately, which also makes later finishing faster.";
+"枠: %.0f×%.0f px（x %.0f, y %.0f から）" = "Box: %.0f×%.0f px (from x %.0f, y %.0f)";
+" ／ 切り抜き済み %d×%d（元 %d×%d）" = " / cropped to %d×%d (was %d×%d)";
+"先にプレビューで切り抜く枠を描いてください" = "Draw a crop box on the preview first";
+"切り抜きました — %d×%d" = "Cropped — %d×%d";
+"切り抜く前に戻しました — %d×%d" = "Crop undone — %d×%d";
