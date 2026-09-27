@@ -298,9 +298,20 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
                                           ([_waveletPreviewCheck state] == NSControlStateValueOn &&
                                            ![self currentFinishingSettings].geometry.identity()));
     // 切り抜きの枠は、枠を描いている間だけスタック結果の上に見せる。
+    // 処理範囲は、フレーム（入力そのままの画像）の上にいつも見せ、描くモードの間は編集できる。
     const BOOL showCropRect = onResult && [_cropModeCheck state] == NSControlStateValueOn;
-    [_preview setCropEditing:showCropRect];
-    [_preview setCropOverlay:showCropRect ? _cropRect : NSZeroRect];
+    const BOOL onFrames = [_viewModeSegment selectedSegment] == 0 && _previewSource;
+    const BOOL roiEditing = onFrames && [_roiModeCheck state] == NSControlStateValueOn;
+    if (showCropRect) {
+        [_preview setCropEditing:YES];
+        [_preview setCropOverlay:_cropRect];
+    } else if (onFrames && (roiEditing || _roiRect.size.width > 0)) {
+        [_preview setCropEditing:roiEditing];
+        [_preview setCropOverlay:_roiRect];
+    } else {
+        [_preview setCropEditing:NO];
+        [_preview setCropOverlay:NSZeroRect];
+    }
     if (transformed) {
         [_preview clearAlignmentPoints];
         return;
@@ -311,7 +322,14 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
         int size = LSApSizeAt([_apSizePopup indexOfSelectedItem]);
         if (size == 0) size = _analysis ? _analysis->ap_size : 64;  // 自動のときは表示だけ暫定値で描く
         const std::vector<double> none;
-        [_preview setAlignmentPoints:_manualPoints apSize:size meanQualities:none coordinateScale:scale];
+        std::vector<stackcore::AlignmentPoint> shown = _manualPoints;
+        if ([_viewModeSegment selectedSegment] == 0 && _roiRect.size.width > 0) {
+            for (stackcore::AlignmentPoint& p : shown) {
+                p.cx += static_cast<int>(_roiRect.origin.x);
+                p.cy += static_cast<int>(_roiRect.origin.y);
+            }
+        }
+        [_preview setAlignmentPoints:shown apSize:size meanQualities:none coordinateScale:scale];
         [_apCountLabel setStringValue:[NSString stringWithFormat:
                                                     LSLocalizedString(@"手動の位置合わせ領域 %zu個（未実行）"),
                                                     _manualPoints.size()]];
@@ -323,6 +341,23 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
         return;
     }
     const std::vector<double> quality = ap_mean_quality(*_analysis);
+    if ([_viewModeSegment selectedSegment] == 0 && _roiRect.size.width > 0) {
+        // 解析は処理範囲の座標。フレーム表示は入力全体なので、範囲の左上だけずらして描く。
+        // 範囲を変えたあと（解析が今の範囲のものでない）は描かない。
+        if (![self analysisUsable]) {
+            [_preview clearAlignmentPoints];
+            return;
+        }
+        std::vector<stackcore::AlignmentPoint> shifted = _analysis->points;
+        for (stackcore::AlignmentPoint& p : shifted) {
+            p.cx += static_cast<int>(_roiRect.origin.x);
+            p.cy += static_cast<int>(_roiRect.origin.y);
+        }
+        [_preview setAlignmentPoints:shifted apSize:_analysis->ap_size meanQualities:quality coordinateScale:scale];
+        [_apCountLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"位置合わせ領域 %zu個 / %d px"),
+                                                                 _analysis->points.size(), _analysis->ap_size]];
+        return;
+    }
     [_preview setAlignmentPoints:_analysis->points
                           apSize:_analysis->ap_size
                    meanQualities:quality
@@ -578,6 +613,11 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
     stackcore::AlignmentPoint p;
     p.cx = x;
     p.cy = y;
+    if ([_viewModeSegment selectedSegment] == 0 && _roiRect.size.width > 0) {
+        // フレーム表示（入力全体）の上で置いたときは、処理範囲の座標に直す。
+        p.cx -= static_cast<int>(_roiRect.origin.x);
+        p.cy -= static_cast<int>(_roiRect.origin.y);
+    }
     _manualPoints.push_back(p);
     [self applyManualPoints];
 }

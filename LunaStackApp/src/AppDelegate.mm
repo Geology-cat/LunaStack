@@ -103,6 +103,10 @@
     if (const char* zoom = getenv("LUNASTACK_ZOOM")) {
         [_controller setZoomIndexForTesting:atoi(zoom)];
     }
+    // 処理範囲 "x:y:w:h"（入力の画素座標）または "center"（中央の半分）。
+    if (const char* roi = getenv("LUNASTACK_ROI")) {
+        [_controller setRoiForTesting:[NSString stringWithUTF8String:roi]];
+    }
 
     if (autorun && snapshotPath) {
         // 実行が終わった時点で撮る。GUIを人が操作しなくても
@@ -151,6 +155,7 @@
             if (selfTest) [self check:[controller selfCheckInspectorScrollsVerticallyOnly]];
             if (selfTest) [self check:[controller selfCheckMappingWaitsForResult]];
             if (selfTest) [self check:[controller selfCheckCropApplies]];
+            if (selfTest) [self check:[controller selfCheckRoi]];
             if (selfTest) [self check:[controller selfCheckUntouchedInputKeepsResult]];
             if (getenv("LUNASTACK_WAVELET_OFF")) {
                 [controller setWaveletPreviewForTesting:NO];

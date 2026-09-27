@@ -67,6 +67,11 @@
     // --- 右Inspector ---
     NSSegmentedControl* _inspectorTab;
     NSScrollView* _inspectorScroll;  // 右の設定パネル（縦にだけスクロール）
+    // 処理範囲（入力の画素座標。左上・大きさは偶数。幅0で全体）。品質評価からスタックまで効く。
+    NSRect _roiRect;
+    NSButton* _roiModeCheck;   // フレームの上で処理範囲を描く
+    NSTextField* _roiLabel;
+    NSButton* _roiClearButton;
     NSPopUpButton* _presetPopup;
 
     // 品質評価タブ
@@ -440,6 +445,19 @@
 - (void)replaceFinishingInput;
 - (void)updateCropControls;
 - (void)invalidateCropBox;
+- (void)buildRoiSection:(NSStackView*)box;
+- (void)roiModeChanged:(id)sender;
+- (void)clearRoi:(id)sender;
+- (void)updateRoiControls;
+- (void)commitRoiRect:(NSRect)rect;
+- (void)roiDidChange;
+- (void)showRoiDriftWarning:(int)outside total:(int)total;
+- (BOOL)editingRoi;
+- (NSString*)previewInputSignature;
+- (stackcore::OpenOptions)previewOpenOptions;
+- (int)processingWidth;
+- (int)processingHeight;
+- (void)checkRoiDrift:(std::shared_ptr<stackcore::GlobalStageReport>)report;
 - (BOOL)levelsHistogramVisible;
 - (void)refreshLevelsHistogramIfNeeded;
 - (void)updateLevelsControls;

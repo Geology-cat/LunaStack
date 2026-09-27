@@ -444,3 +444,71 @@ MT_TEST(quality_cache_保存して読み直せる) {
     std::remove(path.c_str());
     MT_CHECK_THROWS(stackcore::load_quality_cache(path, d));
 }
+
+// ---- 処理範囲 ----------------------------------------------------------------
+
+MT_TEST(処理範囲_補正のあと切り出し左上と大きさを偶数にそろえる) {
+    const std::string dir = make_dir("roi_seq");
+    for (int i = 0; i < 3; ++i) {
+        char name[64];
+        std::snprintf(name, sizeof(name), "/f%02d.png", i);
+        write_pattern_png(dir + name, 40, 30, i);
+    }
+    stackcore::OpenOptions full;
+    std::unique_ptr<stackcore::VideoSource> whole = stackcore::open_video(dir, full);
+    stackcore::OpenOptions o;
+    o.roi_x = 5;  // 奇数 → 4 に切り下げ
+    o.roi_y = 3;  // → 2
+    o.roi_width = 13;   // 右端 18 → 幅 14
+    o.roi_height = 9;   // 下端 12 → 高さ 10
+    int x, y, w, h;
+    stackcore::effective_roi(o, 40, 30, x, y, w, h);
+    MT_CHECK_EQ(x, 4);
+    MT_CHECK_EQ(y, 2);
+    MT_CHECK_EQ(w, 14);
+    MT_CHECK_EQ(h, 10);
+    std::unique_ptr<stackcore::VideoSource> roi = stackcore::open_video(dir, o);
+    MT_CHECK_EQ(roi->width(), 14);
+    MT_CHECK_EQ(roi->height(), 10);
+    MT_CHECK_EQ(roi->frame_count(), 3);
+    FrameBuffer a, b;
+    whole->read_frame(2, a);
+    roi->read_frame(2, b);
+    for (int yy = 0; yy < 10; ++yy) {
+        for (int xx = 0; xx < 14; ++xx) MT_CHECK_EQ(b.row(0, yy)[xx], a.row(0, 2 + yy)[4 + xx]);
+    }
+    MT_CHECK(roi->describe().find("処理範囲 14×10") != std::string::npos);
+    // 範囲が画像からはみ出す指定は収める。
+    o.roi_x = 36;
+    o.roi_width = 100;
+    stackcore::effective_roi(o, 40, 30, x, y, w, h);
+    MT_CHECK_EQ(x, 36);
+    MT_CHECK_EQ(w, 4);
+}
+
+MT_TEST(処理範囲_ダークは全体に引いてから切り出す) {
+    const std::string dir = make_dir("roi_dark");
+    for (int i = 0; i < 2; ++i) {
+        char name[64];
+        std::snprintf(name, sizeof(name), "/f%02d.png", i);
+        write_pattern_png(dir + name, 20, 16, i);
+    }
+    auto cal = std::make_shared<stackcore::CalibrationFrames>();
+    cal->dark.reset(20, 16, 1);
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 20; ++x) cal->dark.row(0, y)[x] = 0.01f * ((x + y) % 3);
+    }
+    stackcore::OpenOptions whole_o;
+    whole_o.calibration = cal;
+    stackcore::OpenOptions roi_o = whole_o;
+    roi_o.roi_x = 6;
+    roi_o.roi_y = 4;
+    roi_o.roi_width = 8;
+    roi_o.roi_height = 6;
+    FrameBuffer a, b;
+    stackcore::open_video(dir, whole_o)->read_frame(1, a);
+    stackcore::open_video(dir, roi_o)->read_frame(1, b);
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 8; ++x) MT_CHECK_EQ(b.row(0, y)[x], a.row(0, 4 + y)[6 + x]);
+    }
+}

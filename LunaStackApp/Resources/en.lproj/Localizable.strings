@@ -396,3 +396,13 @@
 "チャンネル：" = "Channel:";
 "入力レベル：" = "Input Levels:";
 "Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、スタック結果の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。書き出す明るさそのままで見るには「表示を明るくする」をOFFにします（黒・白の三角をスタック結果の範囲の内側に置いたときも同じになります）。" = "Works like Levels in Photoshop. The black and white triangles set the range, and the gray triangle (the value is gamma) sets the midtones. Per-channel (R, G, B) levels are applied before RGB. While \"Brighten Preview\" is on, only the preview is stretched so the stack's brightness range fills the screen. To see exactly the exported brightness, turn \"Brighten Preview\" off (it also matches when the black and white triangles are inside the stack's own range).";
+"処理範囲" = "Processing Area";
+"フレームの上で処理範囲を描く" = "Draw processing area on frames";
+"全体を処理します" = "Processing the whole frame";
+"全体に戻す" = "Use Whole Frame";
+"大きなセンサーの一部にだけ対象が写っているときに、その周りだけを品質評価・アライメント・スタックします（速く、メモリも少なくて済みます）。撮影中に対象は動くので、余白を取って囲み、フレームを送って最後まで範囲に収まっているか確かめてください。変えると品質評価からやり直しになります。" = "When the target fills only part of a large sensor, quality evaluation, alignment and stacking use just the area around it (faster, with less memory). The target drifts during capture, so leave a margin and scrub through the frames to check it stays inside. Changing the area requires quality evaluation to be run again.";
+"処理範囲: %.0f×%.0f px（x %.0f, y %.0f から。全体 %d×%d）" = "Processing area: %.0f×%.0f px (from x %.0f, y %.0f; frame %d×%d)";
+"全体を処理します（%d×%d）" = "Processing the whole frame (%d×%d)";
+"処理範囲を変えました。品質評価からやり直してください" = "Processing area changed. Please run quality evaluation again";
+"全体を処理します。品質評価からやり直してください" = "Processing the whole frame. Please run quality evaluation again";
+"注意: %d / %d フレームで対象が処理範囲からはみ出しています。範囲を広げてください" = "Warning: the target leaves the processing area in %d of %d frames. Please enlarge the area";

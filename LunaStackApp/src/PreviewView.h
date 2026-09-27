@@ -46,6 +46,8 @@ std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer&
 - (void)previewView:(PreviewView*)view didRequestFrameStep:(int)step;
 // 切り抜きの枠を描いた・動かした（画像の画素座標、整数）。ドラッグ中も続けて呼ぶ。
 - (void)previewView:(PreviewView*)view didChangeCropRect:(NSRect)rect;
+// 枠の操作を終えた（マウスを離した）。
+- (void)previewView:(PreviewView*)view didFinishCropRect:(NSRect)rect;
 // ホイールやピンチで倍率が変わった（ツールバーの表示を合わせるため）。
 - (void)previewViewZoomDidChange:(PreviewView*)view;
 @end

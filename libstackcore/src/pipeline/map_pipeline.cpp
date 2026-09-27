@@ -1,11 +1,14 @@
 #include "stackcore/map_pipeline.hpp"
 
+#include <sys/sysctl.h>
+
 #include <dispatch/dispatch.h>
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <exception>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -395,6 +398,61 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
     to_flat(reference, out.reference);
 }
 
+// 窓合成で使う、色補間まで済ませたフレームの控え。
+//
+// **窓合成は位置合わせ領域（AP）ごとに、選んだフレームを読む。** 読むたびに展開と色補間を
+// やり直すと、一眼レフの大きな画像では1回に0.3秒以上かかり、AP×フレームの回数だけ積み重なる。
+// 隣り合うAPは同じ良いフレームを選ぶことが多いので、使ったフレームを上限まで控えて使い回す。
+// 控えるのは読んだ画素そのものなので、結果は控えなしと同じになる（バイト単位で一致）。
+class PreparedFrameCache {
+public:
+    PreparedFrameCache(const VideoSource& source, bool raw_cfa, std::size_t budget)
+        : source_(source), raw_cfa_(raw_cfa), budget_(budget) {}
+
+    const FrameBuffer& get(int index) {
+        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+            if (it->index == index) {
+                entries_.splice(entries_.begin(), entries_, it);
+                return *entries_.front().frame;
+            }
+        }
+        auto cfa = std::make_shared<FrameBuffer>();
+        auto rgb = std::make_shared<FrameBuffer>();
+        const FrameBuffer* f = read_prepared_frame(source_, index, raw_cfa_, *cfa, *rgb);
+        std::shared_ptr<FrameBuffer> kept = f == rgb.get() ? rgb : cfa;
+        const std::size_t bytes =
+            kept->stride() * static_cast<std::size_t>(kept->height()) * kept->channels() * sizeof(float);
+        entries_.push_front(Entry{index, kept, bytes});
+        used_ += bytes;
+        // 上限を超えたら古いものから捨てる（いま読んだ1枚は残す）。
+        while (used_ > budget_ && entries_.size() > 1) {
+            used_ -= entries_.back().bytes;
+            entries_.pop_back();
+        }
+        return *entries_.front().frame;
+    }
+
+private:
+    struct Entry {
+        int index;
+        std::shared_ptr<FrameBuffer> frame;
+        std::size_t bytes;
+    };
+    const VideoSource& source_;
+    bool raw_cfa_;
+    std::size_t budget_;
+    std::size_t used_ = 0;
+    std::list<Entry> entries_;
+};
+
+// 控えの上限。物理メモリの1/8（最大2GB）。
+std::size_t prepared_cache_budget() {
+    std::uint64_t memory = 0;
+    std::size_t len = sizeof(memory);
+    if (sysctlbyname("hw.memsize", &memory, &len, nullptr, 0) != 0) memory = 8ull << 30;
+    return static_cast<std::size_t>(std::min<std::uint64_t>(2ull << 30, memory / 8));
+}
+
 // 途中パス用の設定。
 //
 // **Drizzleは最終出力のためのものであり、参照画像に掛けてはいけない。**
@@ -418,7 +476,7 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
     const std::vector<LocalMatch>& matrix = analysis.matrix;
     const std::vector<AlignmentPoint>& points = analysis.points;
     const int ap_size = analysis.ap_size;
-    FrameBuffer cfa, rgb;
+    PreparedFrameCache frames(source, settings.raw_cfa, prepared_cache_budget());
     // --- AP別に上位N%を選んで窓合成（§4.7・§4.8） ------------------------
     int keep = settings.ap_top_count > 0
                    ? settings.ap_top_count
@@ -459,8 +517,7 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
             const std::size_t fi = chosen[k];
             const FrameInfo& info = analyzed[fi];
             const LocalMatch& m = matrix[base + fi];
-            const FrameBuffer* f =
-                read_prepared_frame(source, info.index, settings.raw_cfa, cfa, rgb);
+            const FrameBuffer* f = &frames.get(info.index);
             const double gain = settings.normalize_brightness && info.mean > 1e-9
                                     ? report.global.reference_mean / info.mean
                                     : 1.0;

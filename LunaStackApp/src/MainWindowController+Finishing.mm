@@ -787,10 +787,26 @@ double ParseField(NSTextField* field) {
     [self updateCropControls];
 }
 
+// 枠はフレーム表示なら処理範囲、スタック結果なら切り抜き。
+- (BOOL)editingRoi {
+    return [_roiModeCheck state] == NSControlStateValueOn && [_viewModeSegment selectedSegment] == 0;
+}
+
 - (void)previewView:(PreviewView*)view didChangeCropRect:(NSRect)rect {
     (void)view;
+    if ([self editingRoi]) {
+        [_roiLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"処理範囲: %.0f×%.0f px（x %.0f, y %.0f から。全体 %d×%d）"),
+                                                             rect.size.width, rect.size.height, rect.origin.x, rect.origin.y,
+                                                             _sourceWidth, _sourceHeight]];
+        return;
+    }
     _cropRect = rect;
     [self updateCropControls];
+}
+
+- (void)previewView:(PreviewView*)view didFinishCropRect:(NSRect)rect {
+    (void)view;
+    if ([self editingRoi]) [self commitRoiRect:rect];
 }
 
 - (void)clearCropBox:(id)sender {

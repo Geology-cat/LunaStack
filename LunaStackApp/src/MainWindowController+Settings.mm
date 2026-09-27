@@ -60,7 +60,29 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
                           : stackcore::DebayerMethod::Bilinear;
     options.calibration = _calibration;
     options.sequence_files = _sequenceFiles;
+    if (_roiRect.size.width > 0 && _roiRect.size.height > 0) {
+        options.roi_x = static_cast<int>(_roiRect.origin.x);
+        options.roi_y = static_cast<int>(_roiRect.origin.y);
+        options.roi_width = static_cast<int>(_roiRect.size.width);
+        options.roi_height = static_cast<int>(_roiRect.size.height);
+    }
     return options;
+}
+
+// プレビュー（フレーム表示）用の開き方。処理範囲は掛けない（全体を見せて、その上に範囲を描く）。
+- (stackcore::OpenOptions)previewOpenOptions {
+    stackcore::OpenOptions options = [self currentOpenOptions];
+    options.roi_x = options.roi_y = options.roi_width = options.roi_height = 0;
+    return options;
+}
+
+// 処理する画像の大きさ（処理範囲があればその大きさ）。解析結果の照合に使う。
+- (int)processingWidth {
+    return _roiRect.size.width > 0 ? static_cast<int>(_roiRect.size.width) : _sourceWidth;
+}
+
+- (int)processingHeight {
+    return _roiRect.size.height > 0 ? static_cast<int>(_roiRect.size.height) : _sourceHeight;
 }
 
 - (void)inputInterpretationChanged:(id)sender {
@@ -69,7 +91,7 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     // 数値欄は入力欄を離れただけでも action を送る。読み方が変わっていないのに
     // 開き直すと、スタック結果や仕上げを黙って捨ててしまう。
     if (_currentIndex >= 0 && _previewSource && _openedInputSignature &&
-        [_openedInputSignature isEqualToString:[self inputSignature]]) {
+        [_openedInputSignature isEqualToString:[self previewInputSignature]]) {
         return;
     }
     _bannerDismissed = NO;
@@ -119,10 +141,144 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     return settings;
 }
 
+// ---- 処理範囲 -------------------------------------------------------------------
+
+- (void)updateRoiControls {
+    if (!_roiLabel) return;
+    if (_roiRect.size.width > 0) {
+        [_roiLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"処理範囲: %.0f×%.0f px（x %.0f, y %.0f から。全体 %d×%d）"),
+                                                             _roiRect.size.width, _roiRect.size.height, _roiRect.origin.x,
+                                                             _roiRect.origin.y, _sourceWidth, _sourceHeight]];
+    } else {
+        [_roiLabel setStringValue:_sourceWidth > 0
+                                      ? [NSString stringWithFormat:LSLocalizedString(@"全体を処理します（%d×%d）"),
+                                                                   _sourceWidth, _sourceHeight]
+                                      : LSLocalizedString(@"全体を処理します")];
+    }
+    [_roiClearButton setEnabled:_roiRect.size.width > 0];
+    [_roiModeCheck setEnabled:_previewSource ? YES : NO];
+}
+
+- (void)roiModeChanged:(id)sender {
+    (void)sender;
+    const BOOL on = [_roiModeCheck state] == NSControlStateValueOn;
+    if (on) {
+        // 範囲はフレーム（入力そのままの画像）の上に描く。切り抜き・AP配置の編集とは同時に使わない。
+        if ([_viewModeSegment selectedSegment] != 0) {
+            [_viewModeSegment setSelectedSegment:0];
+            [self viewModeChanged:nil];
+        }
+        if ([_cropModeCheck state] == NSControlStateValueOn) {
+            [_cropModeCheck setState:NSControlStateValueOff];
+            [self cropModeChanged:nil];
+        }
+        if ([_apEditCheck state] == NSControlStateValueOn) {
+            [_apEditCheck setState:NSControlStateValueOff];
+            [self apDisplayChanged:nil];
+        }
+        [[self window] makeFirstResponder:_preview];
+    }
+    [self updateApOverlay];
+    [self updateRoiControls];
+}
+
+// 描き終えた枠を処理範囲にする（左上・大きさを偶数に、画像の中に収める）。
+// 全体とほぼ同じなら範囲なし（全体）にする。
+- (void)commitRoiRect:(NSRect)rect {
+    NSRect roi = NSZeroRect;
+    if (rect.size.width >= 2 && rect.size.height >= 2 && _sourceWidth > 0) {
+        stackcore::OpenOptions o;
+        o.roi_x = static_cast<int>(rect.origin.x);
+        o.roi_y = static_cast<int>(rect.origin.y);
+        o.roi_width = static_cast<int>(rect.size.width);
+        o.roi_height = static_cast<int>(rect.size.height);
+        int x, y, w, h;
+        stackcore::effective_roi(o, _sourceWidth, _sourceHeight, x, y, w, h);
+        if (w < _sourceWidth - 1 || h < _sourceHeight - 1) roi = NSMakeRect(x, y, w, h);
+    }
+    if (NSEqualRects(roi, _roiRect)) {
+        [self updateApOverlay];
+        return;
+    }
+    _roiRect = roi;
+    [self roiDidChange];
+}
+
+// 範囲が変わった。品質評価からやり直しになる（指紋に範囲が入っているので、前の結果は使われない）。
+- (void)roiDidChange {
+    [self updateApOverlay];
+    [self updateRoiControls];
+    [self updateControlsEnabled];
+    [_statusLabel setStringValue:_roiRect.size.width > 0
+                                     ? LSLocalizedString(@"処理範囲を変えました。品質評価からやり直してください")
+                                     : LSLocalizedString(@"全体を処理します。品質評価からやり直してください")];
+}
+
+- (void)clearRoi:(id)sender {
+    (void)sender;
+    if (_roiRect.size.width <= 0) return;
+    _roiRect = NSZeroRect;
+    [self roiDidChange];
+}
+
+// 品質評価のあとに、対象が範囲からはみ出したフレームがないかを調べて知らせる。
+// 参照フレームで対象（明るい部分）を囲む矩形を求め、各フレームの変位ぶんずらして範囲の外に
+// 出るかを見る（変位 dx は「このフレームを dx 動かすと参照に重なる」向きなので、対象は −dx の位置）。
+- (void)checkRoiDrift:(std::shared_ptr<stackcore::GlobalStageReport>)report {
+    if (!report || _roiRect.size.width <= 0 || report->frames.empty()) return;
+    const std::string path = _inputPath;
+    const stackcore::OpenOptions options = [self currentOpenOptions];
+    MainWindowController* controller = self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        int outside = 0, total = 0;
+        try {
+            std::unique_ptr<stackcore::VideoSource> source = stackcore::open_video(path, options);
+            stackcore::FrameBuffer ref;
+            source->read_frame(std::max(0, std::min(report->reference_index, source->frame_count() - 1)), ref);
+            int bx = 0, by = 0, bw = 0, bh = 0;
+            stackcore::detect_object_bounds(ref, 0, bx, by, bw, bh);
+            const bool whole = bw >= ref.width() && bh >= ref.height();
+            if (!whole) {
+                for (const stackcore::FrameInfo& f : report->frames) {
+                    if (!f.accepted) continue;  // 追跡に失敗したフレームの変位は当てにならない
+                    ++total;
+                    const int x0 = bx - f.dx, y0 = by - f.dy;
+                    if (x0 < 0 || y0 < 0 || x0 + bw > ref.width() || y0 + bh > ref.height()) ++outside;
+                }
+            }
+        } catch (const std::exception&) {
+            return;
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (outside > 0) {
+                [controller showRoiDriftWarning:outside total:total];
+            }
+        });
+    });
+}
+
+- (void)showRoiDriftWarning:(int)outside total:(int)total {
+    NSString* text = [NSString stringWithFormat:
+                                   LSLocalizedString(@"注意: %d / %d フレームで対象が処理範囲からはみ出しています。範囲を広げてください"),
+                                   outside, total];
+    [_statusLabel setStringValue:text];
+    [_roiLabel setStringValue:[[_roiLabel stringValue] stringByAppendingFormat:@"\n%@", text]];
+}
+
 // ---- 解析結果を使い回せるかの判定 ---------------------------------------------
 
-// 入力そのものと読み方。品質評価・アライメントの両方の指紋に入る。
+// 入力そのものと読み方。品質評価・アライメントの両方の指紋に入る。処理範囲も入る。
 - (NSString*)inputSignature {
+    NSMutableString* s = [NSMutableString stringWithString:[self previewInputSignature]];
+    if (_roiRect.size.width > 0) {
+        [s appendFormat:@"roi=%.0f,%.0f,%.0f,%.0f;", _roiRect.origin.x, _roiRect.origin.y, _roiRect.size.width,
+                        _roiRect.size.height];
+    }
+    return s;
+}
+
+// プレビュー用の入力を開き直すかの指紋（処理範囲は入れない。範囲を変えてもフレーム表示は同じ）。
+- (NSString*)previewInputSignature {
     const stackcore::OpenOptions o = [self currentOpenOptions];
     NSMutableString* s = [NSMutableString string];
     [s appendFormat:@"path=%@;", [self inputPathString]];
@@ -297,12 +453,12 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
 
 - (void)updateDrizzleEstimate {
     const double scale = LSDrizzleScaleAt([_drizzleSegment selectedSegment]);
-    if (scale <= 1.0 || _sourceWidth <= 0) {
+    if (scale <= 1.0 || [self processingWidth] <= 0) {
         [_drizzleEstimate setStringValue:@""];
         return;
     }
-    const int w = static_cast<int>(_sourceWidth * scale);
-    const int h = static_cast<int>(_sourceHeight * scale);
+    const int w = static_cast<int>([self processingWidth] * scale);
+    const int h = static_cast<int>([self processingHeight] * scale);
     // 出力＋重みで float 2面ぶんを持つ。
     const double mb = static_cast<double>(w) * h * _sourceChannels * 4 * 2 / (1024.0 * 1024.0);
     [_drizzleEstimate
@@ -709,6 +865,8 @@ static void SetText(NSTextField* field, id value) {
     NSDictionary* meta = @{
         @"signature" : [self analysisSignature],
         @"settings" : [self settingsDictionary],
+        // 処理範囲は画像ごとのものなのでプリセット（settings）には入れず、ここにだけ残す。
+        @"roi" : @[ @(_roiRect.origin.x), @(_roiRect.origin.y), @(_roiRect.size.width), @(_roiRect.size.height) ],
         @"darkPath" : _darkPath ? _darkPath : @"",
         @"flatPath" : _flatPath ? _flatPath : @""
     };
@@ -759,17 +917,24 @@ static void SetText(NSTextField* field, id value) {
     // 古い解析結果を別の中身に当てると、黙って誤った画像が出る。
     // 解析時の設定（フレーム範囲など）を画面に戻してから、そのときのフレーム数で照合する。
     NSDictionary* before = [self settingsDictionary];
+    const NSRect roiBefore = _roiRect;
     [self applySettingsDictionary:settings includePostProcessing:NO];
+    NSArray* roi = meta[@"roi"];
+    _roiRect = NSZeroRect;
+    if ([roi isKindOfClass:[NSArray class]] && [roi count] == 4) {
+        _roiRect = NSMakeRect([roi[0] doubleValue], [roi[1] doubleValue], [roi[2] doubleValue], [roi[3] doubleValue]);
+    }
     int frames = _sourceFrames;
     try {
-        frames = stackcore::open_video(_inputPath, [self currentOpenOptions])->frame_count();
+        frames = stackcore::open_video(_inputPath, [self previewOpenOptions])->frame_count();
     } catch (const std::exception&) {
     }
     std::string message;
-    if (!stackcore::matches_source(*loaded, [self inputSizeBytes], frames, _sourceWidth,
-                                   _sourceHeight, _sourceChannels, message)) {
+    if (!stackcore::matches_source(*loaded, [self inputSizeBytes], frames, [self processingWidth],
+                                   [self processingHeight], _sourceChannels, message)) {
         NSLog(@"サイドカーが入力と合いません: %@", [NSString stringWithUTF8String:message.c_str()]);
         [self applySettingsDictionary:before includePostProcessing:NO];
+        _roiRect = roiBefore;
         return;
     }
 
@@ -785,19 +950,20 @@ static void SetText(NSTextField* field, id value) {
         [_analysisSignature release];
         _analysisSignature = nil;
         [self applySettingsDictionary:before includePostProcessing:NO];
+        _roiRect = roiBefore;
         return;
     }
 
     // 解析時の読み方（範囲・色配列など）を戻した場合は、プレビュー用の入力も開き直す。
-    if (!_openedInputSignature || ![_openedInputSignature isEqualToString:[self inputSignature]]) {
+    if (!_openedInputSignature || ![_openedInputSignature isEqualToString:[self previewInputSignature]]) {
         try {
             _previewSource = std::shared_ptr<stackcore::VideoSource>(
-                stackcore::open_video(_inputPath, [self currentOpenOptions]).release());
+                stackcore::open_video(_inputPath, [self previewOpenOptions]).release());
             _sourceFrames = _previewSource->frame_count();
             [_frameSlider setMaxValue:std::max(0, _sourceFrames - 1)];
             [_graph setDisplayOffset:_previewSource->original_index(0)];
             [_openedInputSignature release];
-            _openedInputSignature = [[self inputSignature] copy];
+            _openedInputSignature = [[self previewInputSignature] copy];
             [self showSourceFrame:0];
         } catch (const std::exception&) {
         }
@@ -809,6 +975,7 @@ static void SetText(NSTextField* field, id value) {
     global->reference_index = loaded->reference_index;
     global->reference_mean = loaded->reference_mean;
     _qualityStage = std::make_shared<stackcore::GlobalStageReport>(*global);
+    [self updateRoiControls];
     _globalStage = global;
     [_qualitySignature release];
     _qualitySignature = [[self qualitySignature] copy];
@@ -827,8 +994,8 @@ static void SetText(NSTextField* field, id value) {
     stackcore::QualityCache cache;
     cache.source_size = [self inputSizeBytes];
     cache.source_frames = _sourceFrames;
-    cache.width = _sourceWidth;
-    cache.height = _sourceHeight;
+    cache.width = [self processingWidth];
+    cache.height = [self processingHeight];
     cache.channels = _sourceChannels;
     cache.report = *_qualityStage;
     try {
@@ -860,7 +1027,7 @@ static void SetText(NSTextField* field, id value) {
         return NO;
     }
     if (cache.source_size != [self inputSizeBytes] || cache.source_frames != _sourceFrames ||
-        cache.width != _sourceWidth || cache.height != _sourceHeight ||
+        cache.width != [self processingWidth] || cache.height != [self processingHeight] ||
         cache.channels != _sourceChannels) {
         return NO;
     }

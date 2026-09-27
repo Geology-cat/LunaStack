@@ -445,6 +445,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [[[box widthAnchor] constraintEqualToConstant:278.0] setActive:YES];
 
     [self buildQualitySection:box];
+    [self buildRoiSection:box];
     [self buildInputSection:box];
     [self buildQualityAdvancedSection:box];
     [self buildAlignmentSection:box];
@@ -465,7 +466,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
 // セクションがどの工程タブに属するか。
 - (NSInteger)tabIndexForSectionKey:(NSString*)key {
-    if ([key isEqualToString:@"quality"] || [key isEqualToString:@"input"] ||
+    if ([key isEqualToString:@"quality"] || [key isEqualToString:@"input"] || [key isEqualToString:@"roi"] ||
         [key isEqualToString:@"qualityAdvanced"]) {
         return 0;
     }
@@ -1106,6 +1107,22 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
                    box:box];
     [self addToSection:key
                   view:[self noteLabel:@"Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、スタック結果の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。書き出す明るさそのままで見るには「表示を明るくする」をOFFにします（黒・白の三角をスタック結果の範囲の内側に置いたときも同じになります）。"]
+                   box:box];
+}
+
+- (void)buildRoiSection:(NSStackView*)box {
+    NSString* key = @"roi";
+    [self beginSection:@"処理範囲" key:key inBox:box];
+    _roiModeCheck = [self checkboxWithTitle:@"フレームの上で処理範囲を描く" state:NO];
+    [_roiModeCheck setTarget:self];
+    [_roiModeCheck setAction:@selector(roiModeChanged:)];
+    [self addToSection:key view:_roiModeCheck box:box];
+    _roiLabel = [self noteLabel:@"全体を処理します"];
+    [self addToSection:key view:_roiLabel box:box];
+    _roiClearButton = [self buttonWithTitle:@"全体に戻す" action:@selector(clearRoi:)];
+    [self addToSection:key view:[self buttonRow:@[ _roiClearButton ]] box:box];
+    [self addToSection:key
+                  view:[self noteLabel:@"大きなセンサーの一部にだけ対象が写っているときに、その周りだけを品質評価・アライメント・スタックします（速く、メモリも少なくて済みます）。撮影中に対象は動くので、余白を取って囲み、フレームを送って最後まで範囲に収まっているか確かめてください。変えると品質評価からやり直しになります。"]
                    box:box];
 }
 

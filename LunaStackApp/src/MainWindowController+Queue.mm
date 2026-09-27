@@ -331,6 +331,9 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     if (!sameInput) {
         [_rangeStartField setStringValue:@""];
         [_rangeEndField setStringValue:@""];
+        // 処理範囲もそのファイルだけのもの（解析済みならサイドカーから戻る）。
+        _roiRect = NSZeroRect;
+        [_roiModeCheck setState:NSControlStateValueOff];
     }
     _inputPath = std::string([[item path] UTF8String]);
     _inputIsSequence = [item isSequence];
@@ -381,7 +384,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     [_openedInputSignature release];
     _openedInputSignature = nil;
     try {
-        const stackcore::OpenOptions options = [self currentOpenOptions];
+        const stackcore::OpenOptions options = [self previewOpenOptions];
         _previewSource = std::shared_ptr<stackcore::VideoSource>(
             stackcore::open_video(_inputPath, options).release());
         _sourceFrames = _previewSource->frame_count();
@@ -392,7 +395,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
                                  : _sourceFrames;
         _byteOrderSuspect = _previewSource->byte_order_suspect() ? YES : NO;
         [_graph setDisplayOffset:_previewSource->original_index(0)];
-        _openedInputSignature = [[self inputSignature] copy];
+        _openedInputSignature = [[self previewInputSignature] copy];
 
         // 16bitと名乗っているのに実測が12bit幅に収まっていないか。
         // そのままだと画像が暗いだけで、破綻はしないので気づきにくい。

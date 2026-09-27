@@ -329,6 +329,7 @@
         [_alignSummaryLabel setStringValue:@""];
         [self showFrames:result.frames];
         [self saveQualityCacheForCurrent];
+        [self checkRoiDrift:result.quality];
         // 品質評価の後は、フレームのスライダーを品質順にする（良いものから順に見比べられる）。
         _frameOrderByQuality = YES;
         [_frameOrderSegment setSelectedSegment:1];
@@ -353,6 +354,7 @@
         _globalStage = result.global;
         [_globalSignature release];
         _globalSignature = [alignmentSignature copy];
+        [self checkRoiDrift:result.global];
         if (!result.analysis) {
             // 画像全体の位置合わせに切り替えたとき、以前の局所領域を残さない。
             _analysis.reset();

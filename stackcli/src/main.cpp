@@ -100,6 +100,7 @@ struct Options {
     // 入力の前処理
     int frame_start = 0;           // 1始まりで受け取り、0始まりで持つ
     int frame_end = 0;             // 排他的。0で最後まで
+    int roi[4] = {0, 0, 0, 0};     // 処理範囲 x, y, 幅, 高さ（幅0で全体）
     std::string bayer;             // 空で指定なし / mono / rggb / grbg / gbrg / bggr
     stackcore::DebayerMethod debayer = stackcore::DebayerMethod::Bilinear;
     std::string dark;              // マスターダークにする動画・静止画
@@ -186,6 +187,10 @@ stackcore::OpenOptions make_open_options(const Options& opts) {
     o.bit_depth_override = opts.bit_depth;
     o.frame_start = opts.frame_start;
     o.frame_end = opts.frame_end;
+    o.roi_x = opts.roi[0];
+    o.roi_y = opts.roi[1];
+    o.roi_width = opts.roi[2];
+    o.roi_height = opts.roi[3];
     o.debayer = opts.debayer;
     if (!opts.bayer.empty()) {
         o.override_color = true;
@@ -473,6 +478,8 @@ void print_usage() {
         "\n"
         "入力の前処理 (extract / stack / mapstack 共通):\n"
         "  --frames <開始:終了>      使うフレームの範囲（1始まり、終了を含む。例 101:600）\n"
+        "  --roi <x,y,幅,高さ>       処理範囲（入力の画素座標）。この範囲だけで品質評価からスタックまで行う\n"
+        "                            （左上・大きさは偶数にそろえる。例 1800,1200,2400,1600）\n"
         "  --bayer mono|rggb|grbg|gbrg|bggr\n"
         "                            色形式を手動で指定する（ヘッダの誤りや静止画向け）\n"
         "  --debayer bilinear|mhc    デバイヤー方式（既定: bilinear。mhcは偽色が少ない）\n"
@@ -1519,6 +1526,13 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "エラー: --frames の範囲が不正です\n");
                 return 2;
             }
+        } else if (arg == "--roi" && has_next) {
+            std::vector<double> v;
+            if (!parse_numbers(argv[++i], 4, v) || v[2] < 2 || v[3] < 2 || v[0] < 0 || v[1] < 0) {
+                std::fprintf(stderr, "エラー: --roi は x,y,幅,高さ です（例 1800,1200,2400,1600）\n");
+                return 2;
+            }
+            for (int k = 0; k < 4; ++k) opts.roi[k] = static_cast<int>(v[static_cast<std::size_t>(k)]);
         } else if (arg == "--bayer" && has_next) {
             opts.bayer = argv[++i];
             for (char& ch : opts.bayer) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));

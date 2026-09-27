@@ -938,6 +938,9 @@ namespace {
         _cropOverlay = NSZeroRect;
         [self notifyCropChanged];
     }
+    if (_cropDrag && [_delegate respondsToSelector:@selector(previewView:didFinishCropRect:)]) {
+        [_delegate previewView:self didFinishCropRect:_cropOverlay];
+    }
     _cropDrag = 0;
 }
 

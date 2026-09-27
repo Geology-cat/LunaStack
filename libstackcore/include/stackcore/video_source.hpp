@@ -88,12 +88,26 @@ struct OpenOptions {
     // 静止画連番。空でなければ path の代わりにこれらのファイルを順に読む。
     // path がフォルダのときは、その直下の静止画を自然順に並べて使う。
     std::vector<std::string> sequence_files;
+    // 処理範囲（入力の画素座標）。幅か高さが0なら全体。品質評価からスタックまで、この範囲だけを
+    // 読んだものとして扱う（大きなセンサーの中央にだけ写っている対象を速く・少ないメモリで処理する）。
+    // ダーク・フラット補正は全体に掛けてから切り出すので、マスターは全体の大きさのままでよい。
+    // 左上は偶数に切り下げ、幅・高さも偶数にそろえる（Bayer の並びを変えないため。effective_roi）。
+    int roi_x = 0;
+    int roi_y = 0;
+    int roi_width = 0;
+    int roi_height = 0;
+    bool has_roi() const { return roi_width > 0 && roi_height > 0; }
 
     bool has_preprocessing() const {
         return frame_start != 0 || frame_end != 0 || override_color ||
-               debayer != DebayerMethod::Bilinear || (calibration && !calibration->empty());
+               debayer != DebayerMethod::Bilinear || (calibration && !calibration->empty()) ||
+               has_roi();
     }
 };
+
+// 処理範囲を、入力の寸法 width×height の中に収め、左上と大きさを偶数にそろえた値。
+// 範囲の指定が無ければ全体を返す。
+void effective_roi(const OpenOptions& options, int width, int height, int& x, int& y, int& w, int& h);
 
 // 拡張子と中身から形式を判定して開く。失敗時は std::runtime_error を投げる。
 //

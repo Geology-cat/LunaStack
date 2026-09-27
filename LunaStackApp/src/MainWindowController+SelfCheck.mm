@@ -487,6 +487,56 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     return ok;
 }
 
+- (void)setRoiForTesting:(NSString*)spec {
+    if ([spec isEqualToString:@"center"]) {
+        [self commitRoiRect:NSMakeRect(_sourceWidth / 4, _sourceHeight / 4, _sourceWidth / 2, _sourceHeight / 2)];
+        return;
+    }
+    NSArray* v = [spec componentsSeparatedByString:@":"];
+    if ([v count] == 4) {
+        [self commitRoiRect:NSMakeRect([v[0] doubleValue], [v[1] doubleValue], [v[2] doubleValue], [v[3] doubleValue])];
+    }
+}
+
+// 処理範囲: フレーム表示は全体のまま、処理に使う入力は範囲だけになり、範囲を変えると
+// 解析結果は使えなくなり、［全体に戻す］で元に戻るか。範囲の外で描いた枠は画像の中に収まるか。
+- (BOOL)selfCheckRoi {
+    if (!_previewSource) return NO;
+    const NSRect before = _roiRect;
+    NSString* signatureBefore = [[[self analysisSignature] copy] autorelease];
+    // 奇数の位置・はみ出す大きさで描いても、偶数に揃って画像の中に収まる。
+    [self commitRoiRect:NSMakeRect(_sourceWidth / 3 + 1, _sourceHeight / 3 + 1, _sourceWidth, _sourceHeight / 3)];
+    BOOL ok = _roiRect.size.width > 0 && static_cast<int>(_roiRect.origin.x) % 2 == 0 &&
+              static_cast<int>(_roiRect.origin.y) % 2 == 0 && NSMaxX(_roiRect) <= _sourceWidth &&
+              NSMaxY(_roiRect) <= _sourceHeight;
+    ok = ok && (![[self analysisSignature] isEqualToString:signatureBefore] || NSEqualRects(before, _roiRect));
+    // 処理に使う入力は範囲の大きさ、フレーム表示は全体。中身は全体の範囲の部分と一致する。
+    try {
+        std::unique_ptr<stackcore::VideoSource> roi = stackcore::open_video(_inputPath, [self currentOpenOptions]);
+        ok = ok && roi->width() == static_cast<int>(_roiRect.size.width) &&
+             roi->height() == static_cast<int>(_roiRect.size.height) && _previewSource->width() == _sourceWidth;
+        stackcore::FrameBuffer a, b;
+        roi->read_frame(0, a);
+        _previewSource->read_frame(0, b);
+        const int ox = static_cast<int>(_roiRect.origin.x), oy = static_cast<int>(_roiRect.origin.y);
+        for (int c = 0; ok && c < a.channels(); ++c) {
+            for (int y = 0; ok && y < a.height(); y += 7) {
+                for (int x = 0; x < a.width(); x += 7) {
+                    if (a.row(c, y)[x] != b.row(c, oy + y)[ox + x]) ok = NO;
+                }
+            }
+        }
+    } catch (const std::exception&) {
+        ok = NO;
+    }
+    [self clearRoi:nil];
+    ok = ok && _roiRect.size.width == 0;
+    // 元の状態に戻す。
+    if (before.size.width > 0) [self commitRoiRect:before];
+    NSLog(@"処理範囲の自己検証: %@", ok ? @"範囲どおりに切り出し、全体に戻せる" : @"— 合いません");
+    return ok;
+}
+
 // 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
 - (BOOL)selfCheckInspectorScrollsVerticallyOnly {
     NSClipView* clip = [_inspectorScroll contentView];

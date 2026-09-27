@@ -1,10 +1,14 @@
 #include "stackcore/video_source.hpp"
 
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <list>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 
 #include "stackcore/avi_decoder.hpp"
@@ -12,6 +16,40 @@
 
 namespace stackcore {
 namespace {
+
+// 画素から最小・最大・平均を測る（静止画連番・処理範囲・フレームの控えで共通の式）。
+FrameStats stats_from_frame(const FrameBuffer& frame, int bit_depth) {
+    const double scale = static_cast<double>((1u << std::min(16, std::max(1, bit_depth))) - 1u);
+    double lo = 1.0, hi = 0.0, sum = 0.0;
+    std::size_t n = 0;
+    for (int c = 0; c < frame.channels(); ++c) {
+        for (int y = 0; y < frame.height(); ++y) {
+            const float* row = frame.row(c, y);
+            for (int x = 0; x < frame.width(); ++x) {
+                lo = std::min(lo, static_cast<double>(row[x]));
+                hi = std::max(hi, static_cast<double>(row[x]));
+                sum += row[x];
+                ++n;
+            }
+        }
+    }
+    FrameStats stats;
+    stats.min_value = static_cast<std::uint32_t>(lo * scale + 0.5);
+    stats.max_value = static_cast<std::uint32_t>(hi * scale + 0.5);
+    stats.mean_value = n > 0 ? sum / n * scale : 0.0;
+    return stats;
+}
+
+void copy_frame_into(const FrameBuffer& src, FrameBuffer& out) {
+    if (out.width() != src.width() || out.height() != src.height() || out.channels() != src.channels()) {
+        out.reset(src.width(), src.height(), src.channels());
+    }
+    for (int c = 0; c < src.channels(); ++c) {
+        std::memcpy(out.plane(c), src.plane(c), src.stride() * static_cast<std::size_t>(src.height()) * sizeof(float));
+    }
+    out.set_source_bit_depth(src.source_bit_depth());
+    out.invalidate_luma();
+}
 
 class SerSource : public VideoSource {
 public:
@@ -172,25 +210,7 @@ public:
     FrameStats frame_stats(int index) const override {
         FrameBuffer frame;
         read_frame(index, frame);
-        const double scale = static_cast<double>((1u << std::min(16, info_.bit_depth)) - 1u);
-        FrameStats stats;
-        double lo = 1.0, hi = 0.0, sum = 0.0;
-        std::size_t n = 0;
-        for (int c = 0; c < frame.channels(); ++c) {
-            for (int y = 0; y < frame.height(); ++y) {
-                const float* row = frame.row(c, y);
-                for (int x = 0; x < frame.width(); ++x) {
-                    lo = std::min(lo, static_cast<double>(row[x]));
-                    hi = std::max(hi, static_cast<double>(row[x]));
-                    sum += row[x];
-                    ++n;
-                }
-            }
-        }
-        stats.min_value = static_cast<std::uint32_t>(lo * scale + 0.5);
-        stats.max_value = static_cast<std::uint32_t>(hi * scale + 0.5);
-        stats.mean_value = n > 0 ? sum / n * scale : 0.0;
-        return stats;
+        return stats_from_frame(frame, std::min(16, info_.bit_depth));
     }
 
     std::string describe() const override {
@@ -207,7 +227,7 @@ private:
     std::vector<std::int64_t> ticks_;  // 撮影時刻（全部そろっているときだけ）
 };
 
-// 前処理（フレーム範囲・色形式の指定・デバイヤー方式・ダーク/フラット補正）を
+// 前処理（フレーム範囲・色形式の指定・デバイヤー方式・ダーク/フラット補正・処理範囲）を
 // 掛けるラッパー。パイプラインは前処理の存在を知らなくてよい。
 class PreparedSource : public VideoSource {
 public:
@@ -241,10 +261,12 @@ public:
             check(o.calibration->dark, "ダーク");
             check(o.calibration->flat, "フラット");
         }
+        effective_roi(o, base_->width(), base_->height(), roi_x_, roi_y_, roi_w_, roi_h_);
+        cropped_ = roi_w_ != base_->width() || roi_h_ != base_->height();
     }
 
-    int width() const override { return base_->width(); }
-    int height() const override { return base_->height(); }
+    int width() const override { return roi_w_; }
+    int height() const override { return roi_h_; }
     int frame_count() const override { return count_; }
     SerColorId color_id() const override {
         return options_.override_color ? options_.color_override : base_->color_id();
@@ -258,10 +280,34 @@ public:
         if (index < 0 || index >= count_) {
             throw std::out_of_range("フレーム番号が範囲外です");
         }
-        base_->read_frame(start_ + index, out);
-        if (options_.calibration) apply_calibration(out, *options_.calibration);
+        if (!cropped_) {
+            base_->read_frame(start_ + index, out);
+            if (options_.calibration) apply_calibration(out, *options_.calibration);
+            return;
+        }
+        // 全体を読んで補正してから切り出す（補正のマスターは全体の大きさ）。
+        FrameBuffer full;
+        base_->read_frame(start_ + index, full);
+        if (options_.calibration) apply_calibration(full, *options_.calibration);
+        if (out.width() != roi_w_ || out.height() != roi_h_ || out.channels() != full.channels()) {
+            out.reset(roi_w_, roi_h_, full.channels());
+        }
+        for (int c = 0; c < full.channels(); ++c) {
+            for (int y = 0; y < roi_h_; ++y) {
+                const float* s = full.row(c, roi_y_ + y) + roi_x_;
+                std::copy(s, s + roi_w_, out.row(c, y));
+            }
+        }
+        out.set_source_bit_depth(full.source_bit_depth());
+        out.invalidate_luma();
     }
-    FrameStats frame_stats(int index) const override { return base_->frame_stats(start_ + index); }
+    FrameStats frame_stats(int index) const override {
+        if (!cropped_) return base_->frame_stats(start_ + index);
+        // 範囲の中だけで測る（範囲の外の空や別の天体で白飛び・真っ暗の判定が狂わないように）。
+        FrameBuffer frame;
+        read_frame(index, frame);
+        return stats_from_frame(frame, bit_depth());
+    }
     std::string describe() const override {
         std::string s = base_->describe();
         if (start_ != 0 || count_ != base_->frame_count()) {
@@ -269,6 +315,10 @@ public:
         }
         if (options_.calibration && !options_.calibration->dark.empty()) s += " / ダーク補正";
         if (options_.calibration && !options_.calibration->flat.empty()) s += " / フラット補正";
+        if (cropped_) {
+            s += " / 処理範囲 " + std::to_string(roi_w_) + "×" + std::to_string(roi_h_) + "（x " +
+                 std::to_string(roi_x_) + ", y " + std::to_string(roi_y_) + " から）";
+        }
         return s;
     }
     const char* format_name() const override { return base_->format_name(); }
@@ -283,6 +333,8 @@ private:
     OpenOptions options_;
     int start_ = 0;
     int count_ = 0;
+    int roi_x_ = 0, roi_y_ = 0, roi_w_ = 0, roi_h_ = 0;
+    bool cropped_ = false;
 };
 
 bool ends_with_ci(const std::string& s, const char* suffix) {
@@ -297,6 +349,95 @@ bool ends_with_ci(const std::string& s, const char* suffix) {
     }
     return true;
 }
+
+// 読んだフレームを控えておくラッパー（静止画連番用）。
+//
+// **スタックは位置合わせ領域ごとに、選んだフレームを読み直す。** 動画は1枚の読み込みが
+// 一瞬なので問題にならないが、カメラのRAWは1枚の展開に0.4〜1秒かかり、AP×フレームの
+// 回数だけ展開すると数十倍遅くなる（CR2 3枚・128APで4分）。そこで、前処理まで済ませた
+// フレームを、上限（物理メモリの1/4、最大4GB）まで控えておき、古いものから捨てる。
+// 控えるのは読んだ値そのものの写しなので、結果はバイト単位で変わらない。
+// 低メモリモードでは控えない。
+class CachedFrameSource : public VideoSource {
+public:
+    explicit CachedFrameSource(std::unique_ptr<VideoSource> base) : base_(std::move(base)) {
+        std::uint64_t memory = 0;
+        std::size_t len = sizeof(memory);
+        if (sysctlbyname("hw.memsize", &memory, &len, nullptr, 0) != 0) memory = 8ull << 30;
+        budget_ = static_cast<std::size_t>(std::min<std::uint64_t>(4ull << 30, memory / 4));
+    }
+
+    int width() const override { return base_->width(); }
+    int height() const override { return base_->height(); }
+    int frame_count() const override { return base_->frame_count(); }
+    SerColorId color_id() const override { return base_->color_id(); }
+    int bit_depth() const override { return base_->bit_depth(); }
+    bool has_timestamps() const override { return base_->has_timestamps(); }
+    std::int64_t timestamp_ticks(int index) const override { return base_->timestamp_ticks(index); }
+
+    void read_frame(int index, FrameBuffer& out) const override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+                if (it->index == index) {
+                    entries_.splice(entries_.begin(), entries_, it);  // いちばん新しく使った側へ
+                    copy_frame_into(*entries_.front().frame, out);
+                    return;
+                }
+            }
+        }
+        auto frame = std::make_shared<FrameBuffer>();
+        base_->read_frame(index, *frame);
+        copy_frame_into(*frame, out);
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (budget_ == 0) return;
+        const std::size_t bytes =
+            frame->stride() * static_cast<std::size_t>(frame->height()) * frame->channels() * sizeof(float);
+        if (bytes > budget_) return;
+        for (const Entry& e : entries_) {
+            if (e.index == index) return;  // 別のスレッドが先に控えた
+        }
+        entries_.push_front(Entry{index, frame, bytes});
+        used_ += bytes;
+        while (used_ > budget_ && !entries_.empty()) {
+            used_ -= entries_.back().bytes;
+            entries_.pop_back();
+        }
+    }
+
+    FrameStats frame_stats(int index) const override {
+        FrameBuffer frame;
+        read_frame(index, frame);
+        return stats_from_frame(frame, bit_depth());
+    }
+    std::string describe() const override { return base_->describe(); }
+    const char* format_name() const override { return base_->format_name(); }
+    bool byte_order_suspect() const override { return base_->byte_order_suspect(); }
+    void set_low_memory(bool on) override {
+        base_->set_low_memory(on);
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (on) {
+            budget_ = 0;
+            entries_.clear();
+            used_ = 0;
+        }
+    }
+    bool supports_concurrent_reads() const override { return base_->supports_concurrent_reads(); }
+    DebayerMethod debayer_method() const override { return base_->debayer_method(); }
+    int original_index(int index) const override { return base_->original_index(index); }
+
+private:
+    struct Entry {
+        int index;
+        std::shared_ptr<FrameBuffer> frame;
+        std::size_t bytes;
+    };
+    std::unique_ptr<VideoSource> base_;
+    mutable std::mutex mutex_;
+    mutable std::list<Entry> entries_;
+    mutable std::size_t used_ = 0;
+    std::size_t budget_ = 0;
+};
 
 }  // namespace
 
@@ -332,6 +473,23 @@ static std::unique_ptr<VideoSource> open_container(const std::string& path, cons
     }
 }
 
+void effective_roi(const OpenOptions& o, int width, int height, int& x, int& y, int& w, int& h) {
+    x = 0;
+    y = 0;
+    w = width;
+    h = height;
+    if (!o.has_roi() || width < 2 || height < 2) return;
+    // 左上を偶数に切り下げ、右下を画像の中に収めてから、幅・高さを偶数に切り詰める。
+    const int x0 = std::max(0, std::min(o.roi_x, width - 2)) & ~1;
+    const int y0 = std::max(0, std::min(o.roi_y, height - 2)) & ~1;
+    const int x1 = std::min(width, std::max(x0 + 2, o.roi_x + o.roi_width));
+    const int y1 = std::min(height, std::max(y0 + 2, o.roi_y + o.roi_height));
+    x = x0;
+    y = y0;
+    w = std::max(2, (x1 - x0) & ~1);
+    h = std::max(2, (y1 - y0) & ~1);
+}
+
 bool is_directory_path(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
@@ -354,8 +512,11 @@ std::unique_ptr<VideoSource> open_raw_video(const std::string& path, const OpenO
 
 std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptions& options) {
     std::unique_ptr<VideoSource> base = open_raw_video(path, options);
-    if (!options.has_preprocessing()) return base;
-    return std::unique_ptr<VideoSource>(new PreparedSource(std::move(base), options));
+    // 静止画連番は1枚の読み込み（展開）が重いので、前処理まで済ませたフレームを控える。
+    const bool sequence = dynamic_cast<ImageSequenceSource*>(base.get()) != nullptr;
+    if (options.has_preprocessing()) base.reset(new PreparedSource(std::move(base), options));
+    if (sequence) base.reset(new CachedFrameSource(std::move(base)));
+    return base;
 }
 
 }  // namespace stackcore
