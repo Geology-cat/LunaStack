@@ -1,0 +1,214 @@
+\chapter{「仕上げ・出力」タブの設定}\label{chap:finish}
+
+仕上げは、スタックの結果そのものは書き換えずに、見え方を調整する工程です。つまみを動かすと、プレビューがすぐに変わります。
+何度動かしても元の画質は落ちないので、気軽に試してください。
+仕上げは、\textbf{RGB チャンネル合わせ → ウェーブレット → 色 → 明るさ → 向き}の順に掛かります（順番は変わりません）。
+
+% ------------------------------------------------------------------------------
+\section{プレビューの比較}
+
+\sidebyside[0.5]{insp_compare}{\mk[e]{all}{1}}{%
+  \begin{marklist}
+    \item \uil{仕上げ全体の効果をプレビュー}：オフにすると、仕上げを掛ける前のスタックの結果を表示します。
+  \end{marklist}
+  オン・オフは画面で見比べるためだけのもので、書き出すファイルには設定中の仕上げがすべて入ります。}
+
+% ------------------------------------------------------------------------------
+\section{RGB チャンネル合わせ（大気分散）}
+
+低い空の惑星は、大気がプリズムのように働いて、赤い像と青い像が少しずれます（大気分散）。惑星の上下の縁に赤や青のにじみが出るのはこのためです。
+赤（R）と青（B）の像を緑（G）に重ねて取り除きます。
+
+\sidebyside[0.5]{insp_channel}{\mk[e]{fields}{1}\mk[e]{auto}{2}\mk[e]{reset}{3}}{%
+  \begin{marklist}
+    \item R・B をずらす量（画素、小数も可）。x は横、y は縦です。
+    \item \ui{自動で合わせる}：画像から自動でずれを測って入れます。
+    \item \ui{戻す}：0 に戻します。
+  \end{marklist}
+  \meyasu{まず \ui{自動で合わせる}。縁のにじみが残るときは、数値を 0.1 ずつ変えて調整します。モノクロの画像では使えません。}}
+
+% ------------------------------------------------------------------------------
+\section{ウェーブレット仕上げ}\label{sec:wavelet}
+
+ぼんやりしたスタックの結果から、細部を引き出すための中心的な道具です。
+画像を\textbf{模様の細かさごとに6つの層（レイヤー）}に分け、層ごとに強めたり、ざらつきを抑えたりします。
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\scriptsize]
+  \foreach \i/\n/\px in {0/1/2,1/2/4,2/3/8,3/4/16,4/5/32,5/6/64} {
+    \begin{scope}[shift={(\i*2.25,0)}]
+      \fill[black!85] (0,0) rectangle (1.8,1.8);
+      \pgfmathsetmacro{\f}{2.6/(\n)}
+      \begin{scope}
+        \clip (0,0) rectangle (1.8,1.8);
+        \foreach \k in {0,...,14} {
+          \pgfmathsetmacro{\yy}{\k*0.14*(\n)}
+          \draw[white, opacity=0.8, line width={0.9pt*\n*0.55}] (0,\yy) sin (0.9,{\yy+0.05*\n}) cos (1.8,\yy);
+        }
+      \end{scope}
+      \node[below] at (0.9,0) {Layer \n（約\px px）};
+    \end{scope}
+  }
+  \draw[-{Stealth}, line width=1pt] (0,-0.75) -- node[below]{細かい模様（ノイズもここに多い）\hspace{12em}大きな模様（明るさのむら）} (13.05,-0.75);
+\end{tikzpicture}
+\captionof{figure}{ウェーブレットの層のイメージ（層が上がるほど大きな模様）}
+\end{center}
+
+\sidebyside[0.5]{insp_wavelet}{%
+  \mk[e]{preview}{1}\mk[w]{layer1}{2}\mk[w]{sharpen1}{3}\mk[w]{denoise1}{4}\mk[n]{reset1}{5}\mk[e]{linked}{6}\mk[w]{dering}{7}\mk[e]{resetall}{8}}{%
+  \begin{marklist}
+    \item \uil{ウェーブレットの効果をプレビュー}：オフにすると、ウェーブレット（と輪抑制）だけを外した画像を表示します（比較用）。
+    \item 1つの層の設定。見出しの\uil{約2 px}は、その層が受け持つ模様の大きさです。
+    \item \textbf{強調}：その層の模様を何倍にするか。\textbf{1.00 が変化なし}、2.00 で2倍。
+    \item \textbf{ノイズ}：その層の小さな揺れ（ノイズ）をどれだけ消すか。0 で何もしない、大きいほど強く消します。
+    \item \ui{初期値に戻す}：この層を強調 1.00・ノイズ 0.00 に戻します。
+    \item \uil{レイヤーを連動}：オンにすると、いまの層ごとの配分を保ったまま、下の\uil{強さ}で全体の効き具合だけを変えられます。
+    \item \textbf{輪抑制}：強調すると、明るい縁（惑星のふち）の外側に暗い輪ができることがあります。これを抑えます。
+    \item \ui{すべてリセット}：全部の層を初期値に戻します。
+  \end{marklist}
+  \smallskip
+  各行の \ui{－}\ui{＋} で少しずつ変えられ（押し続けると連続）、右の数値欄には直接数字を打てます。}
+
+\begin{setting}{強調（Layer 1〜6）}{1.00（変化なし）}{0〜20}
+  \meyasu{\textbf{細かい層から順に}上げていきます。惑星の例：
+  \begin{center}\small
+  \begin{tabular}{@{}lcccccc@{}}
+  \toprule
+   & Layer 1 & Layer 2 & Layer 3 & Layer 4 & Layer 5 & Layer 6\\
+  \midrule
+  控えめ & 4〜6 & 2〜3 & 1.3〜1.5 & 1.0 & 1.0 & 1.0\\
+  しっかり & 8〜15 & 5〜8 & 2〜3 & 1.2〜1.5 & 1.0 & 1.0\\
+  \bottomrule
+  \end{tabular}
+  \end{center}
+  8 を超えるあたりから、細部と一緒にノイズや縁の輪も強くなります。\uil{100\%} や \uil{200\%} に拡大して確かめながら決めてください。
+  月面の広い写野では、Layer 1〜2 を控えめに、Layer 3〜4 を少し上げると自然に見えます。}
+\end{setting}
+
+\begin{setting}{ノイズ（Layer 1〜6）}{0.00}{0〜1}
+  \meyasu{強調を上げてざらつきが目立ってきたら、同じ層（特に Layer 1）のノイズを上げます。Layer 1 で 0.2〜0.5、Layer 2 で 0.1〜0.3。
+  上げすぎると細部まで消えて、のっぺりします。}
+\end{setting}
+
+\begin{setting}{輪抑制（デリンギング）}{0.00}{0〜1}
+  \meyasu{惑星の縁の外に黒い輪が見えたら 0.2〜0.5。上げすぎると縁の近くの細部が弱まります。}
+\end{setting}
+
+\begin{setting}{レイヤーを連動の強さ}{1.00}{0〜2.5}
+  \meyasu{配分を決めたあと、「全体をもう少し弱く」したいときに 0.7〜0.9 などにします。}
+\end{setting}
+
+% ------------------------------------------------------------------------------
+\section{色（ホワイトバランス・彩度）}
+
+\sidebyside[0.5]{insp_color}{\mk[e]{gains}{1}\mk[e]{saturation}{2}\mk[e]{auto}{3}}{%
+  \begin{marklist}
+    \item R・G・B の倍率（0.5〜2.0、既定 1.0）。赤が強すぎれば R を下げる、のように使います。
+    \item \textbf{彩度}（0〜2、既定 1.0）。0 で白黒、大きいほど色が濃くなります。
+    \item \ui{自動（灰色仮説）}：画像全体の平均が灰色になるように R・B の倍率を決めます。\ui{戻す} で 1.0 に戻します。
+  \end{marklist}
+  \meyasu{まず \ui{自動（灰色仮説）}。そのあと好みで R・B を微調整し、彩度は 1.1〜1.4 くらいまで。
+  カメラの RAW は緑がかって読まれるので、必ず \ui{自動} を押してください。}}
+
+% ------------------------------------------------------------------------------
+\section{明るさ（レベル補正）}\label{sec:levels}
+
+Photoshop のレベル補正と同じ仕組みで、黒・中間・白の3つの三角を動かして明るさを決めます。
+
+\sidebyside[0.5]{levels}{\mk[e]{channel}{1}\mkd[inw]{histogram}{2}\mkn[s]{black}{3}\mkn[s]{mid}{4}\mkn[s]{white}{5}\mk[e]{fields}{6}\mk[e]{auto}{7}
+  \drag{($(white)+(0,-0.075)$)}{($(white)+(-0.15,-0.075)$)}}{%
+  \begin{marklist}
+    \item \textbf{チャンネル}：\uil{RGB}（全体）か、\uil{R}\uil{G}\uil{B} の1色ずつかを選びます。
+    \item \textbf{ヒストグラム}：画像の中で、どの明るさの画素がどれだけあるかのグラフ。左が暗い、右が明るい画素です。
+    \item \textbf{黒の三角}：これより暗い所を真っ黒にします。
+    \item \textbf{中間の三角}：中間の明るさ。左へ動かすと全体が明るく、右へ動かすと暗くなります（数値はガンマ、1.00 が変化なし）。
+    \item \textbf{白の三角}：これより明るい所を真っ白にします。矢印のように左へ動かすと、画像が明るく、コントラストが強くなります。
+    \item 三角の位置の数値（黒 0〜255・中間のガンマ・白 0〜255）。直接打ち込むこともできます。
+    \item \ui{自動}：明るさの分布から黒と白を自動で決めます。\ui{初期値に戻す} ですべて戻します。
+  \end{marklist}}
+
+\meyasu{惑星なら、黒は背景の山（ヒストグラムの左端の高い山）のすぐ右、白は惑星のいちばん明るい所がぎりぎり白くならない所。
+中間は 0.9〜1.3。白を左に寄せすぎると明るい所が白く飛んで、模様が消えます。}
+
+\begin{caution}[画面が明るく見える設定について]
+  プレビューの \ui{表示} メニューの \uil{表示を明るくする} がオンの間は、暗い画像でも画面の上では見やすく引き伸ばしています。
+  書き出すファイルと同じ明るさで見たいときは、これをオフにしてください。
+\end{caution}
+
+% ------------------------------------------------------------------------------
+\section{向き・切り抜き}\label{sec:crop}
+
+\sidebyside[0.5]{insp_geometry}{\mk[e]{rotate}{1}\mk[e]{flip}{2}\mk[e]{cropmode}{3}\mk[e]{cropbuttons}{4}}{%
+  \begin{marklist}
+    \item \ui{\rotl{} 左へ90°}\ui{右へ90° \rotr{}}：画像を90度ずつ回します。
+    \item \uil{左右反転}\uil{上下反転}：鏡に映したように裏返します（望遠鏡の種類によって像が裏返っているとき）。
+    \item \uil{プレビューで切り抜く枠を描く}：オンにすると、プレビューの上で切り抜く範囲を描けます。
+    \item \ui{切り抜く}\ui{枠を消す}\ui{元に戻す}。
+  \end{marklist}}
+
+\screen{cropbox}{切り抜く枠を描いたところ}{%
+  \mk[nw]{box}{1}\drag{($(box-se)+(0.03,-0.03)$)}{($(box-se)+(-0.02,0.02)$)}\mk[w]{cropmode}{2}\mk[s]{apply}{3}\mk[s]{clearbox}{4}\mk[s]{undo}{5}\mk[w]{rotate}{6}}
+
+\begin{marklist}
+  \item \textbf{切り抜く枠}（黄色の点線）。枠の外は暗く表示されます。
+        \begin{itemize}[itemsep=0pt, topsep=1pt]
+          \item 枠の外でドラッグ：新しく枠を描く
+          \item 枠の内側でドラッグ：枠を動かす
+          \item 辺や角（小さな四角の印）をドラッグ：大きさを変える（矢印）
+        \end{itemize}
+  \item 枠を描くモードのオン・オフ。
+  \item \ui{切り抜く}：その場で画像が小さくなります。以降の仕上げも軽くなります。
+  \item \ui{枠を消す}：枠だけを消します（画像はそのまま）。
+  \item \ui{元に戻す}：切り抜く前の画像に戻します。
+  \item 回転や反転をしたあとでも、見えている向きのまま枠を描けます。
+\end{marklist}
+
+\begin{tip}
+  惑星の周りの黒い背景を少し残して切り抜くと、ファイルが小さくなり、SNS などに載せたときも見やすくなります。
+  切り抜きはプリセットには保存されません。
+\end{tip}
+
+% ------------------------------------------------------------------------------
+\section{書き出し}\label{sec:export}
+
+\sidebyside[0.5]{insp_export}{\mk[e]{format}{1}\mk[e]{name}{2}\mk[w]{object}{3}\mk[e]{meta}{4}\mk[e]{save}{5}\mk[e]{multi}{6}}{%
+  \begin{marklist}
+    \item 形式
+    \item ファイル名の付け方
+    \item 対象名
+    \item 処理条件と撮影時刻を記録する
+    \item \ui{名前を付けて書き出し…}
+    \item 複数の採用率で書き出す
+  \end{marklist}}
+
+\begin{setting}{\badge{1} 形式}{16bit TIFF}{16bit TIFF／32bit float TIFF／32bit float FITS（PixInsight向け）／16bit PNG}
+  \begin{itemize}[itemsep=0pt, topsep=2pt]
+    \item \uil{16bit TIFF}：多くの画像ソフトで開けます。ふつうはこれ。
+    \item \uil{32bit float TIFF}・\uil{32bit float FITS}：明るさを小数のまま保存します。PixInsight・Siril などで、さらに処理を続けるとき向けです。
+    \item \uil{16bit PNG}：ウェブに載せたり、手軽に見たりするとき向けです。
+  \end{itemize}
+\end{setting}
+
+\begin{setting}{\badge{2} ファイル名の付け方}{元の名前＋処理条件}{元の名前＋処理条件／WinJUPOS形式（撮影時刻を先頭に）}
+  \begin{itemize}[itemsep=0pt, topsep=2pt]
+    \item \uil{元の名前＋処理条件}：例 \texttt{jupiter\_ap48\_10pct.tif}（位置合わせ領域 48 画素・採用 10\%）。ドリズルを使うと \texttt{\_x2} のように倍率も付きます。
+    \item \uil{WinJUPOS形式}：例 \texttt{2026-08-09-1432\_5-Jupiter.tif}。撮影時刻の中央を先頭に付けます。木星・火星の自転を測るソフト WinJUPOS で使うとき向け。
+          撮影時刻の記録が無いファイルでは、元の名前の方式になります。
+  \end{itemize}
+\end{setting}
+
+\begin{setting}{\badge{3} 対象名（ファイル・メタデータ用）}{空欄}{文字}
+  \texttt{Jupiter} のように入れると、ファイル名（元の名前の方式では元の名前の後ろ、WinJUPOS形式では時刻の後ろ）と、ファイルに記録する情報に入ります。WinJUPOS形式で空欄のときは、元の名前を使います。
+\end{setting}
+
+\begin{setting}{\badge{4} 処理条件と撮影時刻をファイルに記録する}{オン}{オン／オフ}
+  使った設定（採用率・位置合わせ領域の大きさなど）と撮影時刻を、画像ファイルの中に書き込みます。あとで「どう処理したか」を確かめられます。
+\end{setting}
+
+\subsection*{\badge{6} 複数の採用率で書き出す}\label{sec:multiexport}
+
+採用率を変えた結果を、一度にまとめて作って保存します。欄に \texttt{5, 10, 25} のようにカンマで区切って入れ、\ui{まとめて書き出し…} を押して保存先のフォルダを選びます。
+スタックタブの選択方式が\uil{枚数}のときは、枚数として読みます（例 \texttt{100, 200, 400}）。
+
+アライメントの結果を使い回してスタックだけをやり直し、\textbf{いまの仕上げ（切り抜きも含む）}を掛けて保存します。同じ名前のファイルがあっても上書きせず、番号を付けます。
+どの採用率がよいか迷ったときに、並べて比べるのに便利です。

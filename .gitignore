@@ -28,3 +28,6 @@ lunastack_test_*.png
 *.lstk.json
 *.lstkq
 *.lstkq.json
+
+# 説明書の撮影・組版の中間物
+docs/manual/build/

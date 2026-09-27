@@ -1,0 +1,132 @@
+\chapter{\LS でできること}
+
+\section{このソフトは何をするのか}
+
+望遠鏡で月や惑星を撮ると、1枚だけではどうしてもぼやけた、ざらついた写真になります。原因はおもに2つです。
+
+\begin{itemize}
+  \item \textbf{大気のゆらぎ（シーイング）}：空気の温度むらがレンズのように働き、像が一瞬ごとにゆがんだり、にじんだりします。
+        星がまたたくのと同じ現象です。
+  \item \textbf{ノイズ}：暗い対象を短い露出で撮ると、画面がざらざらします。
+\end{itemize}
+
+そこで、\textbf{動画（または連続写真）で数百〜数千枚を撮り、写りのよい瞬間だけを選んで重ね合わせる}という方法がとられます。
+これを\textbf{スタック（スタッキング）}と呼びます。重ねるほどノイズは減り、ゆらぎの少ない瞬間だけを使うので細部もくっきりします。
+\LS は、この「選ぶ・位置を合わせる・重ねる・仕上げる」を1つのアプリで行うソフトです。
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small, >=Stealth]
+  % 入力のフレーム
+  \foreach \i/\s in {0/0.55,1/0.8,2/0.35,3/0.9,4/0.5} {
+    \begin{scope}[shift={(\i*0.28,-\i*0.22)}]
+      \fill[black!85, draw=white, line width=0.6pt] (0,0) rectangle (1.6,1.6);
+      \shade[inner color=yellow!40!white, outer color=orange!60!black, opacity=\s] (0.8,0.8) circle (0.52);
+    \end{scope}
+  }
+  \node[align=center, font=\sffamily\footnotesize] at (1.4,-1.75) {撮った動画\\（数百〜数千枚）};
+  \draw[->, line width=1.4pt, lsgray] (3.2,0.2) -- (4.3,0.2);
+  % 選別
+  \begin{scope}[shift={(4.6,-0.6)}]
+    \foreach \i/\ok in {0/1,1/0,2/1,3/0,4/1} {
+      \fill[black!85] (\i*0.62,0) rectangle ++(0.54,0.54);
+      \shade[inner color=yellow!40!white, outer color=orange!60!black, opacity=0.8] (\i*0.62+0.27,0.27) circle (0.18);
+      \ifnum\ok=1 \draw[lsgreen, line width=1.2pt] (\i*0.62-0.03,-0.03) rectangle ++(0.60,0.60);
+      \else \draw[lsred, line width=1.1pt] (\i*0.62+0.07,0.07) -- ++(0.4,0.4) (\i*0.62+0.47,0.07) -- ++(-0.4,0.4); \fi
+    }
+    \node[align=center, font=\sffamily\footnotesize] at (1.5,-0.95) {よく写った瞬間だけ選ぶ\\（品質評価）};
+  \end{scope}
+  \draw[->, line width=1.4pt, lsgray] (7.9,0.2) -- (9.0,0.2);
+  % 位置合わせ・重ね合わせ
+  \begin{scope}[shift={(9.3,-0.6)}]
+    \fill[black!85] (0,0) rectangle (1.6,1.6);
+    \shade[inner color=yellow!25!white, outer color=orange!70!black] (0.8,0.8) circle (0.55);
+    \draw[orange!50!black, line width=0.7pt] (0.3,0.72) .. controls (0.8,0.62) .. (1.3,0.72);
+    \draw[orange!50!black, line width=0.7pt] (0.3,0.95) .. controls (0.8,1.05) .. (1.3,0.95);
+    \node[align=center, font=\sffamily\footnotesize] at (0.8,-0.95) {位置を合わせて重ねる\\（アライメント・スタック）};
+  \end{scope}
+  \draw[->, line width=1.4pt, lsgray] (11.2,0.2) -- (12.1,0.2);
+  \begin{scope}[shift={(12.4,-0.6)}]
+    \fill[black!85] (0,0) rectangle (1.6,1.6);
+    \shade[inner color=white, outer color=orange!80!black] (0.8,0.8) circle (0.55);
+    \draw[orange!40!black, line width=1.0pt] (0.28,0.72) .. controls (0.8,0.60) .. (1.32,0.72);
+    \draw[orange!40!black, line width=1.0pt] (0.28,0.95) .. controls (0.8,1.07) .. (1.32,0.95);
+    \fill[orange!70!black] (1.0,0.5) ellipse (0.12 and 0.07);
+    \node[align=center, font=\sffamily\footnotesize] at (0.8,-0.95) {細部を引き出す\\（仕上げ）};
+  \end{scope}
+\end{tikzpicture}
+\captionof{figure}{\LS の処理のイメージ}\label{fig:concept}
+\end{center}
+
+\section{処理の流れ}
+
+\LS の処理は、次の6つの段階に分かれています。画面の下にある4つのボタン \ui{品質評価}\ui{アライメント}\ui{スタック}\ui{書き出し…}
+が、ちょうどこの流れに対応しています。\textbf{各段階が終わるとアプリはいったん止まり}、結果を確かめてから次へ進めます。
+
+\begin{center}
+\begin{tikzpicture}[font=\sffamily\small, node distance=3mm,
+    st/.style={draw=lsnight, fill=lspale, rounded corners=3pt, minimum height=11mm, text width=21mm, align=center, line width=0.8pt, font=\sffamily\footnotesize},
+    ar/.style={-{Stealth[length=2.5mm]}, line width=1.1pt, lsnight}]
+  \node[st] (a) {① 追加\\{\scriptsize 動画・写真}};
+  \node[st, right=of a] (b) {② 品質評価\\{\scriptsize 写りを採点}};
+  \node[st, right=of b] (c) {③ アライメント\\{\scriptsize 位置を合わせる}};
+  \node[st, right=of c] (d) {④ スタック\\{\scriptsize 重ね合わせる}};
+  \node[st, right=of d] (e) {⑤ 仕上げ\\{\scriptsize シャープ・色}};
+  \node[st, right=of e] (f) {⑥ 書き出し\\{\scriptsize ファイルに保存}};
+  \foreach \p/\q in {a/b,b/c,c/d,d/e,e/f} \draw[ar] (\p) -- (\q);
+  \draw[ar, lsorange, dashed] (d.south) .. controls +(0,-0.9) and +(0,-0.9) .. node[below, font=\sffamily\scriptsize, text=lsorange!80!black]
+    {採用率だけ変えるなら解析はやり直さない} (d.south west);
+\end{tikzpicture}
+\captionof{figure}{処理の6段階}\label{fig:flow}
+\end{center}
+
+\begin{point}[この説明書の進め方]
+  はじめての人は、まず\textbf{第\ref{chap:quickstart}章「はじめての処理」}をアプリを動かしながら読んでください。
+  木星の動画を例に、追加から書き出しまでを一通り体験できます。設定の意味や数値の決め方は、第\ref{chap:quality}章〜第\ref{chap:finish}章で
+  タブごとに詳しく説明します。うまくいかないときは第\ref{chap:trouble}章を見てください。
+\end{point}
+
+\section{覚えておきたい言葉}
+
+この説明書とアプリの画面に出てくる言葉です。いまは全部覚えなくてもかまいません。
+
+\begin{description}[style=nextline, leftmargin=1.5em, font=\sffamily\bfseries, itemsep=0.35em]
+  \item[フレーム] 動画の1コマ（または連続写真の1枚）。
+  \item[品質・品質評価] フレームごとの「写りのよさ」の点数。細かい模様がくっきり写っているほど高くなります。
+  \item[参照画像] 位置合わせの「お手本」になる画像。品質の高いフレームをいくつか平均して作ります。
+  \item[アライメント（位置合わせ）] 各フレームのずれを測り、お手本に重なるように合わせること。
+  \item[位置合わせ領域] 画像を小さな四角（数十画素）に分けたもの。大気のゆらぎは場所ごとにずれ方が違うので、
+        \LS は四角ごとに別々に位置を合わせ、四角ごとに写りのよいフレームを選びます。他のソフトでは「AP（Alignment Point）」とも呼ばれます。
+  \item[スタック] 選んだフレームを重ねて平均すること。ノイズが減ります。
+  \item[採用率] 重ねるために使うフレームの割合（上位何\%か）。
+  \item[ウェーブレット] 画像を「細かい模様」から「大きな模様」まで6段階（レイヤー）に分け、段階ごとに強調やノイズ低減をする仕上げの方法です。
+  \item[ドリズル] 位置のずれを利用して、元より細かい画素で画像を作り直す拡大の方法。条件がそろったときだけ効果があります。
+  \item[Bayer（ベイヤー）・デバイヤー] カラーカメラのセンサーは、画素ごとに赤・緑・青のどれか1色しか測っていません。
+        この並びを Bayer 配列と呼び、各画素の3色をそろえる処理をデバイヤー（色補間）と呼びます。
+  \item[サイドカー] 解析結果を保存したファイル（元ファイルの隣に \texttt{.lstk}・\texttt{.lstkq} という名前で自動で作られます）。
+        同じファイルを開き直すと、この内容を読み込んで解析を省けます。
+\end{description}
+
+\section{動作環境と読めるファイル}
+
+\begin{tabularx}{\linewidth}{@{}>{\sffamily\bfseries}l X@{}}
+\toprule
+動作環境 & macOS 10.13（High Sierra）以降。Intel と Apple シリコンのどちらの Mac でも動きます。\\
+\midrule
+動画 & SER、AVI（非圧縮・MJPEG）、MOV・MP4・M4V（H.264・HEVC・ProRes など）\\
+静止画の連番 & TIFF、PNG、FITS、JPEG、カメラの RAW（CR2・CR3・NEF・ARW・RAF・ORF・RW2・PEF・DNG など）。
+  フォルダごと、または複数の画像をまとめて追加すると、1本の「連番」として扱います。\\
+書き出し & 16bit TIFF、32bit 浮動小数点 TIFF、32bit 浮動小数点 FITS、16bit PNG\\
+\bottomrule
+\end{tabularx}
+
+\begin{tip}[おすすめの撮り方]
+  惑星なら SER 形式（FireCapture・SharpCap などの撮影ソフトで選べます）の動画を1〜3分、数千フレーム撮るのがおすすめです。
+  SER と AVI は \LS が自分で読むので、どの Mac でも同じ結果になります。MOV・MP4 は macOS の機能で読むため、
+  macOS の版によって画素の値がわずかに変わることがあります（第\ref{sec:movie}節）。
+\end{tip}
+
+\section{この説明書の図の見方}
+
+スクリーンショットには、赤い枠と番号 \badge{1}\,\badge{2}\,\badge{3} を付けてあります。図のすぐ下に、同じ番号で説明を並べています。
+オレンジの太い矢印は「ドラッグ（押したまま動かす）」を表します。ボタンの名前は \ui{スタック}、画面上の文字は \uil{位置合わせ領域} のように書きます。
+キーボードの操作は \key{⌘}\,\key{R}（command キーを押しながら R）のように書きます。

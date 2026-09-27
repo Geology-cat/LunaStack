@@ -1,0 +1,56 @@
+% LunaStack 使い方ガイド（初心者向け）
+%
+% 組版: docs/manual で  latexmk  （設定は .latexmkrc。LuaLaTeX・jlreq・原ノ味フォント）
+% 図:   tools/make_shots.sh でアプリの画面を撮り、tools/figures.py で figures/ を作る
+\documentclass[paper=a4,fontsize=10.5pt,report,line_length=44zw,number_of_lines=42,
+  head_space=18mm,foot_space=14mm]{jlreq}
+\usepackage{lsmanual}
+\usepackage{luatexja-fontspec}
+\usepackage{amsmath}
+\usepackage{multicol}
+\usepackage[hidelinks,bookmarksnumbered,pdftitle={LunaStack 使い方ガイド},pdfauthor={LunaStack}]{hyperref}
+\captionsetup{font=small,labelsep=quad}
+\setcounter{tocdepth}{1}
+
+\newcommand{\LS}{LunaStack}
+\newcommand{\version}{0.5.1}
+
+\begin{document}
+
+% ---- 表紙 ----------------------------------------------------------------------
+\begin{titlepage}
+  \begin{tikzpicture}[remember picture, overlay]
+    \fill[lsnight] (current page.north west) rectangle (current page.south east);
+    \foreach \i in {1,...,160} {
+      \pgfmathsetmacro{\x}{rnd*21}\pgfmathsetmacro{\y}{rnd*29.7}\pgfmathsetmacro{\r}{0.2+rnd*0.9}
+      \fill[white, opacity=0.35+0.5*rnd] ($(current page.south west)+(\x cm,\y cm)$) circle (\r pt);
+    }
+    \node[anchor=center] at ($(current page.center)+(0,3.2cm)$) {%
+      \begin{tikzpicture}
+        \shade[ball color=yellow!15!white] (0,0) circle (2.4cm);
+        \fill[lsnight, opacity=0.92] (0.9,0.25) circle (2.35cm);
+      \end{tikzpicture}};
+    \node[text=white, font=\sffamily\bfseries\fontsize{40}{46}\selectfont] at ($(current page.center)+(0,-1.6cm)$) {\LS};
+    \node[text=white, font=\sffamily\Large] at ($(current page.center)+(0,-3.0cm)$) {使い方ガイド};
+    \node[text=white!75, font=\sffamily\normalsize, align=center] at ($(current page.center)+(0,-4.6cm)$)
+      {月・惑星のスタック処理を、はじめての人にも};
+    \node[text=white!60, font=\sffamily\small] at ($(current page.south)+(0,2.5cm)$)
+      {バージョン \version\quad macOS 10.13 以降};
+  \end{tikzpicture}
+\end{titlepage}
+
+\tableofcontents
+
+\input{chapters/ch1_intro}
+\input{chapters/ch2_screen}
+\input{chapters/ch3_quickstart}
+\input{chapters/ch4_quality}
+\input{chapters/ch5_align}
+\input{chapters/ch6_stack}
+\input{chapters/ch7_finish}
+\input{chapters/ch8_sources}
+\input{chapters/ch9_trouble}
+\appendix
+\input{chapters/appendix}
+
+\end{document}

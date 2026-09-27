@@ -1,0 +1,168 @@
+% LunaStack 使い方ガイド用のマクロ
+%
+% スクリーンショットに番号付きの枠・矢印・吹き出しを重ねる仕組みと、囲み記事・設定項目の体裁。
+% 図の部品の位置は tools/figures.py が figures/<図>.coords.tex に書き出す
+% （\lsanchor{名前}{x0}{y0}{x1}{y1}、画像の左下を原点に 0〜1）。
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{lsmanual}[2026/09/27 LunaStack manual macros]
+
+\RequirePackage{graphicx}
+\RequirePackage{xcolor}
+\RequirePackage{tikz}
+\usetikzlibrary{calc,positioning,arrows.meta,shapes.misc,shadows,fit,backgrounds}
+\RequirePackage[most]{tcolorbox}
+\RequirePackage{enumitem}
+\RequirePackage{array}
+\RequirePackage{booktabs}
+\RequirePackage{tabularx}
+\RequirePackage{caption}
+
+% ---- 色 -------------------------------------------------------------------------
+\definecolor{lsred}{HTML}{E0312B}
+\definecolor{lsorange}{HTML}{F08A00}
+\definecolor{lsblue}{HTML}{1F6FD1}
+\definecolor{lsgreen}{HTML}{2E8B3D}
+\definecolor{lsgray}{HTML}{6B6B6B}
+\definecolor{lspale}{HTML}{F4F6FA}
+\definecolor{lsnight}{HTML}{1B2640}
+
+% ---- スクリーンショットと注記 ------------------------------------------------------
+\tikzset{
+  lsbox/.style={draw=lsred, line width=1.3pt, rounded corners=2pt},
+  lsboxdash/.style={draw=lsred, line width=1.3pt, rounded corners=2pt, dash pattern=on 4pt off 2pt},
+  lsbadge/.style={circle, fill=lsred, draw=white, line width=0.9pt, text=white,
+                  font=\sffamily\bfseries\footnotesize, inner sep=0pt, minimum size=4.6mm,
+                  drop shadow={opacity=0.35, shadow xshift=0.3pt, shadow yshift=-0.4pt}},
+  lsarrow/.style={-{Stealth[length=3.2mm, width=2.6mm]}, draw=lsorange, line width=2.2pt,
+                  shorten >=1pt},
+  lscallout/.style={fill=white, draw=lsred, line width=0.9pt, rounded corners=2pt,
+                    font=\sffamily\scriptsize, text=black, inner sep=2.2pt, align=left,
+                    drop shadow={opacity=0.25}},
+  lspointer/.style={draw=lsred, line width=1.1pt, -{Stealth[length=2.2mm]}},
+}
+
+% 部品の位置（figures.py が書き出す）。(名前), (名前-sw) などの座標を作る。
+\newcommand{\lsanchor}[5]{%
+  \coordinate (#1-sw) at (#2,#3);
+  \coordinate (#1-ne) at (#4,#5);
+  \coordinate (#1-nw) at (#2,#5);
+  \coordinate (#1-se) at (#4,#3);
+  \coordinate (#1) at ($(#1-sw)!0.5!(#1-ne)$);
+  \coordinate (#1-n) at ($(#1-nw)!0.5!(#1-ne)$);
+  \coordinate (#1-s) at ($(#1-sw)!0.5!(#1-se)$);
+  \coordinate (#1-w) at ($(#1-sw)!0.5!(#1-nw)$);
+  \coordinate (#1-e) at ($(#1-se)!0.5!(#1-ne)$);
+}
+
+% \shot[幅]{図名}{注記}: スクリーンショットを置き、注記を重ねる。
+% 注記の中では x=1 が画像の幅、y=1 が画像の高さ（左下が原点）。
+\newcommand{\shot}[3][\linewidth]{%
+  \begin{tikzpicture}
+    \node[anchor=south west, inner sep=0] (img) at (0,0)
+      {\includegraphics[width=#1]{figures/#2}};
+    \draw[lsgray!60, line width=0.4pt] (img.south west) rectangle (img.north east);
+    \begin{scope}[x={($(img.south east)-(img.south west)$)}, y={($(img.north west)-(img.south west)$)}]
+      \input{figures/#2.coords.tex}
+      #3
+    \end{scope}
+  \end{tikzpicture}%
+}
+
+% \mk[番号の位置]{部品}{番号}: 部品を赤枠で囲み、番号を付ける。位置は nw（既定）/ne/sw/se/n/s/e/w。
+\newcommand{\mk}[3][nw]{%
+  \draw[lsbox] ($(#2-sw)+(-1.2pt,-1.2pt)$) rectangle ($(#2-ne)+(1.2pt,1.2pt)$);
+  \mkn[#1]{#2}{#3}%
+}
+% 破線の枠（広い領域・目安の範囲）
+\newcommand{\mkd}[3][nw]{%
+  \draw[lsboxdash] ($(#2-sw)+(-1.2pt,-1.2pt)$) rectangle ($(#2-ne)+(1.2pt,1.2pt)$);
+  \mkn[#1]{#2}{#3}%
+}
+% 番号だけ（枠なし）。番号は角・辺から少し外側へずらす。
+\newcommand{\mkn}[3][nw]{%
+  \node[lsbadge, xshift=\csname lsbx@#1\endcsname, yshift=\csname lsby@#1\endcsname] at (#2-\csname lsba@#1\endcsname) {#3};%
+}
+\def\lsbx@nw{-1.6mm}\def\lsby@nw{1.6mm}
+\def\lsbx@ne{1.6mm}\def\lsby@ne{1.6mm}
+\def\lsbx@sw{-1.6mm}\def\lsby@sw{-1.6mm}
+\def\lsbx@se{1.6mm}\def\lsby@se{-1.6mm}
+\def\lsbx@n{0mm}\def\lsby@n{2.1mm}
+\def\lsbx@s{0mm}\def\lsby@s{-2.1mm}
+\def\lsbx@e{2.1mm}\def\lsby@e{0mm}
+\def\lsbx@w{-2.1mm}\def\lsby@w{0mm}
+% 番号を置く角の名前（i で始まるものは内側）
+\def\lsba@nw{nw}\def\lsba@ne{ne}\def\lsba@sw{sw}\def\lsba@se{se}
+\def\lsba@n{n}\def\lsba@s{s}\def\lsba@e{e}\def\lsba@w{w}
+\def\lsba@inw{nw}\def\lsba@ine{ne}\def\lsba@isw{sw}\def\lsba@ise{se}
+% 内側に置く（端の部品で番号が画像からはみ出すとき）
+\def\lsbx@inw{1.6mm}\def\lsby@inw{-1.6mm}
+\def\lsbx@ine{-1.6mm}\def\lsby@ine{-1.6mm}
+\def\lsbx@isw{1.6mm}\def\lsby@isw{1.6mm}
+\def\lsbx@ise{-1.6mm}\def\lsby@ise{1.6mm}
+
+% \drag{始点}{終点}: ドラッグなどの動きを示す太い矢印（座標は tikz の書き方）
+\newcommand{\drag}[2]{\draw[lsarrow] #1 -- #2;}
+% \callout{部品の側}{置く場所}{文}: 吹き出し。例 \callout{(add-e)}{(0.3,0.8)}{ここを押す}
+\newcommand{\callout}[3]{%
+  \node[lscallout] (co) at #2 {#3};
+  \draw[lspointer] (co) -- #1;
+}
+
+% 本文で使う番号（図と同じ見た目）
+\DeclareRobustCommand{\badge}[1]{\tikz[baseline=(b.base)]\node[lsbadge] (b) {#1};}
+
+% 図の説明の番号付きリスト（\item の番号は図の番号に合わせて 1, 2, … と振る）
+\newlist{marklist}{enumerate}{1}
+\setlist[marklist]{label=\badge{\arabic*}, leftmargin=2.2em, labelsep=0.5em, itemsep=0.25em, topsep=0.4em,
+                parsep=0pt}
+
+% 画面の図を本文幅いっぱいに置く（キャプション付き・フロートにしない）
+\newcommand{\screen}[4][\linewidth]{% [幅]{図名}{キャプション}{注記}
+  \par\medskip
+  \begin{center}
+    \shot[#1]{#2}{#4}
+    \captionof{figure}{#3}\label{fig:#2}
+  \end{center}
+  \par
+}
+
+% 図（左）と説明（右）を並べる: \sidebyside[図の幅の比]{図名}{注記}{右側の内容}
+\newcommand{\sidebyside}[4][0.47]{%
+  \par\medskip\noindent
+  \begin{minipage}[t]{#1\linewidth}\vspace{0pt}\shot[\linewidth]{#2}{#3}\end{minipage}\hfill
+  \begin{minipage}[t]{\dimexpr\linewidth-#1\linewidth-1.2em\relax}\vspace{0pt}#4\end{minipage}
+  \par\medskip
+}
+
+% ---- 囲み記事 --------------------------------------------------------------------
+\newtcolorbox{tip}[1][ヒント]{enhanced, breakable, colback=lsgreen!6, colframe=lsgreen!70!black,
+  fonttitle=\sffamily\bfseries\small, title={#1}, boxrule=0.6pt, arc=2pt,
+  left=5pt, right=5pt, top=3pt, bottom=3pt}
+\newtcolorbox{caution}[1][注意]{enhanced, breakable, colback=lsorange!7, colframe=lsorange!85!black,
+  fonttitle=\sffamily\bfseries\small, title={#1}, boxrule=0.6pt, arc=2pt,
+  left=5pt, right=5pt, top=3pt, bottom=3pt}
+\newtcolorbox{point}[1][ポイント]{enhanced, breakable, colback=lsblue!5, colframe=lsblue!80!black,
+  fonttitle=\sffamily\bfseries\small, title={#1}, boxrule=0.6pt, arc=2pt,
+  left=5pt, right=5pt, top=3pt, bottom=3pt}
+% 手順（ステップ）
+\newtcolorbox{step}[2]{enhanced, breakable, colback=white, colframe=lsnight, coltitle=white,
+  colbacktitle=lsnight, fonttitle=\sffamily\bfseries, title={STEP #1\quad #2}, boxrule=0.8pt, arc=3pt,
+  left=6pt, right=6pt, top=4pt, bottom=4pt}
+
+% 設定項目: \begin{setting}{名前}{既定値}{範囲} … \end{setting}
+\newtcolorbox{setting}[3]{enhanced, breakable, colback=lspale, colframe=lsgray!45, boxrule=0.5pt, arc=2pt,
+  left=6pt, right=6pt, top=3pt, bottom=3pt, before skip=5pt, after skip=5pt,
+  title={\textbf{#1}\hfill{\footnotesize\mdseries 既定：#2\quad 範囲・選択肢：#3}},
+  fonttitle=\small, coltitle=black, colbacktitle=lsgray!18, toptitle=1.5pt, bottomtitle=1.5pt}
+% 設定項目の中の「目安」
+\newcommand{\meyasu}[1]{\par\smallskip\noindent{\sffamily\bfseries\color{lsblue}目安}\enspace #1}
+% 画面上の文言（ボタン名など）
+\newcommand{\ui}[1]{\textsf{［#1］}}
+% 回転ボタンの矢印（フォントに ↺↻ が無いので描く）
+\newcommand{\rotl}{\tikz[baseline=-0.6ex, line width=0.6pt]\draw[-{Stealth[length=1.3mm]}] (0.12,0.1) arc (60:340:0.13);}
+\newcommand{\rotr}{\tikz[baseline=-0.6ex, line width=0.6pt]\draw[-{Stealth[length=1.3mm]}] (-0.12,0.1) arc (120:-160:0.13);}
+\newcommand{\uil}[1]{\textsf{「#1」}}
+\newcommand{\key}[1]{\tikz[baseline=(k.base)]\node[draw=lsgray, fill=white, rounded corners=1.5pt,
+  inner xsep=2.5pt, inner ysep=1.2pt, font=\sffamily\footnotesize] (k) {#1};}
+
+\endinput
