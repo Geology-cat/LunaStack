@@ -259,7 +259,11 @@ private:
             [[[AVAssetReaderTrackOutput alloc] initWithTrack:track_ outputSettings:nil] autorelease];
         [output setAlwaysCopiesSampleData:NO];
         if (![reader canAddOutput:output]) fail("映像を取り出せません");
-        [reader addOutput:output];
+        @try {
+            [reader addOutput:output];
+        } @catch (NSException* e) {
+            fail(std::string("映像を取り出せません: ") + [[e reason] UTF8String]);
+        }
         if (![reader startReading]) fail("読み始められません");
         for (;;) {
             @autoreleasepool {
@@ -334,10 +338,18 @@ private:
         reader_ = [[AVAssetReader alloc] initWithAsset:asset_ error:&error];
         if (!reader_) fail("読めません");
         NSDictionary* settings = @{(id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
-        output_ = [[AVAssetReaderTrackOutput alloc] initWithTrack:track_ outputSettings:settings];
-        [output_ setAlwaysCopiesSampleData:NO];
-        [reader_ addOutput:output_];
-        [reader_ setTimeRange:CMTimeRangeFromTimeToTime(pts_[static_cast<std::size_t>(index)], kCMTimePositiveInfinity)];
+        // AVFoundation は、できない操作（デコードできない符号化方式に出力を付けるなど）を
+        // Objective-C の例外で知らせる。C++ の catch では受けられずアプリごと落ちるので、
+        // 事前に確かめ、それでも出た例外はここで C++ の例外に置き換える。
+        @try {
+            output_ = [[AVAssetReaderTrackOutput alloc] initWithTrack:track_ outputSettings:settings];
+            [output_ setAlwaysCopiesSampleData:NO];
+            if (![reader_ canAddOutput:output_]) fail("この動画の符号化方式はデコードできません");
+            [reader_ addOutput:output_];
+            [reader_ setTimeRange:CMTimeRangeFromTimeToTime(pts_[static_cast<std::size_t>(index)], kCMTimePositiveInfinity)];
+        } @catch (NSException* e) {
+            fail(std::string("デコーダを用意できません: ") + [[e reason] UTF8String]);
+        }
         if (![reader_ startReading]) fail("読み始められません");
         next_ = index;
     }
