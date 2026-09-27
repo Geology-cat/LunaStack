@@ -116,6 +116,12 @@
     NSSlider* _pixfracSlider;
     NSTextField* _pixfracValue;
     NSTextField* _drizzleEstimate;
+    NSButton* _drizzleDiagnoseButton;
+    NSButton* _drizzleApplyButton;       // 診断で見積もった倍率に合わせる
+    NSTextField* _drizzleDiagnosisLabel;
+    NSString* _drizzleDiagnosisKey;      // 表示中の診断が、どの解析結果・採用枚数に対するものか
+    double _drizzleSuggestedScale;
+    BOOL _drizzleDiagnosing;
 
     // 仕上げ・出力タブ
     NSButton* _waveletPreviewCheck;      // 仕上げ全体の効果をプレビュー
@@ -317,6 +323,9 @@
 - (BOOL)globalUsable;
 - (BOOL)alignmentUsable;
 - (void)updateControlsEnabled;
+- (void)diagnoseDrizzle:(id)sender;
+- (void)applyDrizzleSuggestion:(id)sender;
+- (void)runDrizzleDiagnosisSynchronously:(BOOL)sync;
 - (void)updateNamePreview;
 - (void)updateDrizzleEstimate;
 - (void)refreshSelectionControl;

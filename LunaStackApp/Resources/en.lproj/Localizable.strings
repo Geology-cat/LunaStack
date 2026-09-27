@@ -409,3 +409,22 @@
 "前のフレーム（押し続けると連続）" = "Previous frame (hold to repeat)";
 "次のフレーム（押し続けると連続）" = "Next frame (hold to repeat)";
 "MOV・MP4 は macOS のデコーダで読みます。macOS の版によって画素がわずかに変わることがあります" = "MOV/MP4 files are decoded by macOS; pixel values may differ slightly between macOS versions";
+
+/* ドリズルの診断 */
+"ドリズルを診断" = "Diagnose Drizzle";
+"アライメントの結果から、ドリズルが効きそうか・何倍まで効きそうかを見積もります" = "Estimates from the alignment whether drizzle is likely to help, and up to what scale.";
+"この倍率にする" = "Use This Scale";
+"%@ にする" = "Use %@";
+"診断しています…" = "Diagnosing…";
+"判断できませんでした（参照画像が小さすぎるか、アライメントポイントがありません）" = "Could not diagnose (the reference image is too small, or there are no alignment points).";
+"効きそうです。目安は %@ までです。" = "Likely to help, up to about %@.";
+"効果は小さそうです。等倍（1×）のままをおすすめします。" = "Little benefit expected. Staying at 1× is recommended.";
+"（いちばんの制約）" = " (main limit)";
+"像の細かさ: 等倍で細部を取りきれています（信号はナイキストの %.1f 倍まで）" = "Sampling: 1× already captures the detail (signal up to %.1f× Nyquist)";
+"像の細かさ: 信号はナイキストの %.1f 倍以上まであります → %@ まで" = "Sampling: signal extends to at least %.1f× Nyquist → up to %@";
+"像の細かさ: 信号はナイキストをわずかに超えるだけです（%.1f 倍）→ 1.5× には届きません" = "Sampling: signal extends only slightly beyond Nyquist (%.1f×) → not enough for 1.5×";
+"像の細かさ: 信号はナイキストの %.1f 倍まであります → %@ まで" = "Sampling: signal extends to %.1f× Nyquist → up to %@";
+"位置のばらつき: 画素を2×2に分けた升目の %.0f%%、3×3の %.0f%% が埋まります → %@ まで" = "Sub-pixel dither: %.0f%% of a 2×2 grid and %.0f%% of a 3×3 grid are filled → up to %@";
+"採用枚数: APあたり %d 枚 → %@ まで" = "Frames: %d per AP → up to %@";
+"背景の空が写っていないため、像の細かさは控えめに見積もっています。" = "No background sky is visible, so sampling is estimated conservatively.";
+"ざっくりの目安です。確かめるには、倍率を変えてスタックし比べてください。" = "This is a rough guide. To confirm, stack at different scales and compare.";

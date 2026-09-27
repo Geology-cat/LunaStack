@@ -129,6 +129,7 @@
             if (selfTest && stagedStep == 1) {
                 // アライメントの後（除外フレームが並びの最後に来る状態）でも確かめる。
                 [self check:[controller selfCheckFrameOrder]];
+                [self check:[controller selfCheckDrizzleDiagnosis]];
             }
             if ((stagedMode && stagedStep < 2) || (alignmentMode && stagedStep < 1)) {
                 ++stagedStep;
@@ -171,6 +172,8 @@
                     [controller openFileAtPath:[NSString stringWithUTF8String:reopenPath]];
                 }
             }
+            // スナップショットに診断の結果を写す。
+            if (getenv("LUNASTACK_DZDIAG")) [controller diagnoseDrizzleForTesting];
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
             if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];

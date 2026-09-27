@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "stackcore/drizzle_diagnosis.hpp"
 #include "stackcore/sidecar.hpp"
 
 namespace {
@@ -466,6 +467,131 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
                                                   w, h, mb]];
 }
 
+// ---- ドリズルの診断 ----------------------------------------------------------
+//
+// アライメントの結果（参照画像とAP×フレームの変位）だけから、ドリズルが効きそうかを見積もる。
+// 採用枚数も使うので、解析結果か採用率が変わったら表示を消す（古い診断を黙って見せない）。
+
+- (NSString*)drizzleDiagnosisKeyNow {
+    if (!_analysis) return nil;
+    const stackcore::MapStackSettings s = [self currentSettings];
+    return [NSString stringWithFormat:@"%p|%g|%d", static_cast<const void*>(_analysis.get()), s.ap_top_percent,
+                                      s.ap_top_count];
+}
+
+static NSString* DrizzleScaleText(double s) {
+    return s == 1.5 ? @"1.5×" : [NSString stringWithFormat:@"%.0f×", s];
+}
+
+- (NSString*)drizzleDiagnosisText:(const stackcore::DrizzleDiagnosis&)d {
+    if (d.insufficient) {
+        return LSLocalizedString(@"判断できませんでした（参照画像が小さすぎるか、アライメントポイントがありません）");
+    }
+    NSMutableString* text = [NSMutableString string];
+    if (d.suggested_scale > 1.0) {
+        [text appendFormat:LSLocalizedString(@"効きそうです。目安は %@ までです。"), DrizzleScaleText(d.suggested_scale)];
+    } else {
+        [text appendString:LSLocalizedString(@"効果は小さそうです。等倍（1×）のままをおすすめします。")];
+    }
+    NSString* mark = LSLocalizedString(@"（いちばんの制約）");
+    const auto snapped = [](double v) { return v >= 3.0 ? 3.0 : v >= 2.0 ? 2.0 : v >= 1.5 ? 1.5 : 1.0; };
+    // 1. 像の細かさ
+    NSString* sampling;
+    if (d.cutoff_ratio < 1.0) {
+        sampling = [NSString stringWithFormat:LSLocalizedString(@"像の細かさ: 等倍で細部を取りきれています（信号はナイキストの %.1f 倍まで）"),
+                                              d.cutoff_ratio];
+    } else if (snapped(d.limit_sampling) <= 1.0) {
+        sampling = [NSString stringWithFormat:LSLocalizedString(@"像の細かさ: 信号はナイキストをわずかに超えるだけです（%.1f 倍）→ 1.5× には届きません"),
+                                              d.cutoff_ratio];
+    } else {
+        sampling = [NSString stringWithFormat:LSLocalizedString(d.cutoff_extrapolated
+                                                                    ? @"像の細かさ: 信号はナイキストの %.1f 倍以上まであります → %@ まで"
+                                                                    : @"像の細かさ: 信号はナイキストの %.1f 倍まであります → %@ まで"),
+                                              d.cutoff_ratio, DrizzleScaleText(snapped(d.limit_sampling))];
+    }
+    // 2. 位置のばらつき・3. 枚数
+    NSString* phase = [NSString stringWithFormat:LSLocalizedString(@"位置のばらつき: 画素を2×2に分けた升目の %.0f%%、3×3の %.0f%% が埋まります → %@ まで"),
+                                                 d.phase_coverage2 * 100.0, d.phase_coverage3 * 100.0,
+                                                 DrizzleScaleText(snapped(d.limit_phase))];
+    NSString* frames = [NSString stringWithFormat:LSLocalizedString(@"採用枚数: APあたり %d 枚 → %@ まで"), d.frames_per_ap,
+                                                  DrizzleScaleText(snapped(d.limit_frames))];
+    NSArray* lines = @[ sampling, phase, frames ];
+    for (NSUInteger i = 0; i < [lines count]; ++i) {
+        [text appendFormat:@"\n・%@%@", lines[i], static_cast<int>(i) == d.limiting ? mark : @""];
+    }
+    if (!d.floor_from_background) {
+        [text appendFormat:@"\n%@", LSLocalizedString(@"背景の空が写っていないため、像の細かさは控えめに見積もっています。")];
+    }
+    [text appendFormat:@"\n%@", LSLocalizedString(@"ざっくりの目安です。確かめるには、倍率を変えてスタックし比べてください。")];
+    return text;
+}
+
+- (void)showDrizzleDiagnosis:(const stackcore::DrizzleDiagnosis&)d key:(NSString*)key {
+    [_drizzleDiagnosisKey release];
+    _drizzleDiagnosisKey = [key copy];
+    _drizzleSuggestedScale = d.insufficient ? 1.0 : d.suggested_scale;
+    [_drizzleDiagnosisLabel setStringValue:[self drizzleDiagnosisText:d]];
+    [_drizzleDiagnosisLabel setHidden:NO];
+    [_drizzleApplyButton setTitle:[NSString stringWithFormat:LSLocalizedString(@"%@ にする"),
+                                                             DrizzleScaleText(_drizzleSuggestedScale)]];
+    [self updateControlsEnabled];
+}
+
+- (void)clearDrizzleDiagnosis {
+    [_drizzleDiagnosisKey release];
+    _drizzleDiagnosisKey = nil;
+    [_drizzleDiagnosisLabel setStringValue:@""];
+    [_drizzleDiagnosisLabel setHidden:YES];
+    [_drizzleApplyButton setHidden:YES];
+}
+
+- (void)runDrizzleDiagnosisSynchronously:(BOOL)sync {
+    if (!_analysis || !_referenceImage || _drizzleDiagnosing) return;
+    std::shared_ptr<stackcore::AnalysisData> analysis = _analysis;
+    std::shared_ptr<stackcore::FrameBuffer> reference = _referenceImage;
+    const stackcore::MapStackSettings settings = [self currentSettings];
+    NSString* key = [[self drizzleDiagnosisKeyNow] retain];
+    if (sync) {
+        [self showDrizzleDiagnosis:stackcore::diagnose_drizzle(*analysis, *reference, settings) key:key];
+        [key release];
+        return;
+    }
+    _drizzleDiagnosing = YES;
+    [_drizzleDiagnosisLabel setStringValue:LSLocalizedString(@"診断しています…")];
+    [_drizzleDiagnosisLabel setHidden:NO];
+    [self updateControlsEnabled];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        const stackcore::DrizzleDiagnosis d = stackcore::diagnose_drizzle(*analysis, *reference, settings);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            _drizzleDiagnosing = NO;
+            // 待つ間に解析結果や採用率が変わっていたら、古い診断は出さない。
+            if ([key isEqualToString:[self drizzleDiagnosisKeyNow]]) {
+                [self showDrizzleDiagnosis:d key:key];
+            } else {
+                [self clearDrizzleDiagnosis];
+                [self updateControlsEnabled];
+            }
+            [key release];
+        });
+    });
+}
+
+- (void)diagnoseDrizzle:(id)sender {
+    (void)sender;
+    [self runDrizzleDiagnosisSynchronously:NO];
+}
+
+- (void)applyDrizzleSuggestion:(id)sender {
+    (void)sender;
+    for (int i = 0; i < kDrizzleChoiceCount; ++i) {
+        if (LSDrizzleScaleAt(i) == _drizzleSuggestedScale) {
+            [_drizzleSegment setSelectedSegment:i];
+            [self drizzleChanged:nil];
+            break;
+        }
+    }
+}
+
 // グラフのカットラインが何を決めているかを示す。
 // 画像全体の位置合わせのみでは、同じ割合がスタックの採用率にもなる。
 - (void)refreshCutLabel {
@@ -500,6 +626,15 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     [_qualityButton setEnabled:hasFile && !_running];
     [_alignButton setEnabled:hasFile && qualityOk && !_running];
     [_stackButton setEnabled:hasFile && alignmentOk && !_running];
+    // ドリズルの診断はAPごとの変位を使うので、APを使う方式でアライメントした後だけ。
+    if (_drizzleDiagnosisKey && !_drizzleDiagnosing &&
+        !(alignmentOk && [_drizzleDiagnosisKey isEqualToString:[self drizzleDiagnosisKeyNow]])) {
+        [self clearDrizzleDiagnosis];
+    }
+    [_drizzleDiagnoseButton setEnabled:hasFile && alignmentOk && !globalOnly && _analysis && _referenceImage &&
+                                       !_running && !_drizzleDiagnosing];
+    [_drizzleApplyButton setHidden:!_drizzleDiagnosisKey || _drizzleSuggestedScale <= 1.0 ||
+                                   LSDrizzleScaleAt([_drizzleSegment selectedSegment]) == _drizzleSuggestedScale];
     [_clearButton setEnabled:!_running];
     [_cancelButton setEnabled:_running];
     [_saveButton setEnabled:(_stacked != nullptr) && !_running];

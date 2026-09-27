@@ -932,6 +932,26 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_drizzleEstimate setTextColor:[NSColor secondaryLabelColor]];
     [self addToSection:key view:_drizzleEstimate box:box];
 
+    // 効きそうかの目安（アライメントの結果から、スタックせずに見積もる）。
+    _drizzleDiagnoseButton = [self buttonWithTitle:@"ドリズルを診断" action:@selector(diagnoseDrizzle:)];
+    [_drizzleDiagnoseButton setToolTip:LSLocalizedString(@"アライメントの結果から、ドリズルが効きそうか・何倍まで効きそうかを見積もります")];
+    _drizzleApplyButton = [self buttonWithTitle:@"この倍率にする" action:@selector(applyDrizzleSuggestion:)];
+    [_drizzleApplyButton setHidden:YES];
+    NSStackView* diagnoseRow = [NSStackView stackViewWithViews:@[ _drizzleDiagnoseButton, _drizzleApplyButton ]];
+    [diagnoseRow setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
+    [diagnoseRow setSpacing:6.0];
+    [self addToSection:key view:diagnoseRow box:box];
+    _drizzleDiagnosisLabel = [self noteLabel:@""];
+    [_drizzleDiagnosisLabel setTextColor:[NSColor labelColor]];
+    [_drizzleDiagnosisLabel setSelectable:YES];
+    [_drizzleDiagnosisLabel setHidden:YES];
+    // 見出しを閉じたときやタブを切り替えたときは、欄の部品ごと隠される。診断の有無で出し入れする
+    // ラベルは、それとぶつからないよう入れ物に包み、中身のほうを出し入れする。
+    NSStackView* diagnosisHolder = [NSStackView stackViewWithViews:@[ _drizzleDiagnosisLabel ]];
+    [diagnosisHolder setOrientation:NSUserInterfaceLayoutOrientationVertical];
+    [diagnosisHolder setAlignment:NSLayoutAttributeLeading];
+    [self addToSection:key view:diagnosisHolder box:box];
+
     // 設計原則1.4「UIが黙って期待を持たせない」。常時出す。
     [self addToSection:key
                   view:[self noteLabel:@"Drizzleが効くのは撮像がアンダーサンプリングの場合だけです。すでにオーバーサンプリング気味なら、倍率を上げても解像度は上がらず、ファイルサイズと処理時間だけが増えます。"]

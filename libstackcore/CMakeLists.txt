@@ -16,6 +16,7 @@ add_library(stackcore STATIC
     src/stack/drizzle.cpp
     src/stack/simple_stacker.cpp
     src/stack/frame_selector.cpp
+    src/stack/drizzle_diagnosis.cpp
     src/io/mapped_file.cpp
     src/io/ser_decoder.cpp
     src/io/avi_decoder.cpp

@@ -557,6 +557,44 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     return moved && clamped;
 }
 
+// ドリズルの診断: アライメントの後に押せて、結果が出て、おすすめの倍率に合わせられ、
+// 採用率を変えると古い診断が消えるか。
+- (BOOL)selfCheckDrizzleDiagnosis {
+    if ([_methodPopup indexOfSelectedItem] == 1) return YES;  // 画像全体の位置合わせのみでは使わない
+    const BOOL enabled = [_drizzleDiagnoseButton isEnabled];
+    const NSInteger savedDrizzle = [_drizzleSegment selectedSegment];
+    [_drizzleSegment setSelectedSegment:0];
+    [self drizzleChanged:nil];
+    [self runDrizzleDiagnosisSynchronously:YES];
+    const BOOL shown = ![_drizzleDiagnosisLabel isHidden] && [[_drizzleDiagnosisLabel stringValue] length] > 0;
+    const double estimated = _drizzleSuggestedScale;
+    // 手元の素材では等倍と出ることが多いので、合わせるボタンは見積もりを 2× にして確かめる。
+    const BOOL hiddenAtOne = estimated > 1.0 || [_drizzleApplyButton isHidden];
+    if (estimated <= 1.0) {
+        _drizzleSuggestedScale = 2.0;
+        [self updateControlsEnabled];
+    }
+    BOOL applied = hiddenAtOne;
+    {
+        applied = applied && ![_drizzleApplyButton isHidden];
+        [self applyDrizzleSuggestion:nil];
+        applied = applied && LSDrizzleScaleAt([_drizzleSegment selectedSegment]) == _drizzleSuggestedScale &&
+                  [_drizzleApplyButton isHidden];
+    }
+    const double savedTop = [_apTopSlider doubleValue];
+    [_apTopSlider setDoubleValue:savedTop >= 50.0 ? savedTop - 5.0 : savedTop + 5.0];
+    [self apTopChanged:nil];
+    const BOOL cleared = [_drizzleDiagnosisLabel isHidden];
+    [_apTopSlider setDoubleValue:savedTop];
+    [self apTopChanged:nil];
+    [_drizzleSegment setSelectedSegment:savedDrizzle];
+    [self drizzleChanged:nil];
+    NSLog(@"ドリズル診断の自己検証: 押せる %@、結果 %@、倍率を合わせる %@、採用率の変更で消える %@（見積もり %.1f×）",
+          enabled ? @"OK" : @"NG", shown ? @"OK" : @"NG", applied ? @"OK" : @"NG", cleared ? @"OK" : @"NG",
+          estimated);
+    return enabled && shown && applied && cleared;
+}
+
 // 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
 - (BOOL)selfCheckInspectorScrollsVerticallyOnly {
     NSClipView* clip = [_inspectorScroll contentView];
@@ -721,6 +759,10 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
         [(NSButton*)_sectionHeaders[key] setHidden:NO];
         for (NSView* v in _sections[key]) [v setHidden:NO];
     }
+}
+
+- (void)diagnoseDrizzleForTesting {
+    [self runDrizzleDiagnosisSynchronously:YES];
 }
 
 - (void)setDrizzleIndexForTesting:(int)index {

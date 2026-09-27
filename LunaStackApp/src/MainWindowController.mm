@@ -71,6 +71,7 @@
     [_qualitySignature release];
     [_globalSignature release];
     [_analysisSignature release];
+    [_drizzleDiagnosisKey release];
     [_etaStage release];
     [_stackedInfo release];
     [_darkPath release];
