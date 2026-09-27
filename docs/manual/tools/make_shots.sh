@@ -25,7 +25,6 @@ MOON="$ROOT/sample-data/2024-01-19-0224_6-U-L-Moon.ser"
 SUN="$ROOT/sample-data/2018-05-24-0250_6-JC-L-Sun_HAlpha_pipp.ser"
 CR2="$ROOT/sample-data/manual/cr2"
 MP4="$ROOT/sample-data/manual/jup.mp4"
-JLIMIT=1500
 # 作例の仕上げ（木星）
 FIN="channel=1,wb=1,wavelet=12:7:3:1.5:1:1,denoise=0.45:0.25:0.05:0:0:0"
 
@@ -37,10 +36,13 @@ shot() {
     shift
     local args=()
     for k in "${SECTIONS[@]}"; do args+=(-section.$k YES); done
+    # 外観はいつも明るい方（ダークモードの Mac で撮っても同じ見た目にする）
+    args+=(-NSRequiresAquaSystemAppearance YES)
+    SECONDS=0
     rm -f "$OUT/$name".png "$OUT/$name".json "$OUT/${name}_insp".png "$OUT/${name}_insp".png.json
     env LUNASTACK_SNAPSHOT="$OUT/$name.png" LUNASTACK_LAYOUT="$OUT/$name.json" LUNASTACK_TAB_NORMAL=1 \
         LUNASTACK_SIZE=1280x800 "$@" "$APP" "${args[@]}" >/dev/null 2>&1
-    if [ -f "$OUT/$name.png" ]; then echo "撮影: $name"; else echo "失敗: $name" >&2; fi
+    if [ -f "$OUT/$name.png" ]; then echo "撮影: $name（$SECONDS 秒）"; else echo "失敗: $name" >&2; fi
 }
 
 # 解析結果のキャッシュ（サイドカー）を消して、毎回同じ状態から撮る（sample-data の中だけ）。
@@ -63,7 +65,7 @@ run() {
     shot "$@"
 }
 
-J=(LUNASTACK_OPEN="$JUP" LUNASTACK_LIMIT=$JLIMIT)
+J=(LUNASTACK_OPEN="$JUP")
 fresh "$JUP" "$MOON" "$SUN" "$MP4"
 rm -f "$CR2/cr2.lstk" "$CR2/cr2.lstk.json" "$CR2/cr2.lstkq" "$CR2/cr2.lstkq.json"
 
@@ -72,11 +74,15 @@ run empty LUNASTACK_TAB=0 LUNASTACK_INSPECTOR_SHOT="$OUT/empty_insp.png"
 run added "${J[@]}" LUNASTACK_TAB=0 LUNASTACK_INSPECTOR_SHOT="$OUT/added_insp.png"
 # 2. 品質評価のあと（最良・最悪のフレーム）
 run quality "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=analyze LUNASTACK_INSPECTOR_SHOT="$OUT/quality_insp.png"
-run quality_worst "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=analyze LUNASTACK_FRAMEPOS=1495
+run quality_worst "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=analyze LUNASTACK_FRAMEPOS=999999
 run quality_timeline "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=analyze LUNASTACK_GRAPH=0
 # 3. アライメントのあと
 run align "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment
 run align_tab1 "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment LUNASTACK_TAB=1 LUNASTACK_INSPECTOR_SHOT="$OUT/align_tab1_insp.png"
+# 除外（壊れたフレーム）を反映したあとのグラフと、採用されたうち最良・最悪のフレーム
+run align_best "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FRAMEPOS=0 LUNASTACK_TAB=0
+run align_worst "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FRAMEPOS=4586 LUNASTACK_TAB=0
+run align_timeline "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment LUNASTACK_GRAPH=0 LUNASTACK_TAB=0
 run heatmap "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment LUNASTACK_HEATMAP=1
 # 4. スタックのあと
 run stacked "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged

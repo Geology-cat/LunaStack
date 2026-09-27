@@ -234,24 +234,29 @@ fig("qs_added", "added", width=1800, fmt="jpg", anchors={
 fig("qs_quality", "quality", width=1800, fmt="jpg", anchors={
     "graph": cls("QualityGraphView"), "cutline": ("cutline", cls("QualityGraphView")),
     "graphmode": uni(seglabel("時系列", 0), seglabel("品質順", 0)),
-    "slider": uni(cls("NSSlider", section=""), btn("→")), "framelabel": lbl("上位 0.1%"),
+    "slider": uni(cls("NSSlider", section=""), btn("→")), "framelabel": lbl(" · #"),
     "align": btn("アライメント", section=""), "tabs": WINDOW_PARTS["tabs"],
     "refslider": ("find", dict(cls="NSSlider", section="align", nth=1)),
     "method": popup("align", 0),
 })
-fig("graph_order", "quality", crop=pad(union([[8, 236, 224, 504]]), 2), width=460, anchors={
+fig("graph_order", "align_best", crop=pad(union([[8, 236, 224, 504]]), 2), width=460, anchors={
     "cutline": ("cutline", cls("QualityGraphView")), "mode": uni(seglabel("時系列", 0), seglabel("品質順", 0)),
     "best": rect(10, 290, 30, 60), "worst": rect(196, 600, 36, 90),
 })
-fig("graph_timeline", "quality_timeline", crop=pad(union([[8, 236, 224, 504]]), 2), width=460, anchors={
+fig("graph_timeline", "align_timeline", crop=pad(union([[8, 236, 224, 504]]), 2), width=460, anchors={
     "cutline": ("cutline", cls("QualityGraphView")), "mode": uni(seglabel("時系列", 0), seglabel("品質順", 0)),
 })
-fig("frame_best", "quality", crop=[400, 190, 400, 400], width=600, fmt="jpg")
-fig("frame_worst", "quality_worst", crop=[400, 190, 400, 400], width=600, fmt="jpg")
+# 品質評価の直後（壊れたフレームがまだ除外されていない）
+fig("graph_spikes", "quality_timeline", crop=pad(union([[8, 236, 224, 504]]), 2), width=460, anchors={
+    "spike": rect(118, 330, 30, 280),
+})
+fig("frame_best", "align_best", crop=[400, 190, 400, 400], width=600, fmt="jpg")
+fig("frame_worst", "align_worst", crop=[400, 190, 400, 400], width=600, fmt="jpg")
+fig("frame_broken", "quality", crop=[400, 190, 400, 400], width=600, fmt="jpg")
 fig("qs_align", "align", width=1800, fmt="jpg", anchors={
     "preview": PREVIEW_ONLY, "banner": uni(lbl("枚を自動除外"), btn("×")), "details": btn("詳細…"),
     "viewmode": uni(seglabel("フレーム"), seglabel("結果")), "ref": seglabel("参照"),
-    "apcount": lbl("位置合わせ領域 110"), "stack": btn("スタック", section=""),
+    "apcount": lbl("位置合わせ領域 "), "stack": btn("スタック", section=""),
     "tabs": WINDOW_PARTS["tabs"], "aptop": ("find", dict(cls="NSSlider", section="stack", nth=0)),
     "method": popup("stack", 0), "graph": cls("QualityGraphView"),
 })
@@ -269,7 +274,7 @@ fig("after_nowave", "finished_nowave", crop=[410, 180, 380, 380], width=640, fmt
 fig("after_finish", "finished", crop=[410, 180, 380, 380], width=640, fmt="jpg")
 fig("qs_export", "export", crop=[962, 0, 318, 420], width=636, anchors={
     "format": popup("export", 0), "name": popup("export", 1), "object": ("find", dict(cls="NSTextField", section="export", text="", exact=True, nth=0)),
-    "meta": btn("処理条件と撮影時刻をファイルに記録する"), "filename": lbl("jupiter_ap48"),
+    "meta": btn("処理条件と撮影時刻をファイルに記録する"), "filename": lbl("jupiter_ap"),
     "save": btn("名前を付けて書き出し…"), "multi": uni(("find", dict(cls="NSTextField", section="export", text="5, 10, 25")), btn("まとめて書き出し…")),
 })
 
