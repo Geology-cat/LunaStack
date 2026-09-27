@@ -481,11 +481,107 @@ void dering(const FrameBuffer& original, double strength, int radius, FrameBuffe
     apply_dering_bounds(lo, hi, std::min(1.0, strength), sharpened);
 }
 
+// ---- レベル補正 ----------------------------------------------------------------
+
+namespace {
+
+// 1段ぶんのレベル補正（画素ごと）。
+struct LevelsOp {
+    bool active = false;
+    double black = 0.0, scale = 1.0, inv_gamma = 1.0;
+    bool linear = true;
+    explicit LevelsOp(const Levels& l) {
+        active = !l.identity();
+        black = l.black;
+        scale = 1.0 / std::max(1e-9, l.white - l.black);
+        inv_gamma = 1.0 / std::max(1e-6, l.gamma);
+        linear = l.gamma == 1.0;
+    }
+    double operator()(double v) const {
+        v = (v - black) * scale;
+        if (!(v > 0.0)) v = 0.0;
+        if (v > 1.0) v = 1.0;
+        return linear ? v : std::pow(v, inv_gamma);
+    }
+};
+
+}  // namespace
+
+void apply_levels(const FrameBuffer& src, const LevelsSettings& levels, FrameBuffer& out) {
+    if (&src != &out &&
+        (out.width() != src.width() || out.height() != src.height() || out.channels() != src.channels())) {
+        out.reset(src.width(), src.height(), src.channels());
+    }
+    const LevelsOp master(levels.master);
+    const bool color = src.channels() == 3;
+    const int width = src.width();
+    for (int c = 0; c < src.channels(); ++c) {
+        const LevelsOp own(color ? levels.channel[c] : Levels());
+        if (!own.active && !master.active) {
+            if (&src != &out) {
+                for (int y = 0; y < src.height(); ++y) std::copy(src.row(c, y), src.row(c, y) + width, out.row(c, y));
+            }
+            continue;
+        }
+        detail::parallel_rows(src.height(), [&](int y0, int y1) {
+            for (int y = y0; y < y1; ++y) {
+                const float* s = src.row(c, y);
+                float* d = out.row(c, y);
+                for (int x = 0; x < width; ++x) {
+                    double v = s[x];
+                    if (own.active) v = own(v);  // チャンネル別 → 全体
+                    if (master.active) v = master(v);
+                    d[x] = static_cast<float>(v);
+                }
+            }
+        });
+    }
+    out.set_source_bit_depth(src.source_bit_depth());
+    out.invalidate_luma();
+}
+
+void compute_levels_histogram(const FrameBuffer& image, LevelsHistogram& out) {
+    const int bins = LevelsHistogram::kBins;
+    out.channels = image.channels();
+    for (auto& c : out.counts) c.clear();
+    if (image.empty()) return;
+    const int nc = image.channels() == 3 ? 3 : 1;
+    // 行ごとに数えてから、行の順に足し合わせる（結果は実行順によらない）。
+    std::vector<std::uint32_t> rows(static_cast<std::size_t>(image.height()) * nc * bins, 0);
+    detail::parallel_rows(image.height(), [&](int y0, int y1) {
+        for (int y = y0; y < y1; ++y) {
+            for (int c = 0; c < nc; ++c) {
+                std::uint32_t* h = rows.data() + (static_cast<std::size_t>(y) * nc + c) * bins;
+                const float* r = image.row(c, y);
+                for (int x = 0; x < image.width(); ++x) {
+                    const float v = r[x];
+                    int b = v > 0.0f ? static_cast<int>(v * bins) : 0;
+                    if (b >= bins) b = bins - 1;
+                    ++h[b];
+                }
+            }
+        }
+    });
+    out.counts[0].assign(bins, 0);
+    if (nc == 3) {
+        for (int c = 1; c <= 3; ++c) out.counts[c].assign(bins, 0);
+    }
+    for (int y = 0; y < image.height(); ++y) {
+        for (int c = 0; c < nc; ++c) {
+            const std::uint32_t* h = rows.data() + (static_cast<std::size_t>(y) * nc + c) * bins;
+            for (int b = 0; b < bins; ++b) {
+                out.counts[0][static_cast<std::size_t>(b)] += h[b];
+                if (nc == 3) out.counts[c + 1][static_cast<std::size_t>(b)] += h[b];
+            }
+        }
+    }
+}
+
 // ---- 全体 ------------------------------------------------------------------
 
 bool FinishingSettings::identity() const {
     if (channels.any() || dering > 0.0 || !color.identity() || !geometry.identity()) return false;
-    if (stretch && (black != 0.0 || white != 1.0 || gamma != 1.0)) return false;
+    if (!levels.identity()) return false;
     for (const WaveletLayerParams& p : wavelet) {
         if (p.sharpen != 1.0 || p.denoise != 0.0) return false;
     }
@@ -498,6 +594,7 @@ void FinishingPipeline::set_input(std::shared_ptr<const FrameBuffer> stacked, in
     aligned_valid_ = false;
     wavelet_valid_ = false;
     dering_radius_ = 0;
+    histogram_valid_ = false;
     aligned_.clear();
 }
 
@@ -516,7 +613,23 @@ const FrameBuffer& FinishingPipeline::aligned() {
     return aligned_;
 }
 
-void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out) {
+namespace {
+
+// レベル補正より前の設定が同じか（ヒストグラムを数え直すかどうか）。
+bool same_before_levels(const FinishingSettings& a, const FinishingSettings& b) {
+    if (a.channels != b.channels || a.dering != b.dering || a.wavelet.size() != b.wavelet.size()) return false;
+    for (std::size_t j = 0; j < a.wavelet.size(); ++j) {
+        if (a.wavelet[j].sharpen != b.wavelet[j].sharpen || a.wavelet[j].denoise != b.wavelet[j].denoise) return false;
+    }
+    for (int c = 0; c < 3; ++c) {
+        if (a.color.gain[c] != b.color.gain[c]) return false;
+    }
+    return a.color.saturation == b.color.saturation;
+}
+
+}  // namespace
+
+void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out, LevelsHistogram* histogram) {
     ensure_aligned(s.channels);
 
     // 途中の画像は使い回しの作業領域に置く（大きな画像で毎回確保すると遅い）。
@@ -557,7 +670,15 @@ void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out) {
 
     // 色と階調は画素ごとの処理なので、その場で書き換える。
     if (!s.color.identity() && work.channels() == 3) apply_color(work, s.color, work);
-    if (s.stretch) stretch_histogram(work, s.black, s.white, s.gamma, work);
+    if (histogram) {
+        if (!histogram_valid_ || !same_before_levels(histogram_settings_, s)) {
+            compute_levels_histogram(work, histogram_);
+            histogram_settings_ = s;
+            histogram_valid_ = true;
+        }
+        *histogram = histogram_;
+    }
+    if (!s.levels.identity()) apply_levels(work, s.levels, work);
     if (reshape) apply_geometry(work, s.geometry, out);
     out.set_source_bit_depth(input_->source_bit_depth());
     out.invalidate_luma();

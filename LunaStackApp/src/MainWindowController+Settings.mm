@@ -430,10 +430,7 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
         @"channelOffsets" : channels,
         @"gains" : gains,
         @"saturation" : @([_saturationSlider doubleValue]),
-        @"tone" : @([_toneCheck state] == NSControlStateValueOn),
-        @"black" : @([_blackSlider doubleValue]),
-        @"white" : @([_whiteSlider doubleValue]),
-        @"gamma" : @([_gammaSlider doubleValue]),
+        @"levels" : [self levelsArray],
         @"rotation" : @(_rotationTurns),
         @"flipH" : @([_flipHCheck state] == NSControlStateValueOn),
         @"flipV" : @([_flipVCheck state] == NSControlStateValueOn),
@@ -555,10 +552,7 @@ static void SetText(NSTextField* field, id value) {
             }
         }
         if (d[@"saturation"]) [_saturationSlider setDoubleValue:[d[@"saturation"] doubleValue]];
-        SetCheck(_toneCheck, d[@"tone"]);
-        if (d[@"black"]) [_blackSlider setDoubleValue:[d[@"black"] doubleValue]];
-        if (d[@"white"]) [_whiteSlider setDoubleValue:[d[@"white"] doubleValue]];
-        if (d[@"gamma"]) [_gammaSlider setDoubleValue:[d[@"gamma"] doubleValue]];
+        [self setLevelsFromDictionary:d];
         if (d[@"rotation"]) _rotationTurns = (([d[@"rotation"] intValue] % 4) + 4) % 4;
         SetCheck(_flipHCheck, d[@"flipH"]);
         SetCheck(_flipVCheck, d[@"flipV"]);
@@ -582,6 +576,7 @@ static void SetText(NSTextField* field, id value) {
     _rotationTurns = 0;
     _cropRect = NSZeroRect;
     [_cropModeCheck setState:NSControlStateValueOff];
+    [_levelsChannelPopup selectItemAtIndex:0];
     [_waveletPreviewCheck setState:NSControlStateValueOn];
     [_waveletOnlyPreviewCheck setState:NSControlStateValueOn];
     [_linkedCheck setState:NSControlStateValueOff];

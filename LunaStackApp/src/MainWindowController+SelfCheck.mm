@@ -409,14 +409,15 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     [self waitForFinishingForTesting];
     LSDisplayMapping before;
     const BOOL fixedBefore = [_preview currentDisplayMapping:&before];
-    const NSControlStateValue tone = [_toneCheck state];
-    [_toneCheck setState:tone == NSControlStateValueOn ? NSControlStateValueOff : NSControlStateValueOn];
-    [self finishingChanged:_toneCheck];  // ランループは回さない（まだ描き上がっていない）
+    const stackcore::Levels saved = _levels[0];
+    _levels[0].white = saved.identity() ? 0.5 : 1.0;  // 初期値との間で切り替える
+    if (!saved.identity()) _levels[0] = stackcore::Levels();
+    [self finishingChanged:nil];  // ランループは回さない（まだ描き上がっていない）
     LSDisplayMapping during;
     const BOOL fixedDuring = [_preview currentDisplayMapping:&during];
     const BOOL ok = fixedBefore == fixedDuring && (!fixedBefore || before == during);
-    [_toneCheck setState:tone];
-    [self finishingChanged:_toneCheck];
+    _levels[0] = saved;
+    [self finishingChanged:nil];
     [self waitForFinishingForTesting];
     NSLog(@"表示の対応の自己検証: %@", ok ? @"描き上がるまで変わらない" : @"— 描き上がる前に変わっています");
     return ok;
@@ -521,8 +522,9 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     [_gainSliders[0] setDoubleValue:1.3];
     [_saturationSlider setDoubleValue:1.6];
     [_deringSlider setDoubleValue:0.7];
-    [_toneCheck setState:NSControlStateValueOn];
-    [_blackSlider setDoubleValue:0.1];
+    _levels[0].black = 0.1;
+    _levels[2].gamma = 1.7;
+    [_levelsChannelPopup selectItemAtIndex:2];
     [_channelFields[1] setStringValue:@"1.25"];
     [_topSlider setDoubleValue:40.0];
     [_drizzleSegment setSelectedSegment:3];
@@ -593,6 +595,15 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
         } else if ([key isEqualToString:@"rotate"]) {
             _rotationTurns = (([value intValue] % 4) + 4) % 4;
             [self finishingChanged:nil];
+        } else if ([key isEqualToString:@"levels"]) {
+            // "黒:中間:白"（黒・白は 0〜255）を RGB 全体に。
+            NSArray* v = [value componentsSeparatedByString:@":"];
+            if ([v count] == 3) {
+                _levels[0].black = [v[0] doubleValue] / 255.0;
+                _levels[0].gamma = [v[1] doubleValue];
+                _levels[0].white = [v[2] doubleValue] / 255.0;
+                [self finishingChanged:nil];
+            }
         } else if ([key isEqualToString:@"dering"]) {
             [_deringSlider setDoubleValue:[value doubleValue]];
             [self finishingChanged:nil];
@@ -671,6 +682,17 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     _cropRect = NSMakeRect([v[0] doubleValue], [v[1] doubleValue], [v[2] doubleValue], [v[3] doubleValue]);
     [self updateApOverlay];
     [self updateCropControls];
+}
+
+// 設定パネルを、指定したセクションの見出しが上に来るまでスクロールする（画面を撮るため）。
+- (void)scrollToSectionForTesting:(NSString*)key {
+    NSView* header = _sectionHeaders[key];
+    if (!header) return;
+    [[_inspectorScroll window] layoutIfNeeded];
+    NSClipView* clip = [_inspectorScroll contentView];
+    const NSRect r = [header convertRect:[header bounds] toView:[_inspectorScroll documentView]];
+    [clip scrollToPoint:NSMakePoint(0, std::max<CGFloat>(0.0, NSMinY(r) - 4.0))];
+    [_inspectorScroll reflectScrolledClipView:clip];
 }
 
 - (void)setWaveletPreviewForTesting:(BOOL)on {

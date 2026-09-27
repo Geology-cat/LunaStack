@@ -216,7 +216,6 @@
 "WinJUPOS形式（撮影時刻を先頭に）" = "WinJUPOS style (capture time first)";
 "σクリップの閾値（σ）" = "Sigma-clip threshold (σ)";
 "↺ 左へ90°" = "↺ Rotate Left 90°";
-"ここでの調整は書き出す画像に入ります（プレビューの「表示を明るくする」は画面だけ）。" = "These adjustments are written to the exported image (the preview \"Brighten display\" option affects the screen only).";
 "ここに書き出す" = "Export Here";
 "すべてを表示" = "Show All";
 "すべてを選択" = "Select All";
@@ -233,7 +232,6 @@
 "オレンジの線は参照とスタックに使う上位の割合です。線をドラッグで変更、ほかの場所をクリックでそのフレームを表示します" = "The orange line is the top fraction used for the reference and the stack. Drag it to change; click elsewhere to show that frame";
 "オレンジの線は参照画像に使う上位の割合です。線をドラッグで変更、ほかの場所をクリックでそのフレームを表示します" = "The orange line is the top fraction used for the reference image. Drag it to change; click elsewhere to show that frame";
 "カット" = "Cut";
-"ガンマ" = "Gamma";
 "クリックで位置合わせ領域を追加、選んでDeleteで削除（⌘Zで取り消し）" = "Click to add an alignment point, select and press Delete to remove (⌘Z to undo)";
 "コピー" = "Copy";
 "スタック結果" = "Stacked result";
@@ -248,7 +246,6 @@
 "チャンネル合わせはカラー画像にだけ使えます" = "Channel alignment only applies to color images";
 "デバイヤーの方式" = "Debayer method";
 "ノイズ" = "Noise";
-"ヒストグラムを調整する" = "Adjust histogram";
 "ファイル名の付け方" = "File naming";
 "フラットを設定しました。品質評価の開始時にマスターを作ります" = "Flat set. The master is built when quality evaluation starts";
 "フラットを選ぶ…" = "Choose Flat…";
@@ -320,7 +317,6 @@
 "拡大" = "Zoom In";
 "拡大／縮小" = "Zoom";
 "採用率をカンマ区切りで入力してください（例: 5, 10, 25）" = "Enter selections separated by commas (e.g. 5, 10, 25)";
-"明るさ（黒点・白点・ガンマ）" = "Levels (black, white, gamma)";
 "書き出し" = "Export";
 "書き出すフォルダを選んでください（同名のファイルは上書きせず番号を付けます）" = "Choose the output folder (existing files are not overwritten; a number is added)";
 "最初の除外フレームを表示" = "Show First Rejected Frame";
@@ -328,7 +324,6 @@
 "最近使った項目" = "Open Recent";
 "標準（bilinear）" = "Standard (bilinear)";
 "模様の強さ・明るさを下げると、暗い所や模様の乏しい所にも位置合わせ領域を置きます。" = "Lower values place alignment points in darker or less detailed areas too.";
-"白点" = "White";
 "終了する前に処理を中断します。途中までの結果は保存されません" = "Processing will be cancelled before quitting. Partial results are not saved";
 "編集" = "Edit";
 "縮小" = "Zoom Out";
@@ -360,7 +355,6 @@
 "高" = "High";
 "高品質" = "High quality";
 "高品質（Malvar-He-Cutler）" = "High quality (Malvar-He-Cutler)";
-"黒点" = "Black";
 "（なし）" = "(None)";
 "（中断）" = " (cancelled)";
 "［パス %d/%d］" = "[Pass %d/%d] ";
@@ -398,3 +392,7 @@
 "先にプレビューで切り抜く枠を描いてください" = "Draw a crop box on the preview first";
 "切り抜きました — %d×%d" = "Cropped — %d×%d";
 "切り抜く前に戻しました — %d×%d" = "Crop undone — %d×%d";
+"明るさ（レベル補正）" = "Brightness (Levels)";
+"チャンネル：" = "Channel:";
+"入力レベル：" = "Input Levels:";
+"Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、画像の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。黒・白の三角をヒストグラムの端に合わせると、画面は書き出す明るさと同じになります。" = "Works like Levels in Photoshop. The black and white triangles set the range, and the gray triangle (the value is gamma) sets the midtones. Per-channel (R, G, B) levels are applied before RGB. While \"Brighten Preview\" is on, the preview is stretched so the image's range fills the screen; once the black and white triangles sit at the ends of the histogram, the preview matches the exported brightness.";

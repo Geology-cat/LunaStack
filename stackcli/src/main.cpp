@@ -337,10 +337,10 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image,
     fs.color.saturation = opts.saturation;
 
     if (opts.stretch_black >= 0.0) {
-        fs.stretch = true;
-        fs.black = opts.stretch_black;
-        fs.white = opts.stretch_white;
-        fs.gamma = opts.stretch_gamma;
+        // 黒・白・ガンマは全体のレベル補正に当たる。
+        fs.levels.master.black = opts.stretch_black;
+        fs.levels.master.white = opts.stretch_white;
+        fs.levels.master.gamma = opts.stretch_gamma;
         std::printf("\n[ヒストグラムストレッチ] 黒点 %.3f / 白点 %.3f / ガンマ %.2f\n",
                     opts.stretch_black, opts.stretch_white, opts.stretch_gamma);
     }

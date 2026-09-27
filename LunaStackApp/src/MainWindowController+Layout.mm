@@ -1057,25 +1057,52 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
 - (void)buildToneSection:(NSStackView*)box {
     NSString* key = @"tone";
-    [self beginSection:@"明るさ（黒点・白点・ガンマ）" key:key inBox:box];
-    _toneCheck = [self checkboxWithTitle:@"ヒストグラムを調整する" state:NO];
-    [_toneCheck setTarget:self];
-    [_toneCheck setAction:@selector(finishingChanged:)];
-    [self addToSection:key view:_toneCheck box:box];
-    _blackSlider = [self sliderMin:0.0 max:0.5 value:0.0 action:@selector(finishingChanged:)];
-    _blackValue = MakeLabel(@"0.000");
-    [self addToSection:key view:[self captionRow:@"黒点" slider:_blackSlider value:_blackValue] box:box];
-    _whiteSlider = [self sliderMin:0.05 max:1.0 value:1.0 action:@selector(finishingChanged:)];
-    _whiteValue = MakeLabel(@"1.000");
-    [self addToSection:key view:[self captionRow:@"白点" slider:_whiteSlider value:_whiteValue] box:box];
-    _gammaSlider = [self sliderMin:0.3 max:3.0 value:1.0 action:@selector(finishingChanged:)];
-    _gammaValue = MakeLabel(@"1.00");
-    [self addToSection:key view:[self captionRow:@"ガンマ" slider:_gammaSlider value:_gammaValue] box:box];
+    [self beginSection:@"明るさ（レベル補正）" key:key inBox:box];
+    _levelsChannelPopup = [[[NSPopUpButton alloc] init] autorelease];
+    for (NSString* t in @[ @"RGB", @"R", @"G", @"B" ]) [_levelsChannelPopup addItemWithTitle:t];
+    [_levelsChannelPopup setTarget:self];
+    [_levelsChannelPopup setAction:@selector(levelsChannelChanged:)];
+    [_levelsChannelPopup setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [self addToSection:key view:[self buttonRow:@[ MakeLabel(@"チャンネル："), _levelsChannelPopup ]] box:box];
+    [self addToSection:key view:MakeLabel(@"入力レベル：") box:box];
+    _levelsView = [[[LevelsView alloc] initWithFrame:NSMakeRect(0, 0, 270, 118)] autorelease];
+    [_levelsView setDelegate:self];
+    [_levelsView setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [[[_levelsView widthAnchor] constraintEqualToConstant:270.0] setActive:YES];
+    [[[_levelsView heightAnchor] constraintEqualToConstant:118.0] setActive:YES];
+    [self addToSection:key view:_levelsView box:box];
+    // 数値欄: 黒（0〜255）・中間（ガンマ 0.10〜9.99）・白（0〜255）。小数も打てる。
+    NSTextField* fields[3];
+    NSString* initial[3] = {@"0", @"1.00", @"255"};
+    for (int i = 0; i < 3; ++i) {
+        NSTextField* f = [[[NSTextField alloc] init] autorelease];
+        [f setStringValue:initial[i]];
+        [f setFont:[NSFont monospacedDigitSystemFontOfSize:11.0 weight:NSFontWeightRegular]];
+        [f setAlignment:i == 0 ? NSTextAlignmentLeft : (i == 1 ? NSTextAlignmentCenter : NSTextAlignmentRight)];
+        [f setControlSize:NSControlSizeSmall];
+        [f setTranslatesAutoresizingMaskIntoConstraints:NO];
+        [[[f widthAnchor] constraintEqualToConstant:62.0] setActive:YES];
+        [f setTag:i];
+        [f setTarget:self];
+        [f setAction:@selector(levelsFieldChanged:)];
+        [[f cell] setSendsActionOnEndEditing:YES];
+        fields[i] = f;
+    }
+    _levelsBlackField = fields[0];
+    _levelsGammaField = fields[1];
+    _levelsWhiteField = fields[2];
+    NSStackView* row = [NSStackView stackViewWithViews:@[ fields[0], fields[1], fields[2] ]];
+    [row setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
+    [row setDistribution:NSStackViewDistributionEqualSpacing];
+    [row setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [[[row widthAnchor] constraintEqualToConstant:270.0] setActive:YES];
+    [self addToSection:key view:row box:box];
     [self addToSection:key
-                  view:[self buttonRow:@[ [self buttonWithTitle:@"自動で合わせる" action:@selector(autoTone:)] ]]
+                  view:[self buttonRow:@[ [self buttonWithTitle:@"自動" action:@selector(autoTone:)],
+                                          [self buttonWithTitle:@"初期値に戻す" action:@selector(resetLevels:)] ]]
                    box:box];
     [self addToSection:key
-                  view:[self noteLabel:@"ここでの調整は書き出す画像に入ります（プレビューの「表示を明るくする」は画面だけ）。"]
+                  view:[self noteLabel:@"Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、画像の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。黒・白の三角をヒストグラムの端に合わせると、画面は書き出す明るさと同じになります。"]
                    box:box];
 }
 

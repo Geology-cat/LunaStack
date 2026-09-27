@@ -10,6 +10,7 @@
 
 #import "Localization.h"
 #import "LSAppSupport.h"
+#import "LevelsView.h"
 #import "Presets.h"
 #import "QueueItem.h"
 
@@ -135,13 +136,14 @@
     NSTextField* _gainValues[3];
     NSSlider* _saturationSlider;
     NSTextField* _saturationValue;
-    NSButton* _toneCheck;
-    NSSlider* _blackSlider;
-    NSTextField* _blackValue;
-    NSSlider* _whiteSlider;
-    NSTextField* _whiteValue;
-    NSSlider* _gammaSlider;
-    NSTextField* _gammaValue;
+    // 明るさ（レベル補正）。0=全体（RGB）、1〜3=R・G・B。
+    LevelsView* _levelsView;
+    NSPopUpButton* _levelsChannelPopup;
+    NSTextField* _levelsBlackField;
+    NSTextField* _levelsGammaField;
+    NSTextField* _levelsWhiteField;
+    stackcore::Levels _levels[4];
+    stackcore::LevelsHistogram _levelsHistogram;  // レベル補正に入る画像（描き上がるたびに更新）
     NSTextField* _rotationLabel;
     NSButton* _flipHCheck;
     NSButton* _flipVCheck;
@@ -436,6 +438,9 @@
 - (void)clearCropBox:(id)sender;
 - (void)replaceFinishingInput;
 - (void)updateCropControls;
+- (void)updateLevelsControls;
+- (void)setLevelsFromDictionary:(NSDictionary*)d;
+- (NSArray*)levelsArray;
 - (void)clearCrop:(id)sender;
 - (OutputFormat)currentOutputFormat;
 - (NSString*)outputExtension;
@@ -449,6 +454,7 @@
 - (std::vector<stackcore::WaveletLayerParams>)waveletParams;
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
               prepared:(std::shared_ptr<LSPreviewImage>)prepared
+             histogram:(std::shared_ptr<stackcore::LevelsHistogram>)histogram
             generation:(long)generation
                  error:(const std::string&)error;
 - (LSDisplayMapping)finishingDisplayMapping;
@@ -518,6 +524,9 @@
 @end
 
 @interface MainWindowController (Settings) <QualityGraphViewDelegate>
+@end
+
+@interface MainWindowController (Finishing) <LevelsViewDelegate>
 @end
 
 @interface MainWindowController (Preview) <PreviewViewDelegate>

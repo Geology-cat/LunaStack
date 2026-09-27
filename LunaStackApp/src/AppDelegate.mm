@@ -168,6 +168,7 @@
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
             if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];
+            if (const char* sec = getenv("LUNASTACK_SECTION")) [controller scrollToSectionForTesting:[NSString stringWithUTF8String:sec]];
             if (const char* box = getenv("LUNASTACK_CROPBOX")) [controller showCropBoxForTesting:[NSString stringWithUTF8String:box]];
             [self writeSnapshotTo:path];
             if (selfTest) {

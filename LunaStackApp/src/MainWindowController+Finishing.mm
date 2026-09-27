@@ -42,10 +42,8 @@ double ParseField(NSTextField* field) {
     s.dering = [_deringSlider doubleValue];
     for (int c = 0; c < 3; ++c) s.color.gain[c] = [_gainSliders[c] doubleValue];
     s.color.saturation = [_saturationSlider doubleValue];
-    s.stretch = [_toneCheck state] == NSControlStateValueOn;
-    s.black = [_blackSlider doubleValue];
-    s.white = std::max(s.black + 0.01, [_whiteSlider doubleValue]);
-    s.gamma = [_gammaSlider doubleValue];
+    s.levels.master = _levels[0];
+    for (int c = 0; c < 3; ++c) s.levels.channel[c] = _levels[c + 1];
     s.geometry.rotate_quarter_turns = _rotationTurns;
     s.geometry.flip_horizontal = [_flipHCheck state] == NSControlStateValueOn;
     s.geometry.flip_vertical = [_flipVCheck state] == NSControlStateValueOn;
@@ -165,8 +163,9 @@ double ParseField(NSTextField* field) {
     dispatch_async(_finishQueue, ^{
         std::string error;
         std::shared_ptr<LSPreviewImage> prepared;
+        auto histogram = std::make_shared<stackcore::LevelsHistogram>();
         try {
-            pipeline->render(settings, *out);
+            pipeline->render(settings, *out, histogram.get());
             if (prepare) prepared = LSMakePreviewImage(*out, mapping, deviceScale);
         } catch (const std::exception& e) {
             error = e.what();
@@ -175,7 +174,7 @@ double ParseField(NSTextField* field) {
         // 入れ子で回っているランループの中でも、描き上がった結果がすぐ届く。
         CFRunLoopRef mainLoop = CFRunLoopGetMain();
         CFRunLoopPerformBlock(mainLoop, kCFRunLoopCommonModes, ^{
-            [controller finishedRender:out prepared:prepared generation:generation error:error];
+            [controller finishedRender:out prepared:prepared histogram:histogram generation:generation error:error];
         });
         CFRunLoopWakeUp(mainLoop);
     });
@@ -183,6 +182,7 @@ double ParseField(NSTextField* field) {
 
 - (void)finishedRender:(std::shared_ptr<stackcore::FrameBuffer>)out
               prepared:(std::shared_ptr<LSPreviewImage>)prepared
+             histogram:(std::shared_ptr<stackcore::LevelsHistogram>)histogram
             generation:(long)generation
                  error:(const std::string&)error {
     _renderInFlight = NO;
@@ -194,6 +194,10 @@ double ParseField(NSTextField* field) {
         // 描き上がった最新の仕上げ。表示の切り替えなどで描き直すときも、スタックそのままの
         // 画像へ戻さずこれを出す。
         _displayed = out;
+        if (histogram && !histogram->empty()) {
+            _levelsHistogram = *histogram;
+            [self updateLevelsControls];
+        }
         if ([_viewModeSegment selectedSegment] == 2 &&
             [_waveletPreviewCheck state] == NSControlStateValueOn) {
             ++_previewUpdates;
@@ -220,7 +224,6 @@ double ParseField(NSTextField* field) {
     LSDisplayMapping m;
     if (!_stacked || ![_preview displayStretch]) return m;  // 「表示を明るくする」OFFは素の値
     m.stretch = true;
-    if ([_toneCheck state] == NSControlStateValueOn) return m;  // 0..1・線形
     if (!(_stackedDisplayHigh > _stackedDisplayLow)) {
         float lo = 1.0f, hi = 0.0f;
         for (int c = 0; c < _stacked->channels(); ++c) {
@@ -235,9 +238,26 @@ double ParseField(NSTextField* field) {
         _stackedDisplayLow = lo;
         _stackedDisplayHigh = hi > lo ? hi : lo + 1e-6f;
     }
-    m.lo = _stackedDisplayLow;
-    m.hi = _stackedDisplayHigh;
-    m.gamma = 0.75f;
+    // 「表示を明るくする」: スタック結果の明るさの範囲を、RGB 全体のレベル補正に通した範囲が
+    // 画面いっぱいになるよう、画面だけ直線で引き伸ばす（ガンマは掛けない）。
+    //   * 初期値のままでも暗い惑星が見える
+    //   * 三角を少し動かしても見た目が連続して変わる（動かした瞬間に暗く飛ばない）
+    //   * 黒・白の三角をデータの端（またはその内側）に合わせると範囲が 0..1 になり、
+    //     画面は書き出す明るさとちょうど同じになる
+    const stackcore::Levels& l = _levels[0];
+    const auto level = [&l](double v) {
+        double t = (v - l.black) / std::max(1e-9, l.white - l.black);
+        t = std::min(1.0, std::max(0.0, t));
+        return l.gamma == 1.0 ? t : std::pow(t, 1.0 / l.gamma);
+    };
+    double lo = level(_stackedDisplayLow), hi = level(_stackedDisplayHigh);
+    if (!(hi - lo > 1e-6)) {
+        lo = 0.0;
+        hi = 1.0;
+    }
+    m.lo = static_cast<float>(lo);
+    m.hi = static_cast<float>(hi);
+    m.gamma = 1.0f;
     return m;
 }
 
@@ -253,14 +273,20 @@ double ParseField(NSTextField* field) {
     auto out = std::make_shared<stackcore::FrameBuffer>();
     __block std::string error;
     stackcore::FrameBuffer* target = out.get();
+    auto histogram = std::make_shared<stackcore::LevelsHistogram>();
+    stackcore::LevelsHistogram* hist = histogram.get();
     dispatch_sync(_finishQueue, ^{
         try {
-            pipeline->render(settings, *target);
+            pipeline->render(settings, *target, hist);
         } catch (const std::exception& e) {
             error = e.what();
         }
     });
     if (!error.empty()) throw std::runtime_error(error);
+    if (!histogram->empty()) {
+        _levelsHistogram = *histogram;
+        [self updateLevelsControls];
+    }
     return out;
 }
 
@@ -297,11 +323,7 @@ double ParseField(NSTextField* field) {
         [_gainValues[c] setStringValue:[NSString stringWithFormat:@"%.3f", [_gainSliders[c] doubleValue]]];
     }
     [_saturationValue setStringValue:[NSString stringWithFormat:@"%.2f", [_saturationSlider doubleValue]]];
-    [_blackValue setStringValue:[NSString stringWithFormat:@"%.3f", [_blackSlider doubleValue]]];
-    [_whiteValue setStringValue:[NSString stringWithFormat:@"%.3f", [_whiteSlider doubleValue]]];
-    [_gammaValue setStringValue:[NSString stringWithFormat:@"%.2f", [_gammaSlider doubleValue]]];
-    const BOOL tone = [_toneCheck state] == NSControlStateValueOn;
-    for (NSControl* c in @[ _blackSlider, _whiteSlider, _gammaSlider ]) [c setEnabled:tone];
+    [self updateLevelsControls];
     NSString* rotation = _rotationTurns == 0 ? LSLocalizedString(@"回転なし")
                                              : [NSString stringWithFormat:LSLocalizedString(@"右へ %d°"),
                                                                           _rotationTurns * 90];
@@ -525,7 +547,7 @@ double ParseField(NSTextField* field) {
     (void)sender;
     if (!_finishing) return;
     stackcore::FinishingSettings settings = [self currentFinishingSettings];
-    settings.stretch = false;
+    settings.levels = stackcore::LevelsSettings();
     settings.geometry = stackcore::Geometry();
     std::shared_ptr<stackcore::FinishingPipeline> pipeline = _finishing;
     MainWindowController* controller = self;
@@ -554,11 +576,132 @@ double ParseField(NSTextField* field) {
     });
 }
 
+// ［自動］: RGB 全体の黒・白を、明るさの分布の端（2% と 99.95%）に合わせる。
+// チャンネル別の設定と中間（ガンマ）はそのまま残す。
 - (void)applyToneBlack:(double)black white:(double)white {
-    [_toneCheck setState:NSControlStateValueOn];
-    [_blackSlider setDoubleValue:std::max(0.0, std::min(0.5, black))];
-    [_whiteSlider setDoubleValue:std::max(black + 0.02, std::min(1.0, white))];
+    black = std::max(0.0, std::min(1.0 - 2.0 / 255.0, black));
+    white = std::max(black + 2.0 / 255.0, std::min(1.0, white));
+    _levels[0].black = std::round(black * 255.0 * 10.0) / (255.0 * 10.0);
+    _levels[0].white = std::round(white * 255.0 * 10.0) / (255.0 * 10.0);
+    [_levelsChannelPopup selectItemAtIndex:0];
     [self finishingChanged:nil];
+}
+
+// ---- レベル補正 -------------------------------------------------------------------
+
+- (int)levelsChannel {
+    const NSInteger i = [_levelsChannelPopup indexOfSelectedItem];
+    return i >= 0 && i < 4 ? static_cast<int>(i) : 0;
+}
+
+// 選んでいるチャンネルの値を、三角・数値欄・ヒストグラムに出す。
+- (void)updateLevelsControls {
+    if (!_levelsView) return;
+    // モノクロでは R・G・B を選べない。
+    const BOOL color = !_stacked || _stacked->channels() == 3;
+    for (int i = 1; i < 4; ++i) [[_levelsChannelPopup itemAtIndex:i] setEnabled:color];
+    if (!color && [self levelsChannel] != 0) [_levelsChannelPopup selectItemAtIndex:0];
+    [_levelsChannelPopup setAutoenablesItems:NO];
+    const int ch = [self levelsChannel];
+    const stackcore::Levels& l = _levels[ch];
+    [_levelsView setBlack:l.black];
+    [_levelsView setWhite:l.white];
+    [_levelsView setGamma:l.gamma];
+    const int index = _levelsHistogram.channels == 3 ? ch : 0;
+    if (!_levelsHistogram.empty() && !_levelsHistogram.counts[index].empty()) {
+        [_levelsView setHistogram:_levelsHistogram.counts[index]];
+    }
+    const auto format255 = [](double v) {
+        const double x = std::round(v * 255.0 * 10.0) / 10.0;
+        return std::fabs(x - std::round(x)) < 1e-9 ? [NSString stringWithFormat:@"%.0f", x]
+                                                   : [NSString stringWithFormat:@"%.1f", x];
+    };
+    // 打っている途中の欄は書き換えない。
+    if ([_levelsBlackField currentEditor] == nil) [_levelsBlackField setStringValue:format255(l.black)];
+    if ([_levelsWhiteField currentEditor] == nil) [_levelsWhiteField setStringValue:format255(l.white)];
+    if ([_levelsGammaField currentEditor] == nil) {
+        [_levelsGammaField setStringValue:[NSString stringWithFormat:@"%.2f", l.gamma]];
+    }
+}
+
+- (void)levelsViewDidChange:(LevelsView*)view {
+    stackcore::Levels& l = _levels[[self levelsChannel]];
+    l.black = [view black];
+    l.white = [view white];
+    l.gamma = [view gamma];
+    [self finishingChanged:view];
+}
+
+- (void)levelsChannelChanged:(id)sender {
+    (void)sender;
+    [self updateLevelsControls];
+}
+
+// 数値欄: 黒・白は 0〜255、中間は 0.10〜9.99。全角の数字も読み、範囲に収める。
+- (void)levelsFieldChanged:(id)sender {
+    NSTextField* field = (NSTextField*)sender;
+    NSMutableString* ascii = [NSMutableString stringWithString:
+                                  [[field stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]];
+    CFStringTransform((CFMutableStringRef)ascii, NULL, kCFStringTransformFullwidthHalfwidth, false);
+    NSScanner* scanner = [NSScanner scannerWithString:ascii];
+    double v = 0.0;
+    stackcore::Levels& l = _levels[[self levelsChannel]];
+    if (![scanner scanDouble:&v] || ![scanner isAtEnd] || !std::isfinite(v)) {
+        NSBeep();
+        [self updateLevelsControls];
+        return;
+    }
+    const double gap = 2.0 / 255.0;
+    if ([field tag] == 0) {
+        l.black = std::max(0.0, std::min(v / 255.0, l.white - gap));
+    } else if ([field tag] == 2) {
+        l.white = std::min(1.0, std::max(v / 255.0, l.black + gap));
+    } else {
+        l.gamma = std::max(kLevelsGammaMin, std::min(kLevelsGammaMax, v));
+    }
+    [field abortEditing];
+    [self finishingChanged:field];
+}
+
+// ［初期値に戻す］: RGB 全体と R・G・B すべてを 0 / 1.00 / 255 に戻す。
+- (void)resetLevels:(id)sender {
+    (void)sender;
+    for (int i = 0; i < 4; ++i) _levels[i] = stackcore::Levels();
+    [_levelsChannelPopup selectItemAtIndex:0];
+    [self finishingChanged:nil];
+}
+
+// 設定の保存用: [[黒, 白, ガンマ] ×4]（RGB, R, G, B）。
+- (NSArray*)levelsArray {
+    NSMutableArray* a = [NSMutableArray array];
+    for (int i = 0; i < 4; ++i) [a addObject:@[ @(_levels[i].black), @(_levels[i].white), @(_levels[i].gamma) ]];
+    return a;
+}
+
+// 設定から読む。古いプリセット（tone・black・white・gamma）は RGB 全体に当てる。
+- (void)setLevelsFromDictionary:(NSDictionary*)d {
+    NSArray* a = d[@"levels"];
+    if ([a isKindOfClass:[NSArray class]] && [a count] == 4) {
+        for (int i = 0; i < 4; ++i) {
+            NSArray* v = a[static_cast<NSUInteger>(i)];
+            stackcore::Levels l;
+            if ([v isKindOfClass:[NSArray class]] && [v count] == 3) {
+                l.black = std::max(0.0, std::min(1.0, [v[0] doubleValue]));
+                l.white = std::max(l.black + 1e-4, std::min(1.0, [v[1] doubleValue]));
+                l.gamma = std::max(kLevelsGammaMin, std::min(kLevelsGammaMax, [v[2] doubleValue]));
+            }
+            _levels[i] = l;
+        }
+        return;
+    }
+    if (d[@"tone"] || d[@"black"]) {
+        for (int i = 0; i < 4; ++i) _levels[i] = stackcore::Levels();
+        if ([d[@"tone"] boolValue]) {
+            _levels[0].black = [d[@"black"] doubleValue];
+            _levels[0].white = std::max(_levels[0].black + 1e-4, d[@"white"] ? [d[@"white"] doubleValue] : 1.0);
+            _levels[0].gamma = d[@"gamma"] ? std::max(kLevelsGammaMin, [d[@"gamma"] doubleValue]) : 1.0;
+        }
+    }
 }
 
 // ---- 向き・切り抜き -----------------------------------------------------------
@@ -825,9 +968,15 @@ double ParseField(NSTextField* field) {
                       f.color.gain[1], f.color.gain[2], f.color.saturation);
         m.history.push_back(buf);
     }
-    if (f.stretch) {
-        std::snprintf(buf, sizeof(buf), "stretch black %.3f white %.3f gamma %.2f", f.black, f.white, f.gamma);
-        m.history.push_back(buf);
+    if (!f.levels.identity()) {
+        const char* names[4] = {"RGB", "R", "G", "B"};
+        const stackcore::Levels* all[4] = {&f.levels.master, &f.levels.channel[0], &f.levels.channel[1], &f.levels.channel[2]};
+        for (int i = 0; i < 4; ++i) {
+            if (all[i]->identity()) continue;
+            std::snprintf(buf, sizeof(buf), "levels %s black %.4f white %.4f gamma %.2f", names[i], all[i]->black,
+                          all[i]->white, all[i]->gamma);
+            m.history.push_back(buf);
+        }
     }
     if (f.dering > 0.0) {
         std::snprintf(buf, sizeof(buf), "dering %.2f", f.dering);

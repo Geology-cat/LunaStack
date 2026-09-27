@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -14,7 +15,7 @@ namespace stackcore {
 //   1. RGBチャンネルの位置合わせ（大気分散の補正）
 //   2. ウェーブレット（細部強調・ノイズ低減）＋デリンギング
 //   3. 色（ホワイトバランス・彩度）
-//   4. ヒストグラムストレッチ（黒点・白点・ガンマ）
+//   4. レベル補正（黒・中間（ガンマ）・白。R・G・B 別 → 全体の順）
 //   5. 形（クロップ → 回転 → 反転）
 // チャンネル合わせは色ずれした輪郭を強調しないよう、ウェーブレットより前に置く。
 // 形の変更は画素値を変えないので最後に置く。
@@ -106,16 +107,53 @@ void crop_frame(const FrameBuffer& src, int x, int y, int w, int h, FrameBuffer&
 // 平坦な場所の細部強調は近傍の範囲内に収まるので、効くのは主に輪郭の外側である。
 void dering(const FrameBuffer& original, double strength, int radius, FrameBuffer& sharpened);
 
+// レベル補正（Photoshop の「レベル補正」の入力レベルと同じ考え方）。
+//   out = ((in − black) / (white − black)) ^ (1 / gamma)   （0..1 に切り詰める）
+// black・white は 0..1（画面では 0〜255 で見せる）。gamma は中間の三角に当たり、
+// 1 より大きいと中間調が明るくなる。中間の三角の位置は黒〜白の間の割合 0.5^gamma。
+struct Levels {
+    double black = 0.0;
+    double white = 1.0;
+    double gamma = 1.0;
+    bool identity() const { return black == 0.0 && white == 1.0 && gamma == 1.0; }
+    bool operator==(const Levels& o) const {
+        return black == o.black && white == o.white && gamma == o.gamma;
+    }
+    bool operator!=(const Levels& o) const { return !(*this == o); }
+};
+
+// 全体（RGB）と、チャンネル別（R・G・B）のレベル補正。
+// **掛ける順序はチャンネル別 → 全体。** モノクロ画像には全体だけを掛ける。
+struct LevelsSettings {
+    Levels master;
+    Levels channel[3];
+    bool identity() const {
+        return master.identity() && channel[0].identity() && channel[1].identity() &&
+               channel[2].identity();
+    }
+};
+
+// レベル補正を掛ける。src と out に同じ画像を渡すと、その場で書き換える。
+void apply_levels(const FrameBuffer& src, const LevelsSettings& levels, FrameBuffer& out);
+
+// レベル補正に入る画像のヒストグラム（0..1 を bins 段に分ける。範囲外は両端に入れる）。
+// counts[0] は全チャンネルを合わせたもの（RGB）、counts[1..3] は R・G・B（モノクロでは空）。
+struct LevelsHistogram {
+    static constexpr int kBins = 256;
+    int channels = 0;
+    std::vector<std::uint32_t> counts[4];
+    bool empty() const { return counts[0].empty(); }
+};
+
+void compute_levels_histogram(const FrameBuffer& image, LevelsHistogram& out);
+
 // 仕上げの設定一式。
 struct FinishingSettings {
     ChannelOffsets channels;
     std::vector<WaveletLayerParams> wavelet;  // 空ならウェーブレットを掛けない
     double dering = 0.0;                      // 0〜1
     ColorAdjust color;
-    bool stretch = false;
-    double black = 0.0;
-    double white = 1.0;
-    double gamma = 1.0;
+    LevelsSettings levels;
     Geometry geometry;
 
     // すべてが「変化なし」か（仕上げを通しても入力と同じになるか）。
@@ -138,7 +176,10 @@ public:
     const FrameBuffer& input() const { return *input_; }
 
     // 仕上げ済みの画像を作る。
-    void render(const FinishingSettings& settings, FrameBuffer& out);
+    // histogram を渡すと、レベル補正に入る画像（チャンネル合わせ・ウェーブレット・色の後）の
+    // ヒストグラムも返す。レベル補正より前の設定が変わったときだけ数え直す。
+    void render(const FinishingSettings& settings, FrameBuffer& out,
+                LevelsHistogram* histogram = nullptr);
 
     // ウェーブレット直前の画像（チャンネル合わせ済み）。自動推定の入力に使う。
     const FrameBuffer& aligned() ;
@@ -158,6 +199,10 @@ private:
     std::vector<float> dering_lo_, dering_hi_;
     // 形を変えるときの途中の画像（使い回す）。
     FrameBuffer work_;
+    // レベル補正に入る画像のヒストグラムと、それを数えたときの設定。
+    bool histogram_valid_ = false;
+    FinishingSettings histogram_settings_;
+    LevelsHistogram histogram_;
 };
 
 }  // namespace stackcore

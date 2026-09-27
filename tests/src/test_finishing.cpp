@@ -284,3 +284,65 @@ MT_TEST(finishing_画面上の切り抜き枠を回転反転の前の座標に�
         }
     }
 }
+
+MT_TEST(finishing_レベル補正はチャンネル別のあと全体を掛ける) {
+    FrameBuffer src(4, 1, 3);
+    const float v[4] = {0.0f, 0.2f, 0.5f, 0.9f};
+    for (int c = 0; c < 3; ++c) {
+        for (int x = 0; x < 4; ++x) src.row(c, 0)[x] = v[x];
+    }
+    stackcore::LevelsSettings l;
+    MT_CHECK(l.identity());
+    l.channel[0].white = 0.5;   // R だけ白を下げる
+    l.master.black = 0.1;
+    l.master.gamma = 2.0;       // 中間調を明るく
+    FrameBuffer out;
+    stackcore::apply_levels(src, l, out);
+    const auto lv = [](double x, double b, double w, double g) {
+        double t = (x - b) / (w - b);
+        t = std::min(1.0, std::max(0.0, t));
+        return std::pow(t, 1.0 / g);
+    };
+    for (int x = 0; x < 4; ++x) {
+        MT_CHECK_NEAR(out.row(0, 0)[x], lv(lv(v[x], 0.0, 0.5, 1.0), 0.1, 1.0, 2.0), 1e-6);
+        MT_CHECK_NEAR(out.row(1, 0)[x], lv(v[x], 0.1, 1.0, 2.0), 1e-6);
+    }
+    // その場で書き換えても同じ。
+    stackcore::apply_levels(src, l, src);
+    MT_CHECK_NEAR(src.row(0, 0)[2], out.row(0, 0)[2], 0.0);
+    // 仕上げの処理系でも同じ経路を通る。
+    FinishingSettings s;
+    s.levels = l;
+    MT_CHECK(!s.identity());
+}
+
+MT_TEST(finishing_レベル補正に入る画像のヒストグラム) {
+    FrameBuffer f(10, 3, 3);
+    for (int c = 0; c < 3; ++c) {
+        for (int y = 0; y < 3; ++y) {
+            for (int x = 0; x < 10; ++x) f.row(c, y)[x] = c == 0 ? 1.5f : (c == 1 ? -0.2f : 0.5f);
+        }
+    }
+    stackcore::LevelsHistogram h;
+    stackcore::compute_levels_histogram(f, h);
+    MT_CHECK_EQ(h.channels, 3);
+    MT_CHECK_EQ(static_cast<int>(h.counts[1][255]), 30);  // 1を超える値は右端
+    MT_CHECK_EQ(static_cast<int>(h.counts[2][0]), 30);    // 負の値は左端
+    MT_CHECK_EQ(static_cast<int>(h.counts[3][128]), 30);
+    std::uint64_t total = 0;
+    for (std::uint32_t n : h.counts[0]) total += n;
+    MT_CHECK_EQ(static_cast<int>(total), 90);
+    // 処理系は、レベル補正を変えただけでは同じヒストグラムを返す。
+    auto input = std::make_shared<FrameBuffer>(10, 3, 3);
+    for (int c = 0; c < 3; ++c) for (int y = 0; y < 3; ++y) for (int x = 0; x < 10; ++x) input->row(c, y)[x] = 0.1f * x;
+    FinishingPipeline p;
+    p.set_input(input, 2);
+    FinishingSettings s;
+    stackcore::LevelsHistogram a, b;
+    FrameBuffer out;
+    p.render(s, out, &a);
+    s.levels.master.white = 0.5;
+    p.render(s, out, &b);
+    MT_CHECK(a.counts[0] == b.counts[0]);
+    MT_CHECK_NEAR(out.row(0, 0)[3], 0.6f, 1e-6);
+}
