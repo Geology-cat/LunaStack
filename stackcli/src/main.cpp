@@ -48,7 +48,10 @@ using stackcore::SerColorId;
 using stackcore::SerDecoder;
 using stackcore::VideoSource;
 
-const char* const kVersion = "0.9.0 (静止画連番・キャリブレーション・仕上げ工程)";
+#ifndef LUNASTACK_VERSION
+#define LUNASTACK_VERSION "0.0.0"
+#endif
+const char* const kVersion = LUNASTACK_VERSION;
 
 struct Options {
     std::string command;
@@ -420,8 +423,8 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image,
 void print_usage() {
     std::printf(
         "LunaStack CLI %s — 月・惑星スタッキングエンジン\n"
-        "入力: SER v3 / AVI（非圧縮・MJPEG）/ 静止画連番のフォルダ（TIFF・PNG・FITS・JPEG）\n"
-        "      いずれもOSのデコーダを使わず自前で読む\n"
+        "入力: SER v3 / AVI（非圧縮・MJPEG）/ MOV・MP4・M4V（AVFoundation）/\n"
+        "      静止画連番のフォルダ（TIFF・PNG・FITS・JPEG・カメラのRAW）\n"
         "\n"
         "使い方:\n"
         "  stackcli info <file.ser|file.avi> [オプション]\n"

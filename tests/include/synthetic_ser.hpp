@@ -63,9 +63,9 @@ inline std::uint32_t synthetic_value(const SerSpec& spec, int x, int y, int fram
         std::uint32_t amplitude = max_value / 512u;
         if (amplitude == 0u) amplitude = 1u;
         const std::uint32_t h = detail::hash_u32(
-            static_cast<std::uint32_t>(x * 73856093) ^
-            static_cast<std::uint32_t>(y * 19349663) ^
-            static_cast<std::uint32_t>((frame * 8 + component) * 83492791));
+            static_cast<std::uint32_t>(x) * 73856093u ^
+            static_cast<std::uint32_t>(y) * 19349663u ^
+            static_cast<std::uint32_t>(frame * 8 + component) * 83492791u);
         value += static_cast<std::int64_t>(h % (2u * amplitude + 1u)) -
                  static_cast<std::int64_t>(amplitude);
     }
