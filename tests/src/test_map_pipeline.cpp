@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -682,5 +683,46 @@ MT_TEST(map_同じ入力なら結果はビット単位で同じ) {
                 return;
             }
         }
+    }
+}
+
+MT_TEST(map_窓合成をAPの組に分けても結果はビット単位で同じ) {
+    // フレームを1回だけ読む窓合成は、APの足し込みをメモリの上限で組に分ける。
+    // 組の分け方（1組・APごと・低メモリ）が違っても、加算の順序は同じなので結果は一致する。
+    const int size = 96;
+    const SyntheticSource source(size, 30, 2.0, 1.0, 0.02, 911);
+    for (int mode = 0; mode < 3; ++mode) {
+        MapStackSettings settings;
+        settings.reference_top_percent = 60.0;
+        settings.ap_top_percent = 40.0;
+        settings.ap.ap_size = 32;
+        settings.local.search_radius = 8;
+        settings.reference_passes = 1;
+        settings.stack_mode = mode == 0 ? stackcore::StackMode::Mean
+                                        : (mode == 1 ? stackcore::StackMode::QualityWeighted
+                                                     : stackcore::StackMode::SigmaClip);
+        settings.drizzle_scale = mode == 2 ? 2.0 : 1.0;
+        MapStackReport rep;
+        const stackcore::AnalysisData analysis = stackcore::analyze_map_stack(source, settings, nullptr, rep);
+        MapStackReport r1, r2, r3;
+        const FrameBuffer whole = stackcore::stack_from_analysis(source, settings, analysis, nullptr, r1);
+        MapStackSettings per_ap = settings;
+        per_ap.stack_budget_bytes = 1;  // APごとに1組
+        const FrameBuffer split = stackcore::stack_from_analysis(source, per_ap, analysis, nullptr, r2);
+        MapStackSettings low = settings;
+        low.low_memory = true;
+        const FrameBuffer lowmem = stackcore::stack_from_analysis(source, low, analysis, nullptr, r3);
+        MT_CHECK_EQ(whole.width(), split.width());
+        bool same = true;
+        for (int c = 0; c < whole.channels(); ++c) {
+            for (int y = 0; y < whole.height(); ++y) {
+                if (std::memcmp(whole.row(c, y), split.row(c, y), sizeof(float) * whole.width()) != 0 ||
+                    std::memcmp(whole.row(c, y), lowmem.row(c, y), sizeof(float) * whole.width()) != 0) {
+                    same = false;
+                }
+            }
+        }
+        MT_CHECK(same);
+        MT_CHECK_EQ(r1.stack.contributions, r2.stack.contributions);
     }
 }

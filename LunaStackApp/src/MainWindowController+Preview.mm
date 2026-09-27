@@ -489,6 +489,11 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
         [parts addObject:LSLocalizedString(
                              @"16bitですが実測は12bit幅です。暗く写るなら品質評価タブで「12bitとして扱う」を選んでください")];
     }
+    // MOV・MP4 は OS 付属のデコーダで読むので、同じファイルでも OS の版で画素が変わりうる（仕様書 §3.1）。
+    if (!_inputPath.empty() && stackcore::is_movie_path(_inputPath)) {
+        [parts addObject:LSLocalizedString(
+                             @"MOV・MP4 は macOS のデコーダで読みます。macOS の版によって画素がわずかに変わることがあります")];
+    }
     if (_rejectedFrames > 0) {
         [parts addObject:[NSString
                              stringWithFormat:

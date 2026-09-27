@@ -4,6 +4,8 @@
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
 
+#include <sys/stat.h>
+
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -79,6 +81,36 @@ std::int64_t creation_ticks(AVAsset* asset) {
     return 0;
 }
 
+// 開くたびに作るフレーム表などの控え（プロセス全体で共有）。
+//
+// 1回の作業で同じ動画を何度も開く（プレビュー・各工程・照合など）。1GB級の動画では表を作るのに
+// 1秒前後かかるので、パス・大きさ・更新時刻が同じなら使い回す。
+struct MovieInfo {
+    std::vector<CMTime> pts;
+    std::string codec;
+    float fps = 0.0f;
+    int width = 0, height = 0;
+    std::int64_t ticks0 = 0;
+};
+
+std::string movie_key(const std::string& path) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return "";
+    return path + "|" + std::to_string(static_cast<long long>(st.st_size)) + "|" +
+           std::to_string(static_cast<long long>(st.st_mtimespec.tv_sec)) + "." +
+           std::to_string(static_cast<long long>(st.st_mtimespec.tv_nsec));
+}
+
+std::mutex& info_mutex() {
+    static std::mutex m;
+    return m;
+}
+
+std::map<std::string, std::shared_ptr<const MovieInfo>>& info_cache() {
+    static std::map<std::string, std::shared_ptr<const MovieInfo>> cache;
+    return cache;
+}
+
 class MovieSource : public VideoSource {
 public:
     explicit MovieSource(const std::string& path) : path_(path) {
@@ -89,20 +121,48 @@ public:
             NSArray* tracks = [asset_ tracksWithMediaType:AVMediaTypeVideo];
             if ([tracks count] == 0) fail("映像のトラックがありません");
             track_ = [[tracks objectAtIndex:0] retain];
-            fps_ = [track_ nominalFrameRate];
-            NSArray* formats = [track_ formatDescriptions];
-            if ([formats count] > 0) {
-                CMFormatDescriptionRef fd = (CMFormatDescriptionRef)[formats objectAtIndex:0];
-                codec_ = fourcc_name(CMFormatDescriptionGetMediaSubType(fd));
+            const std::string key = movie_key(path);
+            std::shared_ptr<const MovieInfo> known;
+            {
+                std::lock_guard<std::mutex> lock(info_mutex());
+                auto it = info_cache().find(key);
+                if (!key.empty() && it != info_cache().end()) known = it->second;
             }
-            build_frame_table();
-            // 大きさは実際にデコードした1枚目で決める（naturalSize は端数や回転を含みうる）。
-            std::vector<std::uint8_t> bgra;
-            int w = 0, h = 0;
-            decode_locked(0, bgra, w, h);
-            width_ = w;
-            height_ = h;
-            ticks0_ = creation_ticks(asset_);
+            if (known) {
+                pts_ = known->pts;
+                codec_ = known->codec;
+                fps_ = known->fps;
+                width_ = known->width;
+                height_ = known->height;
+                ticks0_ = known->ticks0;
+            } else {
+                fps_ = [track_ nominalFrameRate];
+                NSArray* formats = [track_ formatDescriptions];
+                if ([formats count] > 0) {
+                    CMFormatDescriptionRef fd = (CMFormatDescriptionRef)[formats objectAtIndex:0];
+                    codec_ = fourcc_name(CMFormatDescriptionGetMediaSubType(fd));
+                }
+                build_frame_table();
+                // 大きさは実際にデコードした1枚目で決める（naturalSize は端数や回転を含みうる）。
+                std::vector<std::uint8_t> bgra;
+                int w = 0, h = 0;
+                decode_locked(0, bgra, w, h);
+                width_ = w;
+                height_ = h;
+                ticks0_ = creation_ticks(asset_);
+                if (!key.empty()) {
+                    auto info = std::make_shared<MovieInfo>();
+                    info->pts = pts_;
+                    info->codec = codec_;
+                    info->fps = fps_;
+                    info->width = width_;
+                    info->height = height_;
+                    info->ticks0 = ticks0_;
+                    std::lock_guard<std::mutex> lock(info_mutex());
+                    if (info_cache().size() > 16) info_cache().clear();  // 使い回すのは最近の数本で足りる
+                    info_cache()[key] = info;
+                }
+            }
         }
     }
 
@@ -324,6 +384,12 @@ private:
             pending_bytes_ -= bgra.size();
             pending_.erase(hit);
             return;
+        }
+        // 読み進めて追い越したまま頼まれなかったフレーム（飛ばして読む工程）は捨てる。
+        // 残すと上限を使い切り、番号を前後して取りに来る並列の読み込みのための余地が無くなる。
+        for (auto it = pending_.begin(); it != pending_.end() && it->first < index - 48;) {
+            pending_bytes_ -= it->second.bytes.size();
+            it = pending_.erase(it);
         }
         if (!reader_ || index < next_ || index > next_ + 32) restart(index);
         for (;;) {

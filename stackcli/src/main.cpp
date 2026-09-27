@@ -1146,6 +1146,7 @@ int command_mapstack(const Options& opts) {
     settings.sigma_clip_threshold = opts.sigma_clip_threshold;
     settings.reference_passes = opts.reference_passes;
     settings.drizzle_scale = opts.drizzle;
+    settings.low_memory = opts.low_memory;
     settings.pixfrac = opts.pixfrac;
     settings.raw_cfa = opts.raw_cfa;
 

@@ -79,11 +79,13 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
         std::unique_ptr<stackcore::VideoSource> source =
             stackcore::open_video(req.path, req.options);
         if (req.low_memory) source->set_low_memory(true);
+        stackcore::MapStackSettings job_settings = req.settings;
+        job_settings.low_memory = req.low_memory;
 
         if (req.stage == JobStage::Quality) {
             out.quality = std::make_shared<stackcore::GlobalStageReport>(
-                stackcore::evaluate_frame_quality(*source, req.settings.global,
-                                                  req.settings.raw_cfa, progress));
+                stackcore::evaluate_frame_quality(*source, job_settings.global,
+                                                  job_settings.raw_cfa, progress));
             out.frames = out.quality->frames;
             return out;
         }
@@ -93,13 +95,13 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                 throw std::runtime_error("アライメント: 先に品質評価を実行してください");
             }
             out.global = std::make_shared<stackcore::GlobalStageReport>(
-                stackcore::run_global_alignment(*source, req.settings.global,
-                                                req.settings.raw_cfa, *req.quality, progress));
+                stackcore::run_global_alignment(*source, job_settings.global,
+                                                job_settings.raw_cfa, *req.quality, progress));
             out.frames = out.global->frames;
             if (!req.global_only) {
                 auto report = std::make_shared<stackcore::MapStackReport>();
                 out.analysis = std::make_shared<stackcore::AnalysisData>(
-                    stackcore::analyze_map_alignment(*source, req.settings, *out.global,
+                    stackcore::analyze_map_alignment(*source, job_settings, *out.global,
                                                      progress, *report));
                 report->global = *out.global;
                 out.map_report = report;
@@ -115,12 +117,12 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                 }
                 const std::vector<stackcore::FrameInfo> selected =
                     stackcore::select_top_frames(req.global->frames,
-                                                 req.settings.reference_top_percent);
+                                                 job_settings.reference_top_percent);
                 out.frames = req.global->frames;
                 out.image = std::make_shared<stackcore::FrameBuffer>(
                     stackcore::build_global_reference(*source, *req.global, selected,
-                                                      req.settings.raw_cfa, progress,
-                                                      req.settings.normalize_brightness));
+                                                      job_settings.raw_cfa, progress,
+                                                      job_settings.normalize_brightness));
                 for (const stackcore::FrameInfo& f : selected) out.stacked_frames.push_back(f.index);
                 out.frames_combined = static_cast<int>(selected.size());
             } else {
@@ -131,7 +133,7 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
                 out.analysis = req.analysis;
                 out.frames = req.analysis->frames;
                 out.image = std::make_shared<stackcore::FrameBuffer>(
-                    stackcore::stack_from_analysis(*source, req.settings, *req.analysis,
+                    stackcore::stack_from_analysis(*source, job_settings, *req.analysis,
                                                    progress, report));
                 out.stacked_frames = req.analysis->analyzed_indices;
                 out.frames_combined = report.frames_per_ap;
@@ -142,28 +144,28 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress) 
         // GUI自己検証用の一括経路。通常のGUIボタンはここを通らない。
         if (req.global_only) {
             out.global = std::make_shared<stackcore::GlobalStageReport>(
-                stackcore::run_global_stage(*source, req.settings.global,
-                                            req.settings.raw_cfa, progress));
+                stackcore::run_global_stage(*source, job_settings.global,
+                                            job_settings.raw_cfa, progress));
             out.frames = out.global->frames;
             const std::vector<stackcore::FrameInfo> selected = stackcore::select_top_frames(
-                out.global->frames, req.settings.reference_top_percent);
+                out.global->frames, job_settings.reference_top_percent);
             out.image = std::make_shared<stackcore::FrameBuffer>(
                 stackcore::build_global_reference(*source, *out.global, selected,
-                                                  req.settings.raw_cfa, progress,
-                                                  req.settings.normalize_brightness));
+                                                  job_settings.raw_cfa, progress,
+                                                  job_settings.normalize_brightness));
             for (const stackcore::FrameInfo& f : selected) out.stacked_frames.push_back(f.index);
             out.frames_combined = static_cast<int>(selected.size());
         } else {
             auto report = std::make_shared<stackcore::MapStackReport>();
             out.analysis = std::make_shared<stackcore::AnalysisData>(
-                stackcore::analyze_map_stack(*source, req.settings, progress, *report));
+                stackcore::analyze_map_stack(*source, job_settings, progress, *report));
             out.global =
                 std::make_shared<stackcore::GlobalStageReport>(report->global);
             out.map_report = report;
             out.frames = out.analysis->frames;
             stackcore::MapStackReport stack_report;
             out.image = std::make_shared<stackcore::FrameBuffer>(stackcore::stack_from_analysis(
-                *source, req.settings, *out.analysis, progress, stack_report));
+                *source, job_settings, *out.analysis, progress, stack_report));
             out.stacked_frames = out.analysis->analyzed_indices;
             out.frames_combined = stack_report.frames_per_ap;
         }

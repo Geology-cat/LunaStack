@@ -480,7 +480,9 @@ FrameBuffer map_stack_pass(const VideoSource& source, const MapStackSettings& se
     std::stable_sort(frame_order.begin(), frame_order.end(),
                      [&](std::size_t l, std::size_t r) { return analyzed[l].index < analyzed[r].index; });
 
-    const std::size_t budget = stack_batch_budget();
+    const std::size_t budget = settings.stack_budget_bytes > 0
+                                   ? settings.stack_budget_bytes
+                                   : (settings.low_memory ? (256u << 20) : stack_batch_budget());
     std::vector<std::pair<std::size_t, std::size_t>> batches;  // [AP の始め, 終わり)
     {
         std::size_t start = 0, used = 0;

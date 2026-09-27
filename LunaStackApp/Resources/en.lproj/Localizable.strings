@@ -408,3 +408,4 @@
 "注意: %d / %d フレームで対象が処理範囲からはみ出しています。範囲を広げてください" = "Warning: the target leaves the processing area in %d of %d frames. Please enlarge the area";
 "前のフレーム（押し続けると連続）" = "Previous frame (hold to repeat)";
 "次のフレーム（押し続けると連続）" = "Next frame (hold to repeat)";
+"MOV・MP4 は macOS のデコーダで読みます。macOS の版によって画素がわずかに変わることがあります" = "MOV/MP4 files are decoded by macOS; pixel values may differ slightly between macOS versions";

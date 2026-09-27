@@ -12,6 +12,12 @@ namespace stackcore {
 
 struct MapStackSettings {
     GlobalStageSettings global;
+    // 低メモリモード（仕様書 §7.3）。窓合成で同時に持つAPの足し込みを小さく（256MB）する。
+    // 組の数が増えるだけなので、出力は変わらない。
+    bool low_memory = false;
+    // 窓合成で同時に持つAPの足し込みの上限（バイト）。0で自動（物理メモリの1/8、低メモリでは256MB）。
+    // 組分けの確認（テスト）用。
+    std::size_t stack_budget_bytes = 0;
     // 参照画像を作るのに使うフレームの割合（仕様書 §4.4、既定25%）。
     double reference_top_percent = 25.0;
 
