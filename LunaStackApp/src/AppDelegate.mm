@@ -176,6 +176,7 @@
             if (getenv("LUNASTACK_DZDIAG")) [controller diagnoseDrizzleForTesting];
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
+            if (const char* graph = getenv("LUNASTACK_GRAPH")) [controller setGraphModeForTesting:atoi(graph)];
             if (const char* pos = getenv("LUNASTACK_FRAMEPOS")) [controller showFrameAtSliderPositionForTesting:atoi(pos)];
             if (const char* sec = getenv("LUNASTACK_SECTION")) [controller scrollToSectionForTesting:[NSString stringWithUTF8String:sec]];
             if (const char* box = getenv("LUNASTACK_CROPBOX")) [controller showCropBoxForTesting:[NSString stringWithUTF8String:box]];
@@ -213,6 +214,13 @@
     NSView* view = [[_controller window] contentView];
     [view setNeedsDisplay:YES];
     [view displayIfNeeded];
+    // 説明書用: 部品の位置（LUNASTACK_LAYOUT）と、設定パネルの縦に全部つないだ画像（LUNASTACK_INSPECTOR_SHOT）。
+    if (const char* layout = getenv("LUNASTACK_LAYOUT")) {
+        [_controller writeLayoutForTestingTo:[NSString stringWithUTF8String:layout]];
+    }
+    if (const char* inspector = getenv("LUNASTACK_INSPECTOR_SHOT")) {
+        [_controller writeInspectorShotForTestingTo:[NSString stringWithUTF8String:inspector]];
+    }
 
     NSBitmapImageRep* rep = [view bitmapImageRepForCachingDisplayInRect:[view bounds]];
     if (!rep) {

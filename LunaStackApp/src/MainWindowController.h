@@ -65,6 +65,9 @@
 - (BOOL)selfCheckFrameStepButtons;
 - (BOOL)selfCheckDrizzleDiagnosis;
 - (void)diagnoseDrizzleForTesting;
+- (void)setGraphModeForTesting:(int)mode;
+- (void)writeLayoutForTestingTo:(NSString*)path;
+- (void)writeInspectorShotForTestingTo:(NSString*)path;
 - (BOOL)selfCheckClearResetsEverything;
 // 仕上げの描画を待ってから表示に反映する（スナップショット前に呼ぶ）。
 - (void)waitForFinishingForTesting;

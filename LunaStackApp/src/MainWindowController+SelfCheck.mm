@@ -1,4 +1,7 @@
 #import "MainWindowController_Private.h"
+#import "LevelsView.h"
+#import "PreviewView.h"
+#import "QualityGraphView.h"
 
 #include <algorithm>
 #include <cmath>
@@ -718,6 +721,14 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
                 _levels[0].white = [v[2] doubleValue] / 255.0;
                 [self finishingChanged:nil];
             }
+        } else if ([key isEqualToString:@"wavelet"] || [key isEqualToString:@"denoise"]) {
+            // レイヤー1から順に "a:b:c:..."（強調またはノイズ）。説明書の作例用。
+            NSArray* v = [value componentsSeparatedByString:@":"];
+            NSSlider* __strong* sliders = [key isEqualToString:@"wavelet"] ? _sharpenSliders : _denoiseSliders;
+            for (NSUInteger j = 0; j < [v count] && j < static_cast<NSUInteger>(kWaveletLayers); ++j) {
+                [sliders[j] setDoubleValue:[v[j] doubleValue]];
+            }
+            [self waveletChanged:nil];
         } else if ([key isEqualToString:@"dering"]) {
             [_deringSlider setDoubleValue:[value doubleValue]];
             [self finishingChanged:nil];
@@ -752,6 +763,8 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
 
 - (void)selectInspectorTabForTesting:(int)tab {
     [self selectInspectorTab:tab];
+    // 説明書の画面では、見出しの開閉どおりに見せる（-section.<key> YES/NO で指定する）。
+    if (getenv("LUNASTACK_TAB_NORMAL")) return;
     // 詳細設定なども開いて見せる（配置の崩れを確かめるため）。
     // 利用者の開閉状態（NSUserDefaults）は書き換えず、画面の上だけで開く。
     for (NSString* key in _sections) {
@@ -759,6 +772,110 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
         [(NSButton*)_sectionHeaders[key] setHidden:NO];
         for (NSView* v in _sections[key]) [v setHidden:NO];
     }
+}
+
+// ---- 説明書のスクリーンショット用 ------------------------------------------------
+//
+// 画面の部品の位置を JSON に書き出す（説明書で番号や矢印を正しい位置に置くため）。
+// 座標は root の左上を原点とするポイント。見えている部品だけを書く（clip なら表示範囲の外も除く）。
+
+static NSString* LayoutText(NSView* v) {
+    if ([v isKindOfClass:[NSPopUpButton class]]) return [(NSPopUpButton*)v titleOfSelectedItem] ?: @"";
+    if ([v isKindOfClass:[NSButton class]]) return [(NSButton*)v title] ?: @"";
+    if ([v isKindOfClass:[NSTextField class]]) return [(NSTextField*)v stringValue] ?: @"";
+    if ([v isKindOfClass:[NSSlider class]]) return [NSString stringWithFormat:@"%g", [(NSSlider*)v doubleValue]];
+    return @"";
+}
+
+- (NSArray*)layoutEntriesOfView:(NSView*)root clip:(BOOL)clip {
+    // 部品 → 属する設定欄のキー（同じ文言が複数の欄にあるので区別する）。
+    NSMapTable* owner = [NSMapTable strongToStrongObjectsMapTable];
+    for (NSString* key in _sections) {
+        for (NSView* v in _sections[key]) [owner setObject:key forKey:v];
+    }
+    NSMutableArray* out = [NSMutableArray array];
+    const NSRect rootBounds = [root bounds];
+    NSMutableArray* stack = [NSMutableArray arrayWithObject:root];
+    while ([stack count] > 0) {
+        NSView* v = [stack lastObject];
+        [stack removeLastObject];
+        if ([v isHiddenOrHasHiddenAncestor]) continue;
+        for (NSView* sub in [v subviews]) [stack addObject:sub];
+        const BOOL control = [v isKindOfClass:[NSControl class]] || [v isKindOfClass:[PreviewView class]] ||
+                             [v isKindOfClass:[LevelsView class]] || [v isKindOfClass:[QualityGraphView class]] ||
+                             [v isKindOfClass:[NSTableView class]];
+        if (!control || v == root) continue;
+        if ([[v superview] isKindOfClass:[NSControl class]]) continue;  // ボタンの中の文字など
+        NSRect r = [v convertRect:[v bounds] toView:root];
+        if (clip) {
+            // スクロールの表示範囲の外は除く（祖先のクリップビューごとに切る）。
+            for (NSView* a = [v superview]; a && a != root; a = [a superview]) {
+                if ([a isKindOfClass:[NSClipView class]]) {
+                    r = NSIntersectionRect(r, [a convertRect:[a bounds] toView:root]);
+                }
+            }
+        }
+        r = NSIntersectionRect(r, rootBounds);
+        if (NSIsEmptyRect(r)) continue;
+        const CGFloat top = [root isFlipped] ? NSMinY(r) : NSHeight(rootBounds) - NSMaxY(r);
+        NSString* section = @"";
+        for (NSView* a = v; a && a != root; a = [a superview]) {
+            if (NSString* key = [owner objectForKey:a]) {
+                section = key;
+                break;
+            }
+        }
+        for (NSString* key in _sectionHeaders) {
+            if (_sectionHeaders[key] == v) section = [@"header:" stringByAppendingString:key];
+        }
+        NSMutableDictionary* e = [NSMutableDictionary dictionary];
+        e[@"class"] = NSStringFromClass([v class]);
+        e[@"text"] = LayoutText(v);
+        e[@"section"] = section;
+        e[@"rect"] = @[ @(NSMinX(r)), @(top), @(NSWidth(r)), @(NSHeight(r)) ];
+        if ([v isKindOfClass:[NSSegmentedControl class]]) {
+            NSSegmentedControl* seg = (NSSegmentedControl*)v;
+            NSMutableArray* labels = [NSMutableArray array];
+            for (NSInteger i = 0; i < [seg segmentCount]; ++i) [labels addObject:[seg labelForSegment:i] ?: @""];
+            e[@"segments"] = labels;
+            e[@"selected"] = @([seg selectedSegment]);
+        }
+        [out addObject:e];
+    }
+    return out;
+}
+
+- (BOOL)writeLayoutOfView:(NSView*)root clip:(BOOL)clip to:(NSString*)path {
+    NSDictionary* doc = @{
+        @"size" : @[ @(NSWidth([root bounds])), @(NSHeight([root bounds])) ],
+        @"items" : [self layoutEntriesOfView:root clip:clip],
+    };
+    NSData* json = [NSJSONSerialization dataWithJSONObject:doc options:NSJSONWritingPrettyPrinted error:NULL];
+    return [json writeToFile:path atomically:YES];
+}
+
+- (void)writeLayoutForTestingTo:(NSString*)path {
+    [self writeLayoutOfView:[[self window] contentView] clip:YES to:path];
+}
+
+// 右の設定パネルの中身を、スクロールせずに縦に全部つないだ画像にする（＋その部品の位置）。
+- (void)writeInspectorShotForTestingTo:(NSString*)path {
+    NSView* doc = [_inspectorScroll documentView];
+    [[self window] layoutIfNeeded];
+    [doc setNeedsDisplay:YES];
+    [doc displayIfNeeded];
+    NSBitmapImageRep* rep = [doc bitmapImageRepForCachingDisplayInRect:[doc bounds]];
+    if (!rep) return;
+    [doc cacheDisplayInRect:[doc bounds] toBitmapImageRep:rep];
+    NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    [png writeToFile:path atomically:YES];
+    [self writeLayoutOfView:doc clip:NO to:[path stringByAppendingString:@".json"]];
+    NSLog(@"設定パネルの全体を書き出しました: %@ (%.0fx%.0f)", path, NSWidth([doc bounds]), NSHeight([doc bounds]));
+}
+
+- (void)setGraphModeForTesting:(int)mode {
+    [_graphMode setSelectedSegment:mode];
+    [self graphModeChanged:_graphMode];
 }
 
 - (void)diagnoseDrizzleForTesting {
