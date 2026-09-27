@@ -430,7 +430,7 @@ void print_usage() {
         "  stackcli extract <file.ser|file.avi> -f <番号> -o <出力.tif|png|fits> [オプション]\n"
         "      指定フレームをTIFF・PNG・32bit float FITSに書き出す\n"
         "\n"
-        "  stackcli stack <file.ser|file.avi> -o <出力.tif|fits> [オプション]\n"
+        "  stackcli stack <file.ser|file.avi|file.mov|file.mp4> -o <出力.tif|fits> [オプション]\n"
         "      グローバルアライメント＋品質選択＋単純平均スタック (M1)\n"
         "      切り出しは整数変位のみ。サブピクセル補間はM2以降\n"
         "\n"
@@ -1589,7 +1589,8 @@ int main(int argc, char** argv) {
 
     try {
         if (opts.command == "info" &&
-            (stackcore::is_directory_path(opts.input) || stackcore::is_supported_image_path(opts.input))) {
+            (stackcore::is_directory_path(opts.input) || stackcore::is_supported_image_path(opts.input) ||
+             stackcore::is_movie_path(opts.input))) {
             return command_info_sequence(opts);
         }
         if (opts.command == "info") {

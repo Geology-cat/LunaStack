@@ -11,7 +11,8 @@ constexpr NSUInteger kRecentLimit = 10;
 
 BOOL IsVideoPath(NSString* path) {
     NSString* ext = [[path pathExtension] lowercaseString];
-    return [ext isEqualToString:@"ser"] || [ext isEqualToString:@"avi"];
+    return [ext isEqualToString:@"ser"] || [ext isEqualToString:@"avi"] || [ext isEqualToString:@"mov"] ||
+           [ext isEqualToString:@"mp4"] || [ext isEqualToString:@"m4v"];
 }
 
 BOOL IsImagePath(NSString* path) {
@@ -240,7 +241,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     }
     if (skipped > 0) {
         [_statusLabel setStringValue:[NSString stringWithFormat:
-                                                   LSLocalizedString(@"対応していないファイルを %d 件除外しました（SER・AVI・静止画のみ）"),
+                                                   LSLocalizedString(@"対応していないファイルを %d 件除外しました（SER・AVI・MOV・MP4・静止画のみ）"),
                                                    skipped]];
     } else if (unified > 0) {
         [_statusLabel setStringValue:[NSString stringWithFormat:

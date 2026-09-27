@@ -1,3 +1,6 @@
+# MOV・MP4 の読み込みは AVFoundation（Objective-C++）。
+enable_language(OBJCXX)
+
 add_library(stackcore STATIC
     src/image/frame_buffer.cpp
     src/image/debayer.cpp
@@ -18,6 +21,7 @@ add_library(stackcore STATIC
     src/io/avi_decoder.cpp
     src/io/jpeg_decoder.cpp
     src/io/video_source.cpp
+    src/io/movie_source.mm
     src/io/inflate.cpp
     src/io/image_reader.cpp
     src/io/raw_reader.cpp
@@ -40,3 +44,5 @@ target_link_libraries(stackcore PRIVATE libraw_static)
 
 # vDSP（FFT・ベクトル演算）。macOS 10.0 から存在し Intel/ARM 双方で最適化される。
 target_link_libraries(stackcore PUBLIC "-framework Accelerate")
+target_link_libraries(stackcore PUBLIC "-framework AVFoundation" "-framework CoreMedia"
+                                       "-framework CoreVideo" "-framework Foundation")

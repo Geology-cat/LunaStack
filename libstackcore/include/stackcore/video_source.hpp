@@ -123,4 +123,7 @@ std::unique_ptr<VideoSource> open_raw_video(const std::string& path, const OpenO
 // path がフォルダか（静止画連番として開く対象か）。
 bool is_directory_path(const std::string& path);
 
+// 拡張子で MOV・MP4・M4V（AVFoundation で読む動画）かを判定する。
+bool is_movie_path(const std::string& path);
+
 }  // namespace stackcore

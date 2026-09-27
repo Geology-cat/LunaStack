@@ -14,6 +14,8 @@
 #include "stackcore/avi_decoder.hpp"
 #include "stackcore/image_reader.hpp"
 
+#include "movie_source.hpp"
+
 namespace stackcore {
 namespace {
 
@@ -446,6 +448,8 @@ static std::unique_ptr<VideoSource> open_container(const std::string& path, cons
     // 拡張子が違っていても中身で開ければ開く（キャプチャソフトによっては
     // SERを .avi として保存する事故がある）。
     const bool looks_avi = ends_with_ci(path, ".avi");
+    // MOV・MP4 は AVFoundation で読む（SER・AVI の自前デコーダでは読めない）。
+    if (detail::is_movie_path(path)) return detail::open_movie(path);
 
     std::string first_error;
     if (looks_avi) {
@@ -490,6 +494,8 @@ void effective_roi(const OpenOptions& o, int width, int height, int& x, int& y, 
     h = std::max(2, (y1 - y0) & ~1);
 }
 
+bool is_movie_path(const std::string& path) { return detail::is_movie_path(path); }
+
 bool is_directory_path(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
@@ -512,8 +518,10 @@ std::unique_ptr<VideoSource> open_raw_video(const std::string& path, const OpenO
 
 std::unique_ptr<VideoSource> open_video(const std::string& path, const OpenOptions& options) {
     std::unique_ptr<VideoSource> base = open_raw_video(path, options);
-    // 静止画連番は1枚の読み込み（展開）が重いので、前処理まで済ませたフレームを控える。
-    const bool sequence = dynamic_cast<ImageSequenceSource*>(base.get()) != nullptr;
+    // 静止画連番と MOV・MP4 は1枚の読み込み（展開・デコード）が重いので、前処理まで済ませた
+    // フレームを控える。
+    const bool sequence = dynamic_cast<ImageSequenceSource*>(base.get()) != nullptr ||
+                          (options.sequence_files.empty() && detail::is_movie_path(path));
     if (options.has_preprocessing()) base.reset(new PreparedSource(std::move(base), options));
     if (sequence) base.reset(new CachedFrameSource(std::move(base)));
     return base;

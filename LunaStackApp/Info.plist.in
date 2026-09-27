@@ -42,6 +42,9 @@
             <array>
                 <string>ser</string>
                 <string>avi</string>
+                <string>mov</string>
+                <string>mp4</string>
+                <string>m4v</string>
             </array>
         </dict>
     </array>

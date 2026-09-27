@@ -303,7 +303,7 @@
 "外れ値判定の厳しさ（σ）" = "Outlier rejection strictness (σ)";
 "外れ値判定を小さくすると、崩れたフレームをより厳しく除外します。位置ずれの上限は既定で短辺の1/4です。" = "Smaller values reject distorted frames more strictly. The default shift limit is 1/4 of the shorter side.";
 "実画素で等倍" = "Actual Pixels";
-"対応していないファイルを %d 件除外しました（SER・AVI・静止画のみ）" = "Skipped %d unsupported files (SER, AVI and images only)";
+"対応していないファイルを %d 件除外しました（SER・AVI・MOV・MP4・静止画のみ）" = "Skipped %d unsupported files (only SER, AVI, MOV, MP4 and still images)";
 "対象モード: %@（参照フレーム #%d）" = "Target mode: %@ (reference frame #%d)";
 "対象名（ファイル・メタデータ用）" = "Object name (file name and metadata)";
 "履歴を消去" = "Clear Menu";
