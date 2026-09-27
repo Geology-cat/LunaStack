@@ -1,5 +1,7 @@
 #include "stackcore/sidecar.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -35,11 +37,25 @@ struct Writer {
     void f64(double v) { raw(&v, 8); }
 };
 
+// 読み手。サイドカーは入力の隣にあれば黙って読むので、壊れていても・書き換えられていても
+// 落ちたり、巨大なメモリを確保したりしてはいけない。並びの長さは「ファイルの残り」を超えないことを
+// 確かめてから確保する（数値の上限だけだと、AP数×フレーム数で数十TBになりうる）。
 struct Reader {
     std::FILE* f;
+    long size = 0;
     explicit Reader(const std::string& path) {
         f = std::fopen(path.c_str(), "rb");
         if (!f) throw std::runtime_error("サイドカーを読めません: " + path);
+        if (std::fseek(f, 0, SEEK_END) == 0) size = std::ftell(f);
+        std::rewind(f);
+    }
+    // これから count 個 × record バイトを読んでよいか（ファイルの残りに収まるか）。
+    void expect(std::int64_t count, std::size_t record) {
+        const long pos = std::ftell(f);
+        const std::int64_t remaining = size > pos ? static_cast<std::int64_t>(size - pos) : 0;
+        if (count < 0 || (count > 0 && count > remaining / static_cast<std::int64_t>(record))) {
+            throw std::runtime_error("サイドカーが壊れています（長さがファイルの大きさと合いません）");
+        }
     }
     ~Reader() {
         if (f) std::fclose(f);
@@ -70,6 +86,38 @@ struct Reader {
         return v;
     }
 };
+
+// 読んだ中身が、使う側で範囲外アクセスにならない値かを確かめる。
+void validate_sidecar(const AnalysisData& d) {
+    const auto bad = [](const char* what) {
+        throw std::runtime_error(std::string("サイドカーが壊れています（") + what + "）");
+    };
+    for (const FrameInfo& fi : d.frames) {
+        if (fi.index < 0 || fi.index >= d.source_frames) bad("フレーム番号");
+    }
+    if (!d.frames.empty() && (d.reference_index < 0 || d.reference_index >= static_cast<int>(d.frames.size()))) {
+        bad("参照フレーム");
+    }
+    if (!d.points.empty() && (d.ap_size < 8 || d.ap_size > 4096 || d.ap_grid_step <= 0)) bad("位置合わせ領域の大きさ");
+    for (const AlignmentPoint& p : d.points) {
+        if (p.cx < 0 || p.cy < 0 || p.cx >= d.width || p.cy >= d.height) bad("位置合わせ領域の位置");
+    }
+    for (int idx : d.analyzed_indices) {
+        if (idx < 0 || idx >= static_cast<int>(d.frames.size())) bad("解析したフレームの番号");
+    }
+    // 変位は画像の大きさの範囲に収まるはず（NaN・無限大も弾く）。
+    const double limit = 4.0 * std::max(d.width, d.height);
+    for (const LocalMatch& m : d.matrix) {
+        if (!std::isfinite(m.dx) || !std::isfinite(m.dy) || std::fabs(m.dx) > limit || std::fabs(m.dy) > limit ||
+            !std::isfinite(m.quality)) {
+            bad("変位");
+        }
+    }
+    // 参照画像は出力の一部そのものになる（どのAPも覆わない画素を埋める）。
+    for (float v : d.reference) {
+        if (!std::isfinite(v)) bad("参照画像");
+    }
+}
 
 }  // namespace
 
@@ -148,6 +196,10 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     d.width = r.i32();
     d.height = r.i32();
     d.channels = r.i32();
+    if (d.width <= 0 || d.height <= 0 || d.width > 100000 || d.height > 100000 ||
+        (d.channels != 1 && d.channels != 3) || d.source_frames < 0) {
+        throw std::runtime_error("サイドカー: 画像の寸法が不正です");
+    }
     d.reference_index = r.i32();
     d.reference_mean = r.f64();
 
@@ -155,6 +207,7 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     if (frame_count < 0 || frame_count > 10000000) {
         throw std::runtime_error("サイドカー: フレーム数が不正です");
     }
+    r.expect(frame_count, 4 + 8 + 8 + 4 + 4 + 8 + 4 + 4);
     d.frames.resize(static_cast<std::size_t>(frame_count));
     for (std::int32_t i = 0; i < frame_count; ++i) {
         FrameInfo& fi = d.frames[static_cast<std::size_t>(i)];
@@ -174,6 +227,7 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     if (ap_count < 0 || ap_count > 1000000) {
         throw std::runtime_error("サイドカー: AP数が不正です");
     }
+    r.expect(ap_count, 4 + 4 + 8 + 8 + 8);
     d.points.resize(static_cast<std::size_t>(ap_count));
     for (std::int32_t i = 0; i < ap_count; ++i) {
         AlignmentPoint& p = d.points[static_cast<std::size_t>(i)];
@@ -188,6 +242,7 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     if (analyzed < 0 || analyzed > frame_count) {
         throw std::runtime_error("サイドカー: 解析フレーム数が不正です");
     }
+    r.expect(analyzed, sizeof(int));
     d.analyzed_indices.resize(static_cast<std::size_t>(analyzed));
     if (analyzed > 0) {
         r.raw(d.analyzed_indices.data(), d.analyzed_indices.size() * sizeof(int));
@@ -199,6 +254,7 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     if (matrix_size != expected) {
         throw std::runtime_error("サイドカー: 変位場の大きさが AP数×フレーム数 と合いません");
     }
+    r.expect(matrix_size, sizeof(LocalMatch));
     d.matrix.resize(static_cast<std::size_t>(matrix_size));
     if (matrix_size > 0) {
         r.raw(d.matrix.data(), d.matrix.size() * sizeof(LocalMatch));
@@ -209,10 +265,12 @@ void load_sidecar(const std::string& path, AnalysisData& d) {
     if (ref_size != 0 && ref_size != ref_expected) {
         throw std::runtime_error("サイドカー: 参照画像の大きさが寸法と合いません");
     }
+    r.expect(ref_size, sizeof(float));
     d.reference.resize(static_cast<std::size_t>(ref_size));
     if (ref_size > 0) {
         r.raw(d.reference.data(), d.reference.size() * sizeof(float));
     }
+    validate_sidecar(d);
 }
 
 bool matches_source(const AnalysisData& d, std::int64_t source_size, int frames, int width,
@@ -278,6 +336,7 @@ void load_quality_cache(const std::string& path, QualityCache& c) {
     c.report.reference_mean = r.f64();
     const std::uint32_t count = r.u32();
     if (count > 100000000u) throw std::runtime_error("品質キャッシュが壊れています");
+    r.expect(count, 4 + 8 + 8);
     c.report.frames.resize(count);
     for (std::uint32_t i = 0; i < count; ++i) {
         FrameInfo& f = c.report.frames[i];
@@ -286,6 +345,7 @@ void load_quality_cache(const std::string& path, QualityCache& c) {
         f.mean = r.f64();
         f.accepted = true;
         f.reason = RejectReason::None;
+        if (f.index < 0 || f.index >= c.source_frames) throw std::runtime_error("品質キャッシュのフレーム番号が範囲外です");
     }
     if (c.report.reference_index < 0 ||
         c.report.reference_index >= static_cast<int>(c.report.frames.size())) {

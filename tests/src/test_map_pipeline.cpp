@@ -646,6 +646,86 @@ MT_TEST(sidecar_壊れたファイルや別の入力を拒否する) {
     std::remove(path.c_str());
 }
 
+MT_TEST(sidecar_中身が壊れていたら落ちずに断る) {
+    // サイドカーは入力の隣にあれば黙って読むので、どこで切れていても・値が壊れていても
+    // 例外で断るだけで、範囲外アクセスや巨大な確保をしてはいけない。
+    const SyntheticSource source(64, 12, 1.0, 1.0, 0.02, 77);
+    MapStackSettings settings;
+    settings.ap.ap_size = 32;
+    settings.local.search_radius = 4;
+    settings.reference_passes = 1;
+    MapStackReport report;
+    const stackcore::AnalysisData good = stackcore::analyze_map_stack(source, settings, nullptr, report);
+    MT_CHECK(!good.points.empty());
+    const std::string path = "/tmp/lunastack_test_sidecar_corrupt.lstk";
+
+    // 1. 途中で切れたファイル（すべての長さ）
+    stackcore::save_sidecar(path, good);
+    std::vector<char> bytes;
+    {
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        char buf[4096];
+        std::size_t n;
+        while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) bytes.insert(bytes.end(), buf, buf + n);
+        std::fclose(f);
+    }
+    int truncated_rejected = 0, lengths = 0;
+    for (std::size_t len = 0; len < bytes.size(); len += 1 + len / 16) {
+        std::FILE* f = std::fopen(path.c_str(), "wb");
+        std::fwrite(bytes.data(), 1, len, f);
+        std::fclose(f);
+        stackcore::AnalysisData d;
+        ++lengths;
+        try {
+            stackcore::load_sidecar(path, d);
+        } catch (const std::exception&) {
+            ++truncated_rejected;
+        }
+    }
+    MT_CHECK_EQ(truncated_rejected, lengths);
+
+    // 2. 値が範囲外（保存は検証しないので、壊れた値をそのまま書ける）
+    const auto rejects = [&](stackcore::AnalysisData bad) {
+        stackcore::save_sidecar(path, bad);
+        stackcore::AnalysisData d;
+        try {
+            stackcore::load_sidecar(path, d);
+        } catch (const std::exception&) {
+            return true;
+        }
+        return false;
+    };
+    stackcore::AnalysisData bad = good;
+    bad.points[0].cx = good.width + 1000;
+    MT_CHECK(rejects(bad));
+    bad = good;
+    bad.matrix[0].dx = std::nanf("");
+    MT_CHECK(rejects(bad));
+    bad = good;
+    bad.frames[0].index = good.source_frames + 5;
+    MT_CHECK(rejects(bad));
+    bad = good;
+    bad.reference_index = -3;
+    MT_CHECK(rejects(bad));
+    // 正しいものは読める
+    MT_CHECK(!rejects(good));
+
+    // 3. 長さの欄だけが巨大で、中身が無い（フレーム数を 1000 万にした短いファイル）
+    stackcore::save_sidecar(path, good);
+    {
+        std::FILE* f = std::fopen(path.c_str(), "r+b");
+        // 先頭: 識別子12 + 版4 + source_size8 + source_frames4 + 寸法12 + 参照番号4 + 参照の平均8 = 52 バイト目がフレーム数
+        std::fseek(f, 52, SEEK_SET);
+        const std::int32_t huge = 10000000;
+        std::fwrite(&huge, 1, sizeof(huge), f);
+        std::fclose(f);
+    }
+    stackcore::AnalysisData d;
+    MT_CHECK_THROWS(stackcore::load_sidecar(path, d));
+    MT_CHECK(d.frames.capacity() < 1000000);
+    std::remove(path.c_str());
+}
+
 MT_TEST(sidecar_旧窓合成または旧局所場を持つv2以前は再解析を要求する) {
     const std::string path = "/tmp/lunastack_test_sidecar_v2.lstk";
     std::FILE* f = std::fopen(path.c_str(), "wb");
