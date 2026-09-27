@@ -462,6 +462,12 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     std::shared_ptr<stackcore::FrameBuffer> exported = [self renderFinishingNow];
     std::shared_ptr<stackcore::FrameBuffer> shown = [self renderFinishingNowWithSettings:[self previewFinishingSettings]];
     ok = ok && exported->width() == shown->width() && exported->height() == shown->height();
+    // 枠を描いたあとに向きを変えると、枠は消える（見た目と違う場所を切り抜かない）。
+    _cropRect = NSMakeRect(1, 1, 4, 4);
+    [self rotateRight:nil];
+    const BOOL boxCleared = _cropRect.size.width == 0;
+    [self rotateLeft:nil];
+    ok = ok && boxCleared;
     // 元に戻す。
     [self undoCrop:nil];
     const BOOL restored = _stacked == (alreadyCropped ? alreadyCropped : original) && !_uncroppedStacked;
@@ -476,8 +482,8 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     _rotationTurns = turnsBefore;
     [self finishingChanged:nil];
     [self waitForFinishingForTesting];
-    NSLog(@"切り抜きの自己検証: 枠 %d×%d、画面との差 最大 %.2g、元に戻す %@ %@", bw, bh, worst,
-          restored ? @"OK" : @"NG", ok ? @"" : @"— 合いません");
+    NSLog(@"切り抜きの自己検証: 枠 %d×%d、画面との差 最大 %.2g、回転で枠を消す %@、元に戻す %@ %@", bw, bh, worst,
+          boxCleared ? @"OK" : @"NG", restored ? @"OK" : @"NG", ok ? @"" : @"— 合いません");
     return ok;
 }
 

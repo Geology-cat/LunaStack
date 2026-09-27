@@ -137,6 +137,7 @@ struct LevelsSettings {
 void apply_levels(const FrameBuffer& src, const LevelsSettings& levels, FrameBuffer& out);
 
 // レベル補正に入る画像のヒストグラム（0..1 を bins 段に分ける。範囲外は両端に入れる）。
+// 画面に出すためのものなので、400万画素を超える画像は縦横に同じ間隔で間引いて数える。
 // counts[0] は全チャンネルを合わせたもの（RGB）、counts[1..3] は R・G・B（モノクロでは空）。
 struct LevelsHistogram {
     static constexpr int kBins = 256;

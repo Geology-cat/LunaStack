@@ -144,6 +144,7 @@
     NSTextField* _levelsWhiteField;
     stackcore::Levels _levels[4];
     stackcore::LevelsHistogram _levelsHistogram;  // レベル補正に入る画像（描き上がるたびに更新）
+    BOOL _levelsHistogramStale;  // ヒストグラムを数えずに描いた（明るさの欄が閉じていた）
     NSTextField* _rotationLabel;
     NSButton* _flipHCheck;
     NSButton* _flipVCheck;
@@ -438,6 +439,9 @@
 - (void)clearCropBox:(id)sender;
 - (void)replaceFinishingInput;
 - (void)updateCropControls;
+- (void)invalidateCropBox;
+- (BOOL)levelsHistogramVisible;
+- (void)refreshLevelsHistogramIfNeeded;
 - (void)updateLevelsControls;
 - (void)setLevelsFromDictionary:(NSDictionary*)d;
 - (NSArray*)levelsArray;

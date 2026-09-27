@@ -153,6 +153,9 @@ double ParseField(NSTextField* field) {
     // ここでは表示を変えない（描き上がる前に今の画像の明るさだけ変わると、一瞬ちらつく）。
     // 表示に使う対応を計算だけしておき、結果を出すときにプレビューへ設定する。
     const LSDisplayMapping mapping = [self finishingDisplayMapping];
+    // ヒストグラムは明るさの欄が見えているときだけ数える（大きな画像では1回ぶんの手間が大きい）。
+    const bool wantHistogram = [self levelsHistogramVisible] ? true : false;
+    if (!wantHistogram) _levelsHistogramStale = YES;
     const bool prepare = [_viewModeSegment selectedSegment] == 2 &&
                          [_waveletPreviewCheck state] == NSControlStateValueOn;
     const double deviceScale = [_preview effectiveDeviceZoom];
@@ -165,7 +168,7 @@ double ParseField(NSTextField* field) {
         std::shared_ptr<LSPreviewImage> prepared;
         auto histogram = std::make_shared<stackcore::LevelsHistogram>();
         try {
-            pipeline->render(settings, *out, histogram.get());
+            pipeline->render(settings, *out, wantHistogram ? histogram.get() : nullptr);
             if (prepare) prepared = LSMakePreviewImage(*out, mapping, deviceScale);
         } catch (const std::exception& e) {
             error = e.what();
@@ -196,6 +199,7 @@ double ParseField(NSTextField* field) {
         _displayed = out;
         if (histogram && !histogram->empty()) {
             _levelsHistogram = *histogram;
+            _levelsHistogramStale = NO;
             [self updateLevelsControls];
         }
         if ([_viewModeSegment selectedSegment] == 2 &&
@@ -444,7 +448,7 @@ double ParseField(NSTextField* field) {
 }
 
 - (void)finishingChanged:(id)sender {
-    (void)sender;
+    if (sender == _flipHCheck || sender == _flipVCheck) [self invalidateCropBox];
     [self updateFinishingValueLabels];
     [self requestFinishingRender];
 }
@@ -452,6 +456,7 @@ double ParseField(NSTextField* field) {
 - (void)waveletPreviewChanged:(id)sender {
     (void)sender;
     if (!_stacked) return;
+    [self invalidateCropBox];
     [_viewModeSegment setSelectedSegment:2];
     const BOOL showEffect = [_waveletPreviewCheck state] == NSControlStateValueOn;
     [self showFinishedOrStacked];
@@ -589,6 +594,19 @@ double ParseField(NSTextField* field) {
 
 // ---- レベル補正 -------------------------------------------------------------------
 
+// 明るさ（レベル補正）の欄が画面に出ているか（仕上げ・出力タブで、欄が開いている）。
+- (BOOL)levelsHistogramVisible {
+    return [_inspectorTab selectedSegment] == 3 && [self sectionOpen:@"tone"];
+}
+
+// 欄を開いた・タブを移ったときに、まだ数えていなければ描き直して数える。
+- (void)refreshLevelsHistogramIfNeeded {
+    if (_stacked && _finishing && (_levelsHistogramStale || _levelsHistogram.empty()) &&
+        [self levelsHistogramVisible]) {
+        [self requestFinishingRender];
+    }
+}
+
 - (int)levelsChannel {
     const NSInteger i = [_levelsChannelPopup indexOfSelectedItem];
     return i >= 0 && i < 4 ? static_cast<int>(i) : 0;
@@ -706,8 +724,18 @@ double ParseField(NSTextField* field) {
 
 // ---- 向き・切り抜き -----------------------------------------------------------
 
+// 枠は「いま画面に出ている画像」の座標なので、向きや表示を変えたら消す
+// （そのまま残すと、見た目と違う場所を切り抜いてしまう）。
+- (void)invalidateCropBox {
+    if (_cropRect.size.width <= 0) return;
+    _cropRect = NSZeroRect;
+    [_preview setCropOverlay:NSZeroRect];
+    [self updateCropControls];
+}
+
 - (void)rotateLeft:(id)sender {
     (void)sender;
+    [self invalidateCropBox];
     _rotationTurns = (_rotationTurns + 3) % 4;
     [self finishingChanged:nil];
     [self updateApOverlay];
@@ -715,6 +743,7 @@ double ParseField(NSTextField* field) {
 
 - (void)rotateRight:(id)sender {
     (void)sender;
+    [self invalidateCropBox];
     _rotationTurns = (_rotationTurns + 1) % 4;
     [self finishingChanged:nil];
     [self updateApOverlay];

@@ -477,6 +477,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 - (void)inspectorTabChanged:(id)sender {
     (void)sender;
     [self updateInspectorVisibility];
+    [self refreshLevelsHistogramIfNeeded];
 }
 
 - (void)selectInspectorTab:(NSInteger)tab {
@@ -543,6 +544,8 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
                                             forKey:[@"section." stringByAppendingString:key]];
     [self updateInspectorVisibility];
     [self updateSectionHeader:header key:key];
+    // 明るさの欄を開いたら、ヒストグラムを数えるために描き直す。
+    if (open && [key isEqualToString:@"tone"]) [self refreshLevelsHistogramIfNeeded];
 }
 
 // 補足説明（灰色・折り返し）。
@@ -1102,7 +1105,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
                                           [self buttonWithTitle:@"初期値に戻す" action:@selector(resetLevels:)] ]]
                    box:box];
     [self addToSection:key
-                  view:[self noteLabel:@"Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、画像の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。黒・白の三角をヒストグラムの端に合わせると、画面は書き出す明るさと同じになります。"]
+                  view:[self noteLabel:@"Photoshop のレベル補正と同じです。黒・白の三角で範囲を、中間の三角（数値はガンマ）で中間調の明るさを決めます。チャンネル別（R・G・B）のあとに RGB 全体を掛けます。「表示を明るくする」がONの間は、スタック結果の明るさの範囲が画面いっぱいになるよう画面だけ引き伸ばします。書き出す明るさそのままで見るには「表示を明るくする」をOFFにします（黒・白の三角をスタック結果の範囲の内側に置いたときも同じになります）。"]
                    box:box];
 }
 

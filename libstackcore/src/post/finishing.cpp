@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <stdexcept>
 
 #include "stackcore/resample.hpp"
@@ -546,35 +547,41 @@ void compute_levels_histogram(const FrameBuffer& image, LevelsHistogram& out) {
     for (auto& c : out.counts) c.clear();
     if (image.empty()) return;
     const int nc = image.channels() == 3 ? 3 : 1;
-    // 行ごとに数えてから、行の順に足し合わせる（結果は実行順によらない）。
-    std::vector<std::uint32_t> rows(static_cast<std::size_t>(image.height()) * nc * bins, 0);
-    detail::parallel_rows(image.height(), [&](int y0, int y1) {
-        for (int y = y0; y < y1; ++y) {
-            for (int c = 0; c < nc; ++c) {
-                std::uint32_t* h = rows.data() + (static_cast<std::size_t>(y) * nc + c) * bins;
-                const float* r = image.row(c, y);
-                for (int x = 0; x < image.width(); ++x) {
-                    const float v = r[x];
-                    int b = v > 0.0f ? static_cast<int>(v * bins) : 0;
-                    if (b >= bins) b = bins - 1;
-                    ++h[b];
-                }
-            }
-        }
-    });
     out.counts[0].assign(bins, 0);
     if (nc == 3) {
         for (int c = 1; c <= 3; ++c) out.counts[c].assign(bins, 0);
     }
-    for (int y = 0; y < image.height(); ++y) {
+    // 画面に出すための分布なので、大きな画像は縦横に同じ間隔で間引いて数える
+    // （400万画素ぶん程度。2600万画素でも描画1回あたりの手間を小さく保つ）。
+    const double pixels = static_cast<double>(image.width()) * image.height();
+    const int step = std::max(1, static_cast<int>(std::ceil(std::sqrt(pixels / 4.0e6))));
+    const int rows = (image.height() + step - 1) / step;
+    // 行の塊ごとに数えてから足し合わせる。数は整数なので、足す順によらず結果は同じ。
+    std::mutex merge;
+    detail::parallel_rows(rows, [&](int r0, int r1) {
+        const int y0 = r0 * step, y1 = std::min(image.height(), r1 * step);
+        std::vector<std::uint32_t> local(static_cast<std::size_t>(nc) * bins, 0);
         for (int c = 0; c < nc; ++c) {
-            const std::uint32_t* h = rows.data() + (static_cast<std::size_t>(y) * nc + c) * bins;
-            for (int b = 0; b < bins; ++b) {
-                out.counts[0][static_cast<std::size_t>(b)] += h[b];
-                if (nc == 3) out.counts[c + 1][static_cast<std::size_t>(b)] += h[b];
+            std::uint32_t* h = local.data() + static_cast<std::size_t>(c) * bins;
+            for (int y = y0; y < y1; y += step) {
+                const float* r = image.row(c, y);
+                for (int x = 0; x < image.width(); x += step) {
+                    const float v = r[x];
+                    int k = v > 0.0f ? static_cast<int>(v * bins) : 0;
+                    if (k >= bins) k = bins - 1;
+                    ++h[k];
+                }
             }
         }
-    }
+        std::lock_guard<std::mutex> lock(merge);
+        for (int c = 0; c < nc; ++c) {
+            for (int k = 0; k < bins; ++k) {
+                const std::uint32_t n = local[static_cast<std::size_t>(c) * bins + k];
+                out.counts[0][static_cast<std::size_t>(k)] += n;
+                if (nc == 3) out.counts[c + 1][static_cast<std::size_t>(k)] += n;
+            }
+        }
+    });
 }
 
 // ---- 全体 ------------------------------------------------------------------
