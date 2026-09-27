@@ -639,7 +639,7 @@ namespace {
     NSRectFill(bounds);
 
     if (!_display || _imageWidth == 0) {
-        NSString* message = LSLocalizedString(@"動画を追加して［品質評価］を押してください");
+        NSString* message = LSLocalizedString(@"動画または静止画を追加して［品質評価］を押してください");
         NSMutableParagraphStyle* style =
             [[[NSMutableParagraphStyle alloc] init] autorelease];
         [style setAlignment:NSTextAlignmentCenter];

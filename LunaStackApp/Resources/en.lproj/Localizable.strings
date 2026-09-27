@@ -40,7 +40,7 @@
 "品質で色分け" = "Color by Quality";
 "AP編集" = "Edit APs";
 "配置を編集" = "Edit Placement";
-"動画を追加して［品質評価］を押してください" = "Add a video, then click Quality Evaluation";
+"動画または静止画を追加して［品質評価］を押してください" = "Add a video or still images, then click Quality Evaluation";
 "品質評価済" = "Quality Evaluated";
 "アライメント済" = "Aligned";
 "完了" = "Done";
@@ -121,8 +121,8 @@
 "ファイル名" = "File Name";
 "名前を付けて書き出し…" = "Export As…";
 "32bit float FITS（PixInsight向け）" = "32-bit Float FITS (for PixInsight)";
-"動画を追加してください" = "Add a Video";
-"クリアしました — 新しい動画を追加してください" = "Cleared — Add a New Video";
+"動画または静止画を追加してください" = "Add a Video or Still Images";
+"クリアしました — 新しい動画または静止画を追加してください" = "Cleared — Add a New Video or Still Images";
 "再スタック" = "Restack";
 "品質を再評価" = "Re-evaluate Quality";
 "再アライメント" = "Realign";
@@ -365,7 +365,7 @@
 "投影する画素の幅（pixfrac）" = "Drop size (pixfrac)";
 
 /* v0.3.1: 起動時の初期化・クリアでの初期化・プレビューの比較 */
-"クリアしました（設定も初期値に戻しました）— 新しい動画を追加してください" = "Cleared (settings were reset too) — add a new video";
+"クリアしました（設定も初期値に戻しました）— 新しい動画または静止画を追加してください" = "Cleared (settings were reset too) — add a new video or still images";
 "入力キューと処理結果を消去し、すべての設定と仕上げを初期値に戻します。元動画・解析キャッシュ・書き出し済みファイル・プリセットは残ります" = "Clears the queue and results and resets all settings and finishing. Source videos, analysis caches, exported files and presets are kept";
 "プレビューの比較" = "Preview Comparison";
 "仕上げ全体の効果をプレビュー" = "Preview all finishing";
@@ -406,3 +406,5 @@
 "処理範囲を変えました。品質評価からやり直してください" = "Processing area changed. Please run quality evaluation again";
 "全体を処理します。品質評価からやり直してください" = "Processing the whole frame. Please run quality evaluation again";
 "注意: %d / %d フレームで対象が処理範囲からはみ出しています。範囲を広げてください" = "Warning: the target leaves the processing area in %d of %d frames. Please enlarge the area";
+"前のフレーム（押し続けると連続）" = "Previous frame (hold to repeat)";
+"次のフレーム（押し続けると連続）" = "Next frame (hold to repeat)";

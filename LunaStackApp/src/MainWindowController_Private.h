@@ -445,6 +445,8 @@
 - (void)replaceFinishingInput;
 - (void)updateCropControls;
 - (void)invalidateCropBox;
+- (void)stepFrameBy:(int)step;
+- (void)frameStepButton:(id)sender;
 - (void)buildRoiSection:(NSStackView*)box;
 - (void)roiModeChanged:(id)sender;
 - (void)clearRoi:(id)sender;

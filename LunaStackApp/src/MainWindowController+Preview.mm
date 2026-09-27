@@ -156,6 +156,16 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
 
 - (void)previewView:(PreviewView*)view didRequestFrameStep:(int)step {
     (void)view;
+    [self stepFrameBy:step];
+}
+
+// ←→ のボタン（tag が -1 / +1）。
+- (void)frameStepButton:(id)sender {
+    [self stepFrameBy:static_cast<int>([sender tag])];
+}
+
+// スライダーの並び（時系列・品質順）で step 枚ぶん送る。
+- (void)stepFrameBy:(int)step {
     if (_sourceFrames <= 0) return;
     if ([_viewModeSegment selectedSegment] != 0) [_viewModeSegment setSelectedSegment:0];
     const int pos = static_cast<int>([_frameSlider doubleValue] + 0.5) + step;

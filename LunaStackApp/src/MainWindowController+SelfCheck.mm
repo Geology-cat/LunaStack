@@ -537,6 +537,26 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
     return ok;
 }
 
+// ←→ のボタンでスライダーの並びどおりに1枚ずつ送れ、端では止まるか。
+- (BOOL)selfCheckFrameStepButtons {
+    if (_sourceFrames < 2) return YES;
+    const double saved = [_frameSlider doubleValue];
+    [_frameSlider setDoubleValue:0.0];
+    NSButton* forward = [[[NSButton alloc] init] autorelease];
+    [forward setTag:1];
+    NSButton* back = [[[NSButton alloc] init] autorelease];
+    [back setTag:-1];
+    [self frameStepButton:forward];
+    const BOOL moved = std::lround([_frameSlider doubleValue]) == 1;
+    [self frameStepButton:back];
+    [self frameStepButton:back];
+    const BOOL clamped = std::lround([_frameSlider doubleValue]) == 0 && [_viewModeSegment selectedSegment] == 0;
+    [_frameSlider setDoubleValue:saved];
+    [self frameSliderChanged:nil];
+    NSLog(@"コマ送りの自己検証: 進む %@、端で止まる %@", moved ? @"OK" : @"NG", clamped ? @"OK" : @"NG");
+    return moved && clamped;
+}
+
 // 右の設定パネルに横スクロール（トラックパッドの横スワイプ）を送っても、左右へずれないか。
 - (BOOL)selfCheckInspectorScrollsVerticallyOnly {
     NSClipView* clip = [_inspectorScroll contentView];

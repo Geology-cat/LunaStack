@@ -288,6 +288,24 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
                              forOrientation:NSLayoutConstraintOrientationHorizontal];
     [tools addArrangedSubview:_frameSlider];
 
+    // スライダーのすぐ右に ←→ のコマ送り（押し続けると連続。キーボードの ←→ と同じ）。
+    NSButton* back = [self buttonWithTitle:@"←" action:@selector(frameStepButton:)];
+    NSButton* forward = [self buttonWithTitle:@"→" action:@selector(frameStepButton:)];
+    [back setTag:-1];
+    [forward setTag:1];
+    [back setToolTip:LSLocalizedString(@"前のフレーム（押し続けると連続）")];
+    [forward setToolTip:LSLocalizedString(@"次のフレーム（押し続けると連続）")];
+    for (NSButton* b in @[ back, forward ]) {
+        [b setBezelStyle:NSBezelStyleSmallSquare];
+        [b setControlSize:NSControlSizeSmall];
+        [b setContinuous:YES];
+        [b setPeriodicDelay:0.35f interval:0.08f];
+        [[b widthAnchor] constraintEqualToConstant:22.0].active = YES;
+        [tools addArrangedSubview:b];
+    }
+    [tools setCustomSpacing:2.0 afterView:_frameSlider];
+    [tools setCustomSpacing:2.0 afterView:back];
+
     _frameInfoLabel = MakeLabel(@"");
     [_frameInfoLabel setLineBreakMode:NSLineBreakByTruncatingTail];
     [_frameInfoLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow - 5
@@ -1242,7 +1260,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_progress setHidden:YES];
     [_progress setTranslatesAutoresizingMaskIntoConstraints:NO];
 
-    _statusLabel = MakeLabel(@"動画を追加してください");
+    _statusLabel = MakeLabel(@"動画または静止画を追加してください");
     [_statusLabel setLineBreakMode:NSLineBreakByTruncatingTail];
     [_statusLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                            forOrientation:NSLayoutConstraintOrientationHorizontal];

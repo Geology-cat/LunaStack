@@ -124,6 +124,7 @@
             if (selfTest && stagedStep == 0) {
                 // 品質評価の直後に、スライダーの品質順を確かめる。
                 [self check:[controller selfCheckFrameOrder]];
+                [self check:[controller selfCheckFrameStepButtons]];
             }
             if (selfTest && stagedStep == 1) {
                 // アライメントの後（除外フレームが並びの最後に来る状態）でも確かめる。

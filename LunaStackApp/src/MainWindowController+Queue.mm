@@ -447,7 +447,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         [self selectQueueIndex:std::min<NSInteger>(row, static_cast<NSInteger>([_items count]) - 1)];
     } else {
         [self resetWorkspaceForNewProcessing];
-        [_statusLabel setStringValue:LSLocalizedString(@"動画を追加してください")];
+        [_statusLabel setStringValue:LSLocalizedString(@"動画または静止画を追加してください")];
     }
     [self updateControlsEnabled];
 }
@@ -506,7 +506,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     [_progress setDoubleValue:0.0];
     [_progress setHidden:YES];
     [_statusLabel
-        setStringValue:LSLocalizedString(@"クリアしました — 新しい動画を追加してください")];
+        setStringValue:LSLocalizedString(@"クリアしました — 新しい動画または静止画を追加してください")];
 
     [self updateBanner];
     [self updateNamePreview];
@@ -525,7 +525,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     [self resetWorkspaceForNewProcessing];
     [self resetAllSettingsToDefaults];
     [_statusLabel
-        setStringValue:LSLocalizedString(@"クリアしました（設定も初期値に戻しました）— 新しい動画を追加してください")];
+        setStringValue:LSLocalizedString(@"クリアしました（設定も初期値に戻しました）— 新しい動画または静止画を追加してください")];
 }
 
 - (void)clearForTesting {
