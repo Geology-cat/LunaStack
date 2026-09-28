@@ -4,6 +4,7 @@ macOSネイティブの月・惑星スタッキングソフトウェア。
 AutoStakkert! のMAP（Multiple Alignment Points）方式による局所アライメントと、
 RegiStax のウェーブレットシャープニングを1つのアプリに統合することを目指す。
 
+- **ダウンロード: [最新版のリリースページ](https://github.com/Geology-cat/LunaStack/releases/latest)**（DMG に、アプリ・使い方ガイド・かんたんインストーラが入っています）
 - 対応環境: **macOS 10.13 (High Sierra) 以降 / Intel・Apple Silicon 両対応**
 - 設計文書: [仕様書](docs/仕様書.md) / [実装計画書](docs/実装計画書.md)
 - 現在の段階: **v1.0.0（初期リリース。M0〜M7＋静止画連番・カメラのRAW・キャリブレーション・仕上げ工程）/ Apple シリコン実機での検証は未実施**
