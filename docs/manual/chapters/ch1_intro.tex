@@ -125,6 +125,41 @@
   macOS の版によって画素の値がわずかに変わることがあります（第\ref{sec:movie}節）。
 \end{tip}
 
+\section{インストール}\label{sec:install}
+
+配布用の DMG（\texttt{LunaStack-1.0.0.dmg}）をダブルクリックして開くと、次の4つが入っています。
+
+\begin{center}\small
+\begin{tabularx}{0.92\linewidth}{@{}>{\sffamily\bfseries}l X@{}}
+\toprule
+LunaStack.app & アプリ本体\\
+かんたんインストーラ.scpt & インストールから最初の起動までを自動で行うスクリプト\\
+LunaStack 使い方ガイド.pdf & この説明書\\
+Applications & 「アプリケーション」フォルダへの別名（自分でドラッグして入れるとき用）\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{step}{0}{かんたんインストーラで入れる（おすすめ）}
+  \begin{enumerate}[itemsep=1pt, topsep=2pt]
+    \item \textbf{かんたんインストーラ.scpt} をダブルクリックします。「スクリプトエディタ」が開きます。
+    \item ウインドウの左上の \textbf{実行ボタン（▶）}を押します。
+    \item 案内の画面で \ui{インストール} を押します。LunaStack を「アプリケーション」フォルダにコピーし、
+          インターネットから入手したときの確認（Gatekeeper）を \textbf{LunaStack だけ}解除して、起動します。
+    \item 管理者のパスワードを求められたら、Mac にログインするときのパスワードを入れます（アプリケーションフォルダに書き込む権限が無いときだけ）。
+  \end{enumerate}
+  すでに LunaStack が入っているときは、新しいものに置き換えます（起動中なら、先に終了させます）。
+  macOS 全体のセキュリティの設定は変えません。
+\end{step}
+
+\begin{tip}[自分でドラッグして入れるとき]
+  \textbf{LunaStack.app} を \textbf{Applications} へドラッグしてコピーします。LunaStack は Apple の公証を受けていないので、
+  最初の起動では「開発元を確認できません」と止められます。そのときは、アプリケーションフォルダの LunaStack を
+  \textbf{右クリック（control＋クリック）して「開く」}を選び、確認の画面で \ui{開く} を押してください。
+  新しい macOS で「開く」が出ないときは、「システム設定」の「プライバシーとセキュリティ」の下にある \ui{このまま開く} を押します。
+  2回目からは、ふつうにダブルクリックで起動できます。
+\end{tip}
+
 \section{この説明書の図の見方}
 
 スクリーンショットには、赤い枠と番号 \badge{1}\,\badge{2}\,\badge{3} を付けてあります。図のすぐ下に、同じ番号で説明を並べています。

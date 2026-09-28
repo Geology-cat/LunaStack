@@ -29,6 +29,11 @@ open dist/LunaStack.app
 ```
 
 `dist/LunaStack.app` が常に最新の検証済みUniversalアプリである。
+
+配布用の DMG は `./scripts/make_dmg.sh` で `dist/LunaStack-<版>.dmg` に作る（先に `build_app.sh`）。
+中身は LunaStack.app・使い方ガイド（PDF）・かんたんインストーラ.scpt・Applications への別名。
+かんたんインストーラ（`scripts/dmg/かんたんインストーラ.applescript`）は、アプリケーションフォルダへのコピー、
+LunaStack だけの隔離属性（com.apple.quarantine）の解除、最初の起動までを行う（macOS 全体の Gatekeeper の設定は変えない）。
 中間生成物は `.build/universal/` へ集約し、リポジトリ直下に別の
 `LunaStack.app` を作らない。
 
