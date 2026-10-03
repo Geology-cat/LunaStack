@@ -54,7 +54,7 @@ add_test(NAME localization_strings_valid
 # ---- availabilityガードが実際に発火することの証明 ------------------------
 # このターゲットは「ビルドが失敗すること」が期待値。
 # ビルドが通ってしまったらガードが効いていないということであり、
-# 10.13対応の主張そのものが無検証になる（実装計画書 §5）。
+# 10.12対応の主張そのものが無検証になる（実装計画書 §5）。
 add_executable(availability_violation EXCLUDE_FROM_ALL src/availability_violation.cpp)
 target_link_libraries(availability_violation PRIVATE lunastack_flags)
 

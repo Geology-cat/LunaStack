@@ -4,7 +4,7 @@
 #
 # 中身: LunaStack.app / LunaStack 使い方ガイド.pdf / かんたんインストーラ.scpt / Applications（別名）
 # 先に ./scripts/build_app.sh で dist/LunaStack.app を作っておくこと。
-# macOS 10.13 でも開けるよう、ファイルシステムは HFS+ にする。
+# macOS 10.12 でも開けるよう、ファイルシステムは HFS+ にする。
 
 set -euo pipefail
 

@@ -35,7 +35,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
     // 3ペインは幅を固定＋中央可変にする。
     //
-    // NSSplitView を使わないのは、10.13から最新まで同じ見た目で動くことを
+    // NSSplitView を使わないのは、10.12から最新まで同じ見た目で動くことを
     // 優先したため。分割線のドラッグより「どの環境でも壊れない」ことを取る。
     // 左右は⌘1/⌘2で畳める（UI設計書 §2 の「折りたたみ可能」）。
     // 畳むときは幅と間隔の制約を0にするので、参照を持っておく。
@@ -128,9 +128,10 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     }
     [_queueTable setMenu:queueMenu];
     // ドラッグ&ドロップで追加できるようにする（UI設計書 §3.1）。
-    // NSFilenamesPboardType は10.14で非推奨なので、10.13から使える
-    // NSPasteboardTypeFileURL を指定する。
-    [_queueTable registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
+    // NSFilenamesPboardType は10.14で非推奨、NSPasteboardTypeFileURL は10.13以降なので、
+    // 10.12から使える同じ型の名前（UTI "public.file-url" ＝ kUTTypeFileURL）を指定する。
+    // 受け取った側は NSURL として読むので、どのOSでも動きは同じ。
+    [_queueTable registerForDraggedTypes:@[ @"public.file-url" ]];
     [scroll setDocumentView:_queueTable];
 
     NSStackView* buttons = [[[NSStackView alloc] init] autorelease];

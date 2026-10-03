@@ -5,7 +5,7 @@
 @synthesize onRunFinished = _onRunFinished;
 
 - (instancetype)init {
-    // 10.13でも使える古い方のスタイルマスク定数を使う。
+    // 10.12でも使えるスタイルマスク定数を使う。
     const NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
     NSWindow* window = [[[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 1280, 800)
@@ -13,7 +13,7 @@
                                                       backing:NSBackingStoreBuffered
                                                         defer:NO] autorelease];
     [window setTitle:@"LunaStack"];
-    // UI設計書 §2 の最小サイズ。10.13世代のノートでも収まること。
+    // UI設計書 §2 の最小サイズ。10.12・10.13世代のノートでも収まること。
     [window setMinSize:NSMakeSize(1000, 640)];
     [window center];
 

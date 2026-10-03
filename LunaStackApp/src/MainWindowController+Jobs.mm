@@ -512,9 +512,9 @@
 - (void)notifyDone:(NSString*)text {
     // 長い処理では席を外しているので、終わったら知らせる（UI設計書 §1.3）。
     //
-    // UNUserNotificationCenter は10.14以降。10.13を切れないので
+    // UNUserNotificationCenter は10.14以降。10.12・10.13を切れないので
     // NSUserNotification を使う。新しいSDKでは非推奨警告が出るが、
-    // 「10.13で動くこと」を優先して黙らせている。
+    // 「10.12で動くこと」を優先して黙らせている。
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     NSUserNotification* note = [[[NSUserNotification alloc] init] autorelease];

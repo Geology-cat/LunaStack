@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
 # ---- 対応環境 ----------------------------------------------------------
-# macOS 10.13 (High Sierra) 以降。仕様書 §2.1 参照。
+# macOS 10.12.6 (Sierra) 以降。仕様書 §2.1 参照。
 #
 # これらは project() より前に設定しなければならない。project() の時点で
 # コンパイラ判定とターゲットトリプルの決定が行われるため、後から設定すると
 # 黙ってSDKの既定値（＝ホストのmacOSバージョン）が使われてしまう。
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "最低対応macOSバージョン")
+set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12" CACHE STRING "最低対応macOSバージョン")
 
 # Universal 2 は -DLUNASTACK_UNIVERSAL=ON で有効化する
 # （開発機がIntelのためarm64は実行できず、ビルド・リンク検証のみ）。
@@ -15,7 +15,7 @@ if(LUNASTACK_UNIVERSAL)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
 endif()
 
-project(LunaStack VERSION 1.0.0 LANGUAGES C CXX)
+project(LunaStack VERSION 1.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

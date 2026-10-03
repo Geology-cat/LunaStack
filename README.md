@@ -5,14 +5,14 @@ AutoStakkert! の MAP（Multiple Alignment Points）方式による局所アラ�
 RegiStax のウェーブレットシャープニングを、1つのアプリにまとめた。
 
 - **ダウンロード: [最新版のリリースページ](https://github.com/Geology-cat/LunaStack/releases/latest)**（DMG に、アプリ・使い方ガイド・かんたんインストーラが入っています）
-- 対応環境: **macOS 10.13 (High Sierra) 以降 / Intel・Apple Silicon 両対応**
-- 現在の版: **v1.0.0**（初期リリース。Apple シリコン実機での精度の検証と、10.13 実機での動作確認は未実施）
+- 対応環境: **macOS 10.12.6 (Sierra) 以降 / Intel・Apple Silicon 両対応**（10.12 では HEVC の動画は読めない）
+- 現在の版: **v1.0.1**（Apple シリコン実機での精度の検証と、10.12・10.13 実機での動作確認は未実施）
 - 使い方: [使い方ガイド（PDF）](docs/manual/LunaStack_使い方ガイド.pdf)
 - 設計文書: [仕様書](docs/仕様書.md) / [実装計画書](docs/実装計画書.md) / [UI設計書](docs/UI設計書.md) / [開発記録](docs/開発記録_2026-09-25.md) / [開発履歴](docs/開発履歴.md)
 
 ## 主な機能
 
-- **入力**: SER / AVI（非圧縮・MJPEG）/ MOV・MP4・M4V（H.264・HEVC・ProRes など。AVFoundation で読むので、OSの版で画素が変わることがある）/
+- **入力**: SER / AVI（非圧縮・MJPEG）/ MOV・MP4・M4V（H.264・HEVC・ProRes など。AVFoundation で読むので、OSの版で画素が変わることがある。HEVC は macOS 10.13 以降）/
   静止画連番（TIFF・PNG・FITS・JPEG・カメラのRAW。フォルダまたは複数選択）
 - **3つの工程**: ［品質評価］→［アライメント］→［スタック］。各工程は終わると止まり、結果を確かめてから次へ進む
   - 品質グラフ（時系列／品質順）と、品質順のコマ送り
@@ -46,8 +46,8 @@ ctest --test-dir .build/local --output-on-failure
 2. `gui_selftest` — 合成SERでGUIの3工程を画面の経路で通す自己検証。
    GUIセッションの無い環境では `LUNASTACK_SKIP_GUI_TEST=1` で飛ばせる
 3. `localization_strings_valid` — 日本語・英語リソースの構文検証
-4. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。10.13 より新しいAPIを使ったコードが
-   コンパイルエラーになる（＝10.13対応のガードが効いている）ことを確かめる
+4. `availability_guard_fires` — **ビルドが失敗することを期待するテスト**。10.12 より新しいAPIを使ったコードが
+   コンパイルエラーになる（＝10.12対応のガードが効いている）ことを確かめる
 
 ### 配布物を作る
 
@@ -57,13 +57,13 @@ ctest --test-dir .build/local --output-on-failure
 ```
 
 - 中間生成物は `.build/universal/` に集め、リポジトリ直下に別の `LunaStack.app` を作らない
-- DMG の中身は LunaStack.app・使い方ガイド（PDF）・かんたんインストーラ.scpt・Applications への別名。HFS+ なので 10.13 でも開ける
+- DMG の中身は LunaStack.app・使い方ガイド（PDF）・かんたんインストーラ.scpt・Applications への別名。HFS+ なので 10.12 でも開ける
 - かんたんインストーラ（`scripts/dmg/かんたんインストーラ.applescript`）は、アプリケーションフォルダへのコピー、
   LunaStack だけの隔離属性（com.apple.quarantine）の解除、最初の起動までを行う（macOS 全体の Gatekeeper の設定は変えない）
 - 使い方ガイドの作り直しは [docs/manual/README.md](docs/manual/README.md)
 
 出荷バイナリの最低OSは `vtool -show-build .build/universal/stackcli/stackcli` で確かめる。
-x86_64 は `LC_VERSION_MIN_MACOSX version 10.13`、arm64 は `minos 11.0` になっていれば正しい。
+x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` になっていれば正しい。
 
 ## CLIの使い方
 

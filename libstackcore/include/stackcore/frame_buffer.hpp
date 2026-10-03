@@ -5,7 +5,7 @@
 namespace stackcore {
 
 // 32バイト境界に揃えた float バッファ。
-// C++17 の aligned operator new は macOS 10.14+ を要求するうえ、10.13 ターゲットでは
+// C++17 の aligned operator new は macOS 10.14+ を要求するうえ、10.12・10.13 ターゲットでは
 // clang が自動的に無効化する（＝黙って非アラインの new になる）ことを確認済みのため、
 // posix_memalign を直接使う。
 class AlignedFloats {
