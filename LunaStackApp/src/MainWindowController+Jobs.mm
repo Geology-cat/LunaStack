@@ -557,12 +557,30 @@
     // 「10.12で動くこと」を優先して黙らせている。
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    NSUserNotificationCenter* center = [NSUserNotificationCenter defaultUserNotificationCenter];
+    // 既定では、アプリが手前にあるとき通知はバナーを出さず音も鳴らさず、通知センターに
+    // 入るだけになる。処理の終わりを待っている人は LunaStack を手前にしたまま別の画面や
+    // 手元を見ているので、手前でも出す（下の shouldPresentNotification）。
+    [center setDelegate:(id<NSUserNotificationCenterDelegate>)self];
     NSUserNotification* note = [[[NSUserNotification alloc] init] autorelease];
     [note setTitle:@"LunaStack"];
     [note setInformativeText:text];
-    [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:note];
+    // 音は名前を指定しないと鳴らない。
+    [note setSoundName:NSUserNotificationDefaultSoundName];
+    [center deliverNotification:note];
 #pragma clang diagnostic pop
 }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+// アプリが手前にあっても、バナーと音を出す。
+- (BOOL)userNotificationCenter:(NSUserNotificationCenter*)center
+     shouldPresentNotification:(NSUserNotification*)notification {
+    (void)center;
+    (void)notification;
+    return YES;
+}
+#pragma clang diagnostic pop
 
 - (void)showError:(NSString*)message title:(NSString*)title {
     if (getenv("LUNASTACK_SNAPSHOT")) {

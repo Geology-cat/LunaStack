@@ -1,3 +1,5 @@
+**日本語** | [English](README.en.md)
+
 # LunaStack
 
 macOS ネイティブの月・惑星スタッキングソフトウェア。
