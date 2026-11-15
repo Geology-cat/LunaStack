@@ -838,6 +838,65 @@ inline float sample_bilinear(const float* plane, int w, int h, std::size_t strid
     return top + (bottom - top) * ay;
 }
 
+// パネルの暗い背景（空）の明るさ。カメラの下駄（オフセット）に空の明るさが乗ったもの。
+//
+// 明るさ合わせの倍率は「背景より上」にだけ掛けなければならない。透明度や露出の差で
+// 変わるのは月の光で、カメラの下駄は変わらないからである。下駄ごと倍率を掛けると、
+// 月は合っても空の明るさがパネルごとに変わり、黒レベルを詰めて見たときに
+// 空の段差と、重みの折れ目（パネルの角から伸びる斜めの筋）が見えてしまう
+// （実写の2パネルで、下駄 0.016・倍率 0.95 と 1.05 のとき空が 0.0155 と 0.0172）。
+//
+// 背景があると認めるのは、暗い側の1割がほぼ同じ明るさ（平らな空）で、かつ
+// パネルの明るい部分よりずっと暗いときだけ。月面の内側だけを写したパネルでは
+// 暗部は影や海であって背景ではないので、認めない。
+struct Background {
+    bool found = false;
+    double luma = 0.0;
+    double channel[3] = {0.0, 0.0, 0.0};
+};
+
+Background estimate_background(const FrameBuffer& frame, const Plane& luma) {
+    Background out;
+    const int step = std::max(1, std::min(luma.w, luma.h) / 400);
+    std::vector<float> values;
+    for (int y = 0; y < luma.h; y += step) {
+        const float* row = luma.row(y);
+        for (int x = 0; x < luma.w; x += step) {
+            if (row[x] > 0.0f) values.push_back(row[x]);  // 値のない縁（真っ黒）は数えない
+        }
+    }
+    if (values.size() < 1024) return out;
+    std::sort(values.begin(), values.end());
+    const double p1 = values[values.size() / 100];
+    const double p10 = values[values.size() / 10];
+    const double p99 = values[values.size() - 1 - values.size() / 100];
+    if (p10 - p1 > 0.15 * p10 + 0.0005) return out;  // 暗部が平らでない
+    if (p10 > 0.25 * p99) return out;                // 明るい部分との差が小さい
+
+    // 暗い側1割の画素の中央値を、輝度とチャンネルごとに取る。
+    std::vector<float> dark_luma;
+    std::vector<float> dark[3];
+    const int channels = frame.channels() >= 3 ? 3 : 1;
+    for (int y = 0; y < luma.h; y += step) {
+        const float* row = luma.row(y);
+        for (int x = 0; x < luma.w; x += step) {
+            if (!(row[x] > 0.0f) || row[x] > p10) continue;
+            dark_luma.push_back(row[x]);
+            for (int c = 0; c < channels; ++c) dark[c].push_back(frame.row(c, y)[x]);
+        }
+    }
+    if (dark_luma.empty()) return out;
+    const auto middle = [](std::vector<float>& v) {
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        return static_cast<double>(v[v.size() / 2]);
+    };
+    out.luma = middle(dark_luma);
+    for (int c = 0; c < 3; ++c) out.channel[c] = channels == 3 ? middle(dark[c]) : 0.0;
+    if (channels == 1) out.channel[0] = out.channel[1] = out.channel[2] = middle(dark[0]);
+    out.found = true;
+    return out;
+}
+
 // 対応の取れた重なりから、パネル i と j の平均輝度を測る。
 bool overlap_means(const Panel& pi, const Plane& li, const Similarity& ti, const Panel& pj,
                    const Plane& lj, const Similarity& tj, double& mean_i, double& mean_j) {
@@ -1070,6 +1129,34 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
         ++link_count[static_cast<std::size_t>(link.i)];
         ++link_count[static_cast<std::size_t>(link.j)];
     }
+    // 背景（下駄）。パネルごとの値と、合成後にそろえる共通の値。
+    // 背景を認められたパネルが無ければ全部0で、倍率を画素値そのものに掛ける。
+    std::vector<Background> backgrounds(static_cast<std::size_t>(count));
+    Background common;
+    if (settings.match_brightness) {
+        int found = 0;
+        for (int i = 0; i < count; ++i) {
+            if (!member[static_cast<std::size_t>(i)]) continue;
+            Background& b = backgrounds[static_cast<std::size_t>(i)];
+            b = estimate_background(*panels[static_cast<std::size_t>(i)].frame,
+                                    lumas[static_cast<std::size_t>(i)]);
+            if (!b.found) continue;
+            ++found;
+            common.luma += b.luma;
+            for (int c = 0; c < 3; ++c) common.channel[c] += b.channel[c];
+        }
+        if (found > 0) {
+            common.found = true;
+            common.luma /= found;
+            for (int c = 0; c < 3; ++c) common.channel[c] /= found;
+            // 背景が写っていないパネル（月面の内側）には、同じカメラの下駄として共通の値を使う。
+            for (int i = 0; i < count; ++i) {
+                Background& b = backgrounds[static_cast<std::size_t>(i)];
+                if (member[static_cast<std::size_t>(i)] && !b.found) b = common;
+            }
+        }
+    }
+
     if (settings.match_brightness) {
         LeastSquares ls(count);
         bool any = false;
@@ -1082,6 +1169,10 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
                                transforms[static_cast<std::size_t>(link.j)], mi, mj)) {
                 continue;
             }
+            // 背景より上の明るさどうしを合わせる。
+            mi -= backgrounds[static_cast<std::size_t>(link.i)].luma;
+            mj -= backgrounds[static_cast<std::size_t>(link.j)].luma;
+            if (!(mi > 1e-5) || !(mj > 1e-5)) continue;  // 重なりが空だけ
             // g_i * m_i = g_j * m_j  →  log g_i - log g_j = log(m_j / m_i)
             const int index[2] = {link.i, link.j};
             const double coef[2] = {1.0, -1.0};
@@ -1113,10 +1204,11 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
                     gains[static_cast<std::size_t>(i)] = g;
                     float top = 0.0f;
                     for (float v : lumas[static_cast<std::size_t>(i)].v) top = std::max(top, v);
-                    peak = std::max(peak, g * top);
+                    peak = std::max(peak, g * (top - backgrounds[static_cast<std::size_t>(i)].luma));
                 }
-                if (peak > 1.0) {
-                    for (int i = 0; i < count; ++i) gains[static_cast<std::size_t>(i)] /= peak;
+                const double room = 1.0 - common.luma;
+                if (peak > room && peak > 0.0) {
+                    for (int i = 0; i < count; ++i) gains[static_cast<std::size_t>(i)] *= room / peak;
                 }
             }
         }
@@ -1240,6 +1332,12 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
         const Similarity t = transforms[static_cast<std::size_t>(i)];
         const Box box = boxes[static_cast<std::size_t>(i)];
         const float gain = static_cast<float>(gains[static_cast<std::size_t>(i)]);
+        // 倍率は背景より上にだけ掛け、背景は全パネル共通の値へそろえる（低い周波数の側で扱う）。
+        float own_background[3], common_background[3];
+        for (int c = 0; c < 3; ++c) {
+            own_background[c] = static_cast<float>(backgrounds[static_cast<std::size_t>(i)].channel[c]);
+            common_background[c] = static_cast<float>(common.channel[c]);
+        }
 
         // ぼかした像（低い周波数）。
         const int radius = std::max(3, std::min(32, static_cast<int>(std::lround(std::min(p.w, p.h) / 40.0))));
@@ -1267,7 +1365,8 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
                         const float full = sample_lanczos(frame.plane(sc), p.w, p.h, frame.stride(), u, v, table);
                         const float blurred = sample_bilinear(low.plane(sc), p.w, p.h, low.stride(), u, v);
                         // 低域 × 広い重み ＋ 高域（元 − 低域）× 鋭い重み
-                        out.row(c, Y)[X] += gain * (share_low * blurred + share_high * (full - blurred));
+                        out.row(c, Y)[X] += share_low * (common_background[c] + gain * (blurred - own_background[c])) +
+                                            share_high * gain * (full - blurred);
                     }
                 }
             }
@@ -1295,6 +1394,7 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
     report.height = out_h;
     report.placed = placed_total;
     report.used_rotation = use_rotation;
+    report.background = common.found ? common.luma : 0.0;
     report.panels.assign(static_cast<std::size_t>(count), MosaicPlacement());
     double residual = 0.0;
     long long points = 0;

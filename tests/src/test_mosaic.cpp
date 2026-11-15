@@ -286,3 +286,64 @@ MT_TEST(mosaic_中断できる) {
     }
     MT_CHECK(cancelled);
 }
+
+namespace {
+
+// 暗い空に浮かぶ月面もどき。画素値 = カメラの下駄 + 透明度 × 月の光。
+// 透明度（gain）で変わるのは月の光だけで、下駄は変わらない。
+FrameBuffer make_sky_panel(const Terrain& terrain, double x0, double y0, int w, int h, double gain,
+                           double pedestal, std::uint32_t seed) {
+    FrameBuffer f(w, h, 1);
+    Lcg rng(seed);
+    for (int v = 0; v < h; ++v) {
+        float* row = f.row(0, v);
+        for (int u = 0; u < w; ++u) {
+            const double x = x0 + u, y = y0 + v;
+            // 中心 (260, 250)・半径 150 の円盤。縁は 3px でなだらかに落とす。
+            const double r = std::hypot(x - 260.0, y - 250.0);
+            const double disk = r < 148.5 ? 1.0 : (r > 151.5 ? 0.0 : (151.5 - r) / 3.0);
+            double value = pedestal + gain * disk * terrain.at(x, y);
+            value += 0.0006 * (rng.next() - 0.5);
+            row[u] = static_cast<float>(value);
+        }
+    }
+    f.invalidate_luma();
+    return f;
+}
+
+double region_mean(const FrameBuffer& f, int x0, int y0, int w, int h) {
+    double sum = 0.0;
+    for (int y = y0; y < y0 + h; ++y) {
+        for (int x = x0; x < x0 + w; ++x) sum += f.row(0, y)[x];
+    }
+    return sum / (static_cast<double>(w) * h);
+}
+
+}  // namespace
+
+MT_TEST(mosaic_明るさの倍率は空より上にだけ掛け空の明るさをそろえる) {
+    // 実写（ASI715MC、下駄 0.016、パネル間の明るさの差 15%）で、下駄ごと倍率を掛けていたため
+    // 空の明るさがパネルごとに変わり、黒レベルを詰めると段差と斜めの筋が見えた。
+    const Terrain terrain(77);
+    const double pedestal = 0.02;
+    const FrameBuffer top = make_sky_panel(terrain, 0.0, 0.0, 520, 300, 1.00, pedestal, 1);
+    const FrameBuffer bottom = make_sky_panel(terrain, 0.0, 200.0, 520, 300, 0.82, pedestal, 2);
+
+    MosaicReport report;
+    const FrameBuffer mosaic =
+        stackcore::build_mosaic({&top, &bottom}, MosaicSettings(), nullptr, report);
+    MT_CHECK_EQ(report.placed, 2);
+    MT_CHECK_NEAR(report.background, pedestal, 0.001);
+    // g_top × 1.00 = g_bottom × 0.82
+    MT_CHECK_NEAR(report.panels[0].gain / report.panels[1].gain, 0.82, 0.01);
+
+    // 上のパネルだけの空・重なりの空・下のパネルだけの空。どれも下駄の明るさのまま。
+    const double sky_top = region_mean(mosaic, 440, 20, 60, 60);
+    const double sky_overlap = region_mean(mosaic, 440, 220, 60, 60);
+    const double sky_bottom = region_mean(mosaic, 440, 420, 60, 60);
+    std::printf("           空の明るさ: 上 %.5f / 重なり %.5f / 下 %.5f（下駄 %.3f）\n", sky_top,
+                sky_overlap, sky_bottom, pedestal);
+    MT_CHECK_NEAR(sky_top, pedestal, 0.0003);
+    MT_CHECK_NEAR(sky_overlap, pedestal, 0.0003);
+    MT_CHECK_NEAR(sky_bottom, pedestal, 0.0003);
+}

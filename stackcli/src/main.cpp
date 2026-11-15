@@ -1373,6 +1373,10 @@ int command_mosaic(const Options& opts) {
     std::printf("  対応点          : %d 点 / 残差 %.2f px (RMS)\n", report.correspondences,
                 report.residual_rms);
     std::printf("  回転の補正      : %s\n", report.used_rotation ? "あり" : "なし（平行移動のみ）");
+    if (report.background > 0.0) {
+        std::printf("  背景の明るさ    : %.4f（これより上にだけ明るさの倍率を掛けた）\n",
+                    report.background);
+    }
 
     write_output_image(opts, mosaic);
     std::printf("\n書き出しました: %s\n", opts.output.c_str());
