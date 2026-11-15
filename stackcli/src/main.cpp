@@ -19,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "stackcore/adoption_diagnosis.hpp"
 #include "stackcore/debayer.hpp"
 #include "stackcore/frame_selector.hpp"
 #include "stackcore/fits_writer.hpp"
@@ -84,6 +85,8 @@ struct Options {
     int reference_passes = 2;
     std::string sidecar;      // 保存/読み込み先（空で使わない）
     bool reuse_sidecar = false;  // 既存のサイドカーから再スタックする
+    bool suggest_top = false;    // 採用率の目安を測って表示する
+    bool ap_top_auto = false;    // 測った目安の採用率でスタックする（--ap-top auto）
     bool low_memory = false;
     bool normalize_brightness = true;
     stackcore::StackMode stack_mode = stackcore::StackMode::Mean;
@@ -456,7 +459,10 @@ void print_usage() {
         "\n"
         "mapstack のオプション (stack のオプションも使える):\n"
         "  --ap-size <px>            APサイズ 32|48|64|96|128|200 (既定: 自動提案)\n"
-        "  --ap-top <割合>           AP別に採用するフレームの割合 (既定: 25)\n"
+        "  --ap-top <割合|auto>      AP別に採用するフレームの割合 (既定: 25)\n"
+        "                            auto: 目安を測って、その採用率でスタックする\n"
+        "  --suggest-top             採用率の目安を測って表示する（フレームを2組に分けて\n"
+        "                            別々にスタックし、再現する細部の量を採用率ごとに比べる）\n"
         "  --ap-count <枚数>         割合ではなくAP別の採用枚数を直接指定\n"
         "  --quality gradient|frequency\n"
         "                            品質指標（既定: gradient）\n"
@@ -1164,6 +1170,7 @@ int command_mapstack(const Options& opts) {
     settings.pixfrac = opts.pixfrac;
     settings.raw_cfa = opts.raw_cfa;
 
+    double opts_ap_top_used = opts.ap_top_percent;  // 実際に使った採用率（auto で変わる）
     std::string last_stage;
     const stackcore::ProgressFn progress = [&last_stage](const char* stage, int done,
                                                          int total) -> bool {
@@ -1181,6 +1188,33 @@ int command_mapstack(const Options& opts) {
 
     stackcore::MapStackReport report;
     FrameBuffer result;
+
+    // 採用率の目安を測って表示する。--ap-top auto なら、その採用率を settings に入れる。
+    const auto suggest_top = [&](const stackcore::AnalysisData& analysis) {
+        const stackcore::AdoptionDiagnosis d =
+            stackcore::diagnose_adoption(*source, settings, analysis, progress);
+        std::printf("\n\n[採用率の目安]\n");
+        if (d.insufficient) {
+            std::printf("  測れませんでした（フレームが少ないか、APに覆われた範囲が狭すぎます）\n");
+            return;
+        }
+        std::printf("  %d フレームを2組に分け、%d px の升目 %d 個で比べました\n", d.frames, d.tile_size,
+                    d.tiles);
+        std::printf("  採用率   APあたり   再現性   細部の限界\n");
+        for (const stackcore::AdoptionPoint& p : d.points) {
+            std::printf("  %5.0f%%   %6d 枚   %.3f    %.3f cycle/px%s%s\n", p.percent, p.frames_per_ap,
+                        p.score, p.cutoff, p.percent == d.best_percent ? "  ← 最大" : "",
+                        p.percent == d.suggested_percent ? "  ← 目安" : "");
+        }
+        std::printf("  目安: %.0f%%（最大とほぼ同じ再現性の中で、いちばん少ない採用率）\n",
+                    d.suggested_percent);
+        if (opts.ap_top_auto) {
+            settings.ap_top_percent = d.suggested_percent;
+            settings.ap_top_count = 0;
+            opts_ap_top_used = d.suggested_percent;
+            std::printf("  この採用率でスタックします\n");
+        }
+    };
 
     if (opts.reuse_sidecar) {
         if (opts.sidecar.empty()) {
@@ -1211,16 +1245,18 @@ int command_mapstack(const Options& opts) {
         std::printf("  AP %d 個 / 解析済み %d フレーム（解析はやり直しません）\n",
                     static_cast<int>(analysis.points.size()),
                     static_cast<int>(analysis.analyzed_indices.size()));
+        if (opts.suggest_top) suggest_top(analysis);
         result = stackcore::stack_from_analysis(*source, settings, analysis, progress, report);
         std::printf("\n");
     } else {
-        if (!opts.sidecar.empty()) {
+        if (!opts.sidecar.empty() || opts.suggest_top) {
             stackcore::AnalysisData analysis =
                 stackcore::analyze_map_stack(*source, settings, progress, report);
             analysis.source_size = file_size_bytes(opts.input);
-            stackcore::save_sidecar(opts.sidecar, analysis);
+            if (!opts.sidecar.empty()) stackcore::save_sidecar(opts.sidecar, analysis);
+            if (opts.suggest_top) suggest_top(analysis);
             result = stackcore::stack_from_analysis(*source, settings, analysis, progress, report);
-            std::printf("\n解析結果を保存しました: %s\n", opts.sidecar.c_str());
+            if (!opts.sidecar.empty()) std::printf("\n解析結果を保存しました: %s\n", opts.sidecar.c_str());
         } else {
             result = stackcore::run_map_stack(*source, settings, progress, report);
         }
@@ -1263,7 +1299,7 @@ int command_mapstack(const Options& opts) {
     if (opts.ap_top_count > 0) {
         std::printf("  AP毎の採用    : 上位 %d フレーム\n", report.frames_per_ap);
     } else {
-        std::printf("  AP毎の採用    : 上位 %.1f%% の %d フレーム\n", opts.ap_top_percent,
+        std::printf("  AP毎の採用    : 上位 %.1f%% の %d フレーム\n", opts_ap_top_used,
                     report.frames_per_ap);
     }
     if (report.passes_run > 0) {
@@ -1469,6 +1505,12 @@ int main(int argc, char** argv) {
                 std::fprintf(stderr, "エラー: --search-radius には1以上の整数を指定してください\n");
                 return 2;
             }
+        } else if (arg == "--suggest-top") {
+            opts.suggest_top = true;
+        } else if (arg == "--ap-top" && has_next && std::string(argv[i + 1]) == "auto") {
+            ++i;
+            opts.ap_top_auto = true;
+            opts.suggest_top = true;
         } else if (arg == "--ap-top" && has_next) {
             char* end = nullptr;
             opts.ap_top_percent = std::strtod(argv[++i], &end);
