@@ -26,6 +26,7 @@ add_executable(stackcore_tests
     src/test_drizzle_diagnosis.cpp
     src/test_preprocess.cpp
     src/test_finishing.cpp
+    src/test_mosaic.cpp
 )
 
 target_include_directories(stackcore_tests PRIVATE include)

@@ -33,6 +33,7 @@ add_library(stackcore STATIC
     src/post/finishing.cpp
     src/pipeline/global_stage.cpp
     src/pipeline/map_pipeline.cpp
+    src/mosaic/mosaic.cpp
     src/io/tiff_writer.cpp
     src/io/png_writer.cpp
     src/io/fits_writer.cpp

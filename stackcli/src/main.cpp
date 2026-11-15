@@ -38,6 +38,7 @@
 #include "stackcore/finishing.hpp"
 #include "stackcore/image_reader.hpp"
 #include "stackcore/metadata.hpp"
+#include "stackcore/mosaic.hpp"
 
 namespace {
 
@@ -117,6 +118,11 @@ struct Options {
     int rotate = 0;                // 0/90/180/270（時計回り）
     std::string flip;              // h / v / hv
     std::string crop;              // "auto[:余白]" または "x,y,w,h"
+
+    // mosaic コマンド用（入力は複数）
+    std::vector<std::string> inputs;
+    bool mosaic_match_brightness = true;
+    bool mosaic_rotation = true;
 
     // 書き出しファイルに処理条件と撮影時刻を記録する
     bool metadata = false;
@@ -440,6 +446,11 @@ void print_usage() {
         "  stackcli mapstack <file.ser|file.avi> -o <出力.tif|fits> [オプション]\n"
         "      MAP局所アライメント＋オーバーラップ窓合成スタック (M2)\n"
         "      APごとに別のフレームを選ぶ spatial lucky imaging\n"
+        "\n"
+        "  stackcli mosaic <パネル1> <パネル2> ... -o <出力.tif|png|fits> [--no-brightness] [--no-rotation]\n"
+        "      スタック済みの画像（パネル）をつないで1枚にする（月面モザイク）\n"
+        "      並び順は問わない。重なりから位置を求め、明るさをそろえて継ぎ目をなじませる\n"
+        "      --no-brightness: 明るさをそろえない / --no-rotation: 平行移動だけで合わせる\n"
         "\n"
         "  stackcli version\n"
         "\n"
@@ -1307,6 +1318,69 @@ int command_mapstack(const Options& opts) {
     return 0;
 }
 
+// スタック済みの画像（パネル）をつないで1枚にする。
+int command_mosaic(const Options& opts) {
+    if (opts.inputs.size() < 2) {
+        std::fprintf(stderr, "エラー: mosaic にはパネルの画像を2枚以上指定してください\n");
+        return 2;
+    }
+    if (opts.output.empty()) {
+        std::fprintf(stderr, "エラー: -o で出力ファイルを指定してください\n");
+        return 2;
+    }
+    std::vector<FrameBuffer> panels(opts.inputs.size());
+    std::vector<const FrameBuffer*> pointers;
+    for (std::size_t i = 0; i < opts.inputs.size(); ++i) {
+        stackcore::ImageFileInfo info;
+        FrameBuffer raw;
+        stackcore::read_image_file(opts.inputs[i], raw, info);
+        if (stackcore::is_bayer(info.color) && stackcore::is_supported_bayer(info.color)) {
+            stackcore::debayer(raw, info.color, opts.debayer, panels[i]);
+        } else {
+            panels[i] = std::move(raw);
+        }
+        std::printf("  パネル %zu: %s (%d x %d x %dch)\n", i + 1, opts.inputs[i].c_str(),
+                    panels[i].width(), panels[i].height(), panels[i].channels());
+        pointers.push_back(&panels[i]);
+    }
+
+    stackcore::MosaicSettings settings;
+    settings.match_brightness = opts.mosaic_match_brightness;
+    settings.allow_rotation = opts.mosaic_rotation;
+    stackcore::MosaicReport report;
+    std::string last_stage;
+    const stackcore::ProgressFn progress = [&last_stage](const char* stage, int, int) -> bool {
+        if (last_stage != stage) {
+            std::printf("[%s]\n", stage);
+            last_stage = stage;
+        }
+        return true;
+    };
+    const FrameBuffer mosaic = stackcore::build_mosaic(pointers, settings, progress, report);
+
+    std::printf("\n[モザイク合成]\n");
+    std::printf("  配置できたパネル: %d / %zu\n", report.placed, opts.inputs.size());
+    for (std::size_t i = 0; i < report.panels.size(); ++i) {
+        const stackcore::MosaicPlacement& p = report.panels[i];
+        if (!p.placed) {
+            std::printf("    %zu: 重なりが見つからず配置できませんでした\n", i + 1);
+            continue;
+        }
+        std::printf("    %zu: 位置 (%.2f, %.2f)  回転 %.3f°  倍率 %.5f  明るさ ×%.3f  相手 %d枚\n", i + 1,
+                    p.tx, p.ty, std::atan2(p.b, p.a) * 180.0 / M_PI, std::hypot(p.a, p.b), p.gain,
+                    p.links);
+    }
+    std::printf("  対応点          : %d 点 / 残差 %.2f px (RMS)\n", report.correspondences,
+                report.residual_rms);
+    std::printf("  回転の補正      : %s\n", report.used_rotation ? "あり" : "なし（平行移動のみ）");
+
+    write_output_image(opts, mosaic);
+    std::printf("\n書き出しました: %s\n", opts.output.c_str());
+    std::printf("  画像          : %d x %d x %dch (%s)\n", mosaic.width(), mosaic.height(),
+                mosaic.channels(), output_format_name(opts));
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -1570,6 +1644,10 @@ int main(int argc, char** argv) {
             opts.metadata = true;
         } else if (arg == "--object" && has_next) {
             opts.object = argv[++i];
+        } else if (arg == "--no-brightness") {
+            opts.mosaic_match_brightness = false;
+        } else if (arg == "--no-rotation") {
+            opts.mosaic_rotation = false;
         } else if (arg == "--float") {
             opts.as_float = true;
         } else if (arg == "--raw-cfa") {
@@ -1577,6 +1655,9 @@ int main(int argc, char** argv) {
         } else if (!arg.empty() && arg[0] == '-') {
             std::fprintf(stderr, "エラー: 不明なオプション: %s\n", arg.c_str());
             return 2;
+        } else if (opts.command == "mosaic") {
+            opts.inputs.push_back(arg);
+            if (opts.input.empty()) opts.input = arg;
         } else if (opts.input.empty()) {
             opts.input = arg;
         } else {
@@ -1613,6 +1694,7 @@ int main(int argc, char** argv) {
         if (opts.command == "extract") return command_extract(opts);
         if (opts.command == "stack") return command_stack(opts);
         if (opts.command == "mapstack") return command_mapstack(opts);
+        if (opts.command == "mosaic") return command_mosaic(opts);
         std::fprintf(stderr, "エラー: 不明なコマンド: %s\n\n", opts.command.c_str());
         print_usage();
         return 2;
