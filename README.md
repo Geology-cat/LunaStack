@@ -6,7 +6,7 @@ RegiStax のウェーブレットシャープニングを、1つのアプリに�
 
 - **ダウンロード: [最新版のリリースページ](https://github.com/Geology-cat/LunaStack/releases/latest)**（DMG に、アプリ・使い方ガイド・かんたんインストーラが入っています）
 - 対応環境: **macOS 10.12.6 (Sierra) 以降 / Intel・Apple Silicon 両対応**（10.12 では HEVC の動画は読めない）
-- 現在の版: **v1.0.1**（Apple シリコン実機での精度の検証と、10.12・10.13 実機での動作確認は未実施）
+- 現在の版: **v1.1.0**（10.12・10.13 実機での動作確認は未実施。使い方ガイドは v1.0.1 の画面のまま）
 - 使い方: [使い方ガイド（PDF）](docs/manual/LunaStack_使い方ガイド.pdf)
 - 設計文書: [仕様書](docs/仕様書.md) / [実装計画書](docs/実装計画書.md) / [UI設計書](docs/UI設計書.md) / [開発記録](docs/開発記録_2026-09-25.md) / [開発履歴](docs/開発履歴.md)
 
@@ -14,10 +14,14 @@ RegiStax のウェーブレットシャープニングを、1つのアプリに�
 
 - **入力**: SER / AVI（非圧縮・MJPEG）/ MOV・MP4・M4V（H.264・HEVC・ProRes など。AVFoundation で読むので、OSの版で画素が変わることがある。HEVC は macOS 10.13 以降）/
   静止画連番（TIFF・PNG・FITS・JPEG・カメラのRAW。フォルダまたは複数選択）
-- **3つの工程**: ［品質評価］→［アライメント］→［スタック］。各工程は終わると止まり、結果を確かめてから次へ進む
+- **3つの工程**: ［品質評価］→［アライメント］→［スタック］。各工程は終わると止まり、結果を確かめてから次へ進む。
+  ［一括処理］で、いまの設定のまま3工程を続けて実行することもできる
   - 品質グラフ（時系列／品質順）と、品質順のコマ送り
   - 位置合わせ領域（AP）ごとの局所アライメントと、APごとのフレーム選別（spatial lucky imaging）
-  - 単純平均／品質重み付き平均／σクリップ、輝度正規化、ドリズル拡大（効きそうかの診断つき）
+  - 品質重み付き平均（既定）／単純平均／σクリップ、輝度正規化、ドリズル拡大（効きそうかの診断つき）
+- **モザイク合成**（月面など）: スタック済みの画像（パネル）をつなぐか、キューに入れたパネルごとの動画を順にスタックしてから
+  自動でつなぐ。並び順の指定は不要。小さな回転（経緯台の視野回転）と明るさの差を補正し、継ぎ目をなじませる。結果は仕上げ・出力へ送る
+- **スタック済みの画像を開く**: 画像ファイル1枚をアプリに落とす（または「このアプリケーションで開く」）と、仕上げ・出力で開く
 - **入力の前処理**: フレーム範囲、処理範囲（大きなセンサーの一部だけ）、Bayer 配列の指定、デバイヤー方式、ダーク・フラット補正
 - **仕上げ**（非破壊。画面と書き出しは同じ処理系）: RGBチャンネル合わせ → 6レイヤーのウェーブレット（輪抑制つき）→
   ホワイトバランス・彩度 → レベル補正（Photoshop と同じ形）→ 回転・反転。プレビューの上で描く切り抜き
@@ -42,7 +46,7 @@ ctest --test-dir .build/local --output-on-failure
 
 `ctest` は4つを実行する。
 
-1. `stackcore_tests` — エンジンのユニット・リグレッションテスト（237件）
+1. `stackcore_tests` — エンジンのユニット・リグレッションテスト（245件）
 2. `gui_selftest` — 合成SERでGUIの3工程を画面の経路で通す自己検証。
    GUIセッションの無い環境では `LUNASTACK_SKIP_GUI_TEST=1` で飛ばせる
 3. `localization_strings_valid` — 日本語・英語リソースの構文検証
@@ -82,8 +86,11 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 # 画像全体の位置合わせだけでスタックする（速い）
 ./.build/local/stackcli/stackcli stack capture.ser -o stacked.tif --top 25
 
-# 位置合わせ領域ごとの局所アライメントでスタックする（GUI の既定と同じ）
-./.build/local/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 10
+# 位置合わせ領域ごとの局所アライメントでスタックする（GUI の既定と同じにするには --stack-mode weighted）
+./.build/local/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 10 --stack-mode weighted
+
+# スタック済みの画像（パネル）をつないでモザイクにする（並び順は問わない）
+./.build/local/stackcli/stackcli mosaic panel1.tif panel2.tif panel3.tif -o mosaic.tif
 ```
 
 主なオプション:
@@ -113,7 +120,7 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 | `--ap-top <割合>` | AP別に採用するフレームの割合（既定 10） |
 | `--ap-count <枚数>` | AP別の採用枚数を直接指定 |
 | `--quality gradient\|frequency` | 勾配エネルギー／FFT周波数帯パワー比 |
-| `--stack-mode mean\|weighted\|sigma` | 単純平均／品質重み付き平均／σクリップ |
+| `--stack-mode mean\|weighted\|sigma` | 単純平均（CLIの既定）／品質重み付き平均（GUIの既定）／σクリップ |
 | `--no-normalize` | 輝度正規化を無効にする |
 | `--search-radius <px>` | 局所探索の半径（既定 16） |
 | `--min-score <値>` | ZNCCの下限。下回るAPは近傍から補間（既定 0.5） |

@@ -87,8 +87,10 @@
         [_controller addPathsToQueue:paths];
     }
     if ([_pendingPaths count] > 0) {
+        // 複数まとめて渡されたら、足したあとで最後のものを選ぶだけにする
+        // （1枚ずつ開き直すと、連番やモザイクにまとめた画像が単独の画像として開いてしまう）。
         [_controller addPathsToQueue:_pendingPaths];
-        [_controller openFileAtPath:[_pendingPaths lastObject]];
+        [_controller selectQueueItemContainingPath:[_pendingPaths lastObject]];
         [_pendingPaths removeAllObjects];
     }
     if (getenv("LUNASTACK_DARK") || getenv("LUNASTACK_FLAT")) {
@@ -118,6 +120,11 @@
         const BOOL selfTest = getenv("LUNASTACK_SELFTEST") != NULL;
         const BOOL stagedMode = mode && strcmp(mode, "staged") == 0;
         const BOOL alignmentMode = mode && strcmp(mode, "alignment") == 0;
+        // "batch" は一括処理ボタン、"mosaicqueue" はキューの素材をスタックしてモザイク、
+        // LUNASTACK_MOSAIC（":" 区切りの画像）は画像ファイルからのモザイク。
+        const BOOL batchMode = mode && strcmp(mode, "batch") == 0;
+        const BOOL mosaicQueueMode = mode && strcmp(mode, "mosaicqueue") == 0;
+        const char* mosaicFiles = getenv("LUNASTACK_MOSAIC");
         __block int stagedStep = 0;
         MainWindowController* controller = _controller;
         [_controller setOnRunFinished:^{
@@ -191,7 +198,15 @@
         }];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
-                           if (stagedMode || alignmentMode ||
+                           if (mosaicFiles) {
+                               [controller startMosaicWithImagePaths:
+                                               [[NSString stringWithUTF8String:mosaicFiles]
+                                                   componentsSeparatedByString:@":"]];
+                           } else if (mosaicQueueMode) {
+                               [controller mosaicFromQueue:nil];
+                           } else if (batchMode) {
+                               [controller runAll:nil];
+                           } else if (stagedMode || alignmentMode ||
                                (mode && strcmp(mode, "analyze") == 0)) {
                                [controller startAnalyzeOnly];
                            } else {
@@ -266,7 +281,7 @@
         [_pendingPaths addObjectsFromArray:filenames];
     } else {
         [_controller addPathsToQueue:filenames];
-        [_controller openFileAtPath:[filenames lastObject]];
+        [_controller selectQueueItemContainingPath:[filenames lastObject]];
     }
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
@@ -328,6 +343,8 @@
     [_recentMenu setDelegate:self];
     [recentItem setSubmenu:_recentMenu];
     [fileMenu addItem:[NSMenuItem separatorItem]];
+    [self addItem:fileMenu title:@"モザイク合成（画像ファイルから）…" action:@selector(mosaicFromFiles:) key:@""];
+    [fileMenu addItem:[NSMenuItem separatorItem]];
     [self addItem:fileMenu title:@"書き出し…" action:@selector(save:) key:@"s"];
     NSMenuItem* multi = [self addItem:fileMenu title:@"複数の採用率で書き出し…" action:@selector(exportMultiplePercents:) key:@"s"];
     [multi setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
@@ -371,6 +388,10 @@
     NSMenuItem* align = [self addItem:processMenu title:@"アライメント" action:@selector(align:) key:@"a"];
     [align setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
     [self addItem:processMenu title:@"スタック" action:@selector(run:) key:@"r"];
+    [processMenu addItem:[NSMenuItem separatorItem]];
+    NSMenuItem* all = [self addItem:processMenu title:@"一括処理（品質評価からスタックまで）" action:@selector(runAll:) key:@"r"];
+    [all setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
+    [self addItem:processMenu title:@"キューの素材をすべてスタックしてモザイク合成" action:@selector(mosaicFromQueue:) key:@""];
     [processMenu addItem:[NSMenuItem separatorItem]];
     [self addItem:processMenu title:@"中断" action:@selector(cancel:) key:@"."];
     [processItem setSubmenu:processMenu];

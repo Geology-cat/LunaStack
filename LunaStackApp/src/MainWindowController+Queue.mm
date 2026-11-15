@@ -147,7 +147,12 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
                       options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
     NSMutableArray* paths = [NSMutableArray array];
     for (NSURL* url in urls) [paths addObject:[url path]];
-    [self addPathsToQueue:paths];
+    // 画像をまとめて落としたときは開き方を尋ねることがある。ドラッグの途中でダイアログを
+    // 出すと落とした側（Finder）を待たせるので、ドロップを受け取ってから処理する。
+    MainWindowController* controller = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [controller addPathsToQueue:paths];
+    });
     return YES;
 }
 
@@ -185,6 +190,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     NSMutableArray* dirOrder = [NSMutableArray array];
     int skipped = 0;
     int unified = 0;  // 連番の形式をそろえるために外した画像
+    NSArray* mosaicPaths = nil;  // モザイクのパネルとして渡された画像
 
     for (NSString* path in paths) {
         BOOL isDir = NO;
@@ -208,6 +214,22 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         NSArray* sorted = [imagesByDir[dir] sortedArrayUsingComparator:^NSComparisonResult(id a, id b) {
             return NaturalCompare([a lastPathComponent], [b lastPathComponent]);
         }];
+        // 画像1枚は、スタック済みの画像として仕上げ・出力で開く（1枚だけではスタックにならない）。
+        if ([sorted count] == 1) {
+            [candidates addObject:[QueueItem imageItemWithPath:[sorted firstObject]]];
+            continue;
+        }
+        // 2枚以上は、撮影したコマ（連番）か、スタック済みの画像かを尋ねる。
+        const NSInteger how = [self askHowToOpenImages:sorted];
+        if (how < 0) continue;
+        if (how == 1) {
+            for (NSString* f in sorted) [candidates addObject:[QueueItem imageItemWithPath:f]];
+            continue;
+        }
+        if (how == 2) {
+            mosaicPaths = sorted;
+            continue;
+        }
         // RAW と JPEG を一緒に選んだときなどは1種類にそろえる（混ぜると途中で形式が食い違う）。
         std::vector<std::string> chosen;
         for (NSString* f in sorted) chosen.push_back([f UTF8String]);
@@ -219,15 +241,20 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     }
 
     NSInteger firstAdded = -1;
+    NSInteger imageToOpen = -1;  // 仕上げ・出力で開く画像（すでにキューにあるものを含む）
     for (QueueItem* item in candidates) {
         BOOL duplicate = NO;
-        for (QueueItem* existing in _items) {
-            if ([existing isSameInputAs:item]) duplicate = YES;
+        for (NSUInteger i = 0; i < [_items count]; ++i) {
+            if ([(QueueItem*)_items[i] isSameInputAs:item]) {
+                duplicate = YES;
+                if ([item isImage] && imageToOpen < 0) imageToOpen = static_cast<NSInteger>(i);
+            }
         }
         if (duplicate) continue;
         [self fillHeaderInfo:item];
         [_items addObject:item];
         if (firstAdded < 0) firstAdded = static_cast<NSInteger>([_items count]) - 1;
+        if ([item isImage] && imageToOpen < 0) imageToOpen = static_cast<NSInteger>([_items count]) - 1;
         [self noteRecentPath:[item isSequence] && [[item sequenceFiles] count] == 0 ? [item path]
                              : ([item isSequence] ? nil : [item path])];
     }
@@ -238,6 +265,14 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     }
     if ([_items count] > 0 && _currentIndex < 0) {
         [self selectQueueIndex:firstAdded >= 0 ? firstAdded : 0];
+    }
+    // 画像を渡されたら、すぐ仕上げ・出力で開く（「LunaStackで開く」・ドラッグ&ドロップ）。
+    if (imageToOpen >= 0 && imageToOpen != _currentIndex && !_running) {
+        [self selectQueueIndex:imageToOpen];
+    }
+    if (mosaicPaths) {
+        // キューの更新が済んでから始める。
+        [self performSelector:@selector(startMosaicWithImagePaths:) withObject:mosaicPaths afterDelay:0.0];
     }
     if (skipped > 0) {
         [_statusLabel setStringValue:[NSString stringWithFormat:
@@ -253,6 +288,20 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
 
 // ヘッダだけ読んで副題を埋める。中身の妥当性はここで分かる。
 - (void)fillHeaderInfo:(QueueItem*)item {
+    if ([item isImage]) {
+        if ([item image]) return;  // モザイク合成の結果（副題は作ったときに付けてある）
+        try {
+            const stackcore::ImageFileInfo info =
+                stackcore::probe_image_file(std::string([[item path] UTF8String]));
+            [item setSubtitle:[NSString stringWithFormat:LSLocalizedString(@"画像 · %d×%d · %@"), info.width,
+                                                         info.height,
+                                                         [NSString stringWithUTF8String:info.format.c_str()]]];
+        } catch (const std::exception& e) {
+            [item setState:QueueItemStateError];
+            [item setMessage:[NSString stringWithUTF8String:e.what()]];
+        }
+        return;
+    }
     try {
         stackcore::OpenOptions options;
         options.endian = [self currentOpenOptions].endian;
@@ -274,11 +323,18 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
 
 - (void)openFileAtPath:(NSString*)path {
     [self addPathsToQueue:@[ path ]];
+    [self selectQueueItemContainingPath:path];
+}
+
+// path の項目（そのファイル自身、またはそれを含む連番）を選ぶ。キューには足さない。
+- (void)selectQueueItemContainingPath:(NSString*)path {
     for (NSUInteger i = 0; i < [_items count]; ++i) {
         QueueItem* item = _items[i];
         if ([[item path] isEqualToString:path] ||
             [[item sequenceFiles] containsObject:path]) {
-            if (!_running) [self selectQueueIndex:static_cast<NSInteger>(i)];
+            if (!_running && static_cast<NSInteger>(i) != _currentIndex) {
+                [self selectQueueIndex:static_cast<NSInteger>(i)];
+            }
             break;
         }
     }
@@ -325,6 +381,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     _currentIndex = index;
     [_queueTable selectRowIndexes:[NSIndexSet indexSetWithIndex:static_cast<NSUInteger>(index)]
              byExtendingSelection:NO];
+    [_queueTable scrollRowToVisible:index];
 
     QueueItem* item = _items[static_cast<NSUInteger>(index)];
     // フレーム範囲はそのファイルだけのもの。別のファイルへ引き継ぐと、
@@ -384,6 +441,24 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     _previewSource.reset();
     [_openedInputSignature release];
     _openedInputSignature = nil;
+
+    if ([item isImage]) {
+        // スタック済みの画像（またはモザイクの結果）。フレームも解析も無く、仕上げ・出力だけを行う。
+        _sourceFrames = 0;
+        _sourceTotalFrames = 0;
+        [_frameSlider setMinValue:0.0];
+        [_frameSlider setMaxValue:0.0];
+        [_frameSlider setDoubleValue:0.0];
+        [self showImageItem:item];
+        [self updateBanner];
+        [self updateApOverlay];
+        [self updateRoiControls];
+        [self updateControlsEnabled];
+        [self updateNamePreview];
+        [self updateDrizzleEstimate];
+        [self updateFrameInfoLabel];
+        return;
+    }
     try {
         const stackcore::OpenOptions options = [self previewOpenOptions];
         _previewSource = std::shared_ptr<stackcore::VideoSource>(
@@ -564,6 +639,17 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         return hasRow && !_running;
     }
     // メニューバーの項目。押しても何も起きない状態では灰色にする。
+    if (action == @selector(runAll:)) return [_runAllButton isEnabled];
+    if (action == @selector(mosaicFromFiles:)) return !_running;
+    if (action == @selector(mosaicFromQueue:) || action == @selector(mosaicMenuChosen:)) {
+        if (_running) return NO;
+        if (action == @selector(mosaicMenuChosen:) && [menuItem tag] != 2) return YES;
+        int sources = 0;
+        for (QueueItem* item in _items) {
+            if (![item isImage] && [item state] != QueueItemStateError) ++sources;
+        }
+        return sources >= 2;
+    }
     if (action == @selector(analyze:)) return [_qualityButton isEnabled];
     if (action == @selector(align:)) return [_alignButton isEnabled];
     if (action == @selector(run:)) return [_stackButton isEnabled];
@@ -592,6 +678,8 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
     if (row < 0 || row >= static_cast<NSInteger>([_items count])) return;
     QueueItem* item = _items[static_cast<NSUInteger>(row)];
     NSString* path = [[item sequenceFiles] count] > 0 ? [[item sequenceFiles] firstObject] : [item path];
+    // モザイクの結果はまだファイルになっていない。パネルのあるフォルダを見せる。
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path]) path = [path stringByDeletingLastPathComponent];
     [[NSWorkspace sharedWorkspace]
         activateFileViewerSelectingURLs:@[ [NSURL fileURLWithPath:path] ]];
 }

@@ -50,6 +50,7 @@ add_executable(LunaStackApp MACOSX_BUNDLE
     src/MainWindowController+Jobs.mm
     src/MainWindowController+Preview.mm
     src/MainWindowController+Finishing.mm
+    src/MainWindowController+Mosaic.mm
     src/MainWindowController+SelfCheck.mm
     src/PreviewView.mm
     src/LevelsView.mm

@@ -257,8 +257,37 @@ namespace {
         _fixedLo = 0.0f;
         _fixedHi = 1.0f;
         _fixedGamma = 0.75f;
+        // ファイルのドロップを受け付ける（入力キューに落としたのと同じ）。
+        // 型の名前は10.12から使える UTI を直接指定する（キューの表と同じ理由）。
+        [self registerForDraggedTypes:@[ @"public.file-url" ]];
     }
     return self;
+}
+
+// ---- ファイルのドロップ ------------------------------------------------------
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    if ([_delegate respondsToSelector:@selector(previewView:canAcceptDrop:)] &&
+        [_delegate previewView:self canAcceptDrop:[sender draggingPasteboard]]) {
+        return NSDragOperationCopy;
+    }
+    return NSDragOperationNone;
+}
+
+- (NSDragOperation)draggingUpdated:(id<NSDraggingInfo>)sender {
+    return [self draggingEntered:sender];
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    if (![_delegate respondsToSelector:@selector(previewView:didReceiveDroppedPaths:)]) return NO;
+    NSArray* urls = [[sender draggingPasteboard]
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    NSMutableArray* paths = [NSMutableArray array];
+    for (NSURL* url in urls) [paths addObject:[url path]];
+    if ([paths count] == 0) return NO;
+    [_delegate previewView:self didReceiveDroppedPaths:paths];
+    return YES;
 }
 
 - (void)dealloc {

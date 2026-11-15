@@ -146,6 +146,8 @@
     [_progress setHidden:YES];
     [self resetEta];
     if (cancelled || !error.empty()) {
+        _chainStages = NO;
+        [self abortMosaicBatch];
         [_statusLabel setStringValue:LSLocalizedString(cancelled ? @"中断しました"
                                                                  : @"マスターを作れませんでした")];
         if (!error.empty()) {
@@ -164,6 +166,8 @@
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
     if (!_previewSource) {
         // 寸法が合わない等でラッパーが開けなかった。理由はステータスに出ている。
+        _chainStages = NO;
+        [self abortMosaicBatch];
         [self showError:[_statusLabel stringValue]
                   title:LSLocalizedString(@"ダーク・フラットを使えません")];
         [next release];
@@ -287,6 +291,8 @@
     [self resetEta];
 
     if (result.cancelled) {
+        _chainStages = NO;
+        [self abortMosaicBatch];
         [_statusLabel setStringValue:LSLocalizedString(@"中断しました")];
         [self updateControlsEnabled];
         [self jobDidStop];
@@ -294,6 +300,8 @@
         return;
     }
     if (!result.error.empty()) {
+        _chainStages = NO;
+        [self abortMosaicBatch];
         [_statusLabel setStringValue:LSLocalizedString(@"失敗しました")];
         if (_currentIndex >= 0) {
             QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
@@ -344,8 +352,13 @@
             setStringValue:[NSString stringWithFormat:
                                          LSLocalizedString(@"品質評価が完了しました — %dフレーム"),
                                                     static_cast<int>(result.frames.size())]];
-        [self notifyDone:LSLocalizedString(@"品質評価が完了しました。次はアライメントです")];
         [self updateControlsEnabled];
+        if (_chainStages) {
+            // 一括処理: そのまま次の工程へ。
+            [self continueChainAfterStage:static_cast<int>(JobStage::Quality)];
+            return;
+        }
+        [self notifyDone:LSLocalizedString(@"品質評価が完了しました。次はアライメントです")];
         if (_onRunFinished) _onRunFinished();
         return;
     }
@@ -390,6 +403,19 @@
     [_alignSummaryLabel setStringValue:[self analysisSummaryText]];
 
     if ((result.stage == JobStage::Stack || result.stage == JobStage::Full) && result.image) {
+        _chainStages = NO;  // 一括処理はスタックで終わり
+        if (_mosaicBatchActive) {
+            // モザイクの一括処理: このパネルを控えて、次の素材へ進む（仕上げは最後にまとめて行う）。
+            if (_currentIndex >= 0) {
+                QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
+                [item setState:QueueItemStateStacked];
+                [item setMessage:@""];
+                [self reloadQueueRow:_currentIndex];
+            }
+            [self updateControlsEnabled];
+            [self mosaicBatchCollect:result.image];
+            return;
+        }
         [self resetFinishingForNewStack];
         _stacked = result.image;
         [_stackedInfo release];
@@ -437,7 +463,7 @@
         // アライメントの直後は、置いた位置合わせ領域を参照画像の上で確かめられるようにする。
         [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOn];
         [self apDisplayChanged:nil];
-        [self notifyDone:LSLocalizedString(@"アライメントが完了しました。次はスタックです")];
+        if (!_chainStages) [self notifyDone:LSLocalizedString(@"アライメントが完了しました。次はスタックです")];
     }
     // **APオーバーレイの更新は _stacked を入れたあとに行う。**
     // オーバーレイの座標倍率は「その画像を作ったときのDrizzle倍率」から決まる。
@@ -445,6 +471,11 @@
     [self updateApOverlay];
     [self updateFrameInfoLabel];
     [self updateControlsEnabled];
+    if (_chainStages && result.stage == JobStage::Alignment) {
+        // 一括処理: そのままスタックへ。
+        [self continueChainAfterStage:static_cast<int>(JobStage::Alignment)];
+        return;
+    }
     [self jobDidStop];
     if (_onRunFinished) _onRunFinished();
 }
@@ -494,7 +525,13 @@
                          ? [NSString stringWithFormat:LSLocalizedString(@"［パス %d/%d］"),
                                                       secondPass ? 2 : 1, passes]
                          : @"";
-    [_statusLabel setStringValue:[NSString stringWithFormat:@"%@%@  %d / %d（%.0f%%）%@", pass,
+    // モザイクの一括処理では、何本目のパネルかも出す。
+    NSString* panel = _mosaicBatchActive
+                          ? [NSString stringWithFormat:LSLocalizedString(@"［パネル %d/%d］"),
+                                                       static_cast<int>(_mosaicBatchPosition) + 1,
+                                                       static_cast<int>([_mosaicBatchItems count])]
+                          : @"";
+    [_statusLabel setStringValue:[NSString stringWithFormat:@"%@%@%@  %d / %d（%.0f%%）%@", panel, pass,
                                                             stage, done, total, fraction * 100.0,
                                                             eta]];
 }

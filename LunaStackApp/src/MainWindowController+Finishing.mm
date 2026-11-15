@@ -928,6 +928,13 @@ double ParseField(NSTextField* field) {
         }
     }
     NSDictionary* info = _stackedInfo;
+    if ([info[@"imageOnly"] boolValue]) {
+        // スタック済みの画像を仕上げただけ（元のファイルを上書きしない名前にする）。
+        // モザイクの結果は、項目の名前がすでに「…_mosaic」になっている。
+        NSString* name = [object length] > 0 ? [NSString stringWithFormat:@"%@_%@", base, object] : base;
+        return [NSString stringWithFormat:@"%@%@.%@", name, [info[@"mosaicPanels"] intValue] > 0 ? @"" : @"_edit",
+                                          [self outputExtension]];
+    }
     const double scale = info ? [info[@"drizzle"] doubleValue]
                               : LSDrizzleScaleAt([_drizzleSegment selectedSegment]);
     NSString* zoom = (scale == 1.0) ? @""
@@ -989,6 +996,12 @@ double ParseField(NSTextField* field) {
                                                    [info[@"globalOnly"] boolValue] ? @"global" : @"MAP",
                                                    info[@"selection"] ? info[@"selection"] : @"",
                                                    [info[@"drizzle"] doubleValue]];
+    if ([info[@"imageOnly"] boolValue]) {
+        summary = [info[@"mosaicPanels"] intValue] > 0
+                      ? [NSString stringWithFormat:@"mosaic of %d panels (%@)", [info[@"mosaicPanels"] intValue],
+                                                   [[self inputPathString] lastPathComponent]]
+                      : [NSString stringWithFormat:@"input %@; finishing only", [self inputDisplayName]];
+    }
     m.description = [summary UTF8String];
     const stackcore::FinishingSettings f = [self currentFinishingSettings];
     char buf[256];

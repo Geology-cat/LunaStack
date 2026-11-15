@@ -186,6 +186,11 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
 // 表示モードの切替（UI設計書 §5.1）。
 - (void)viewModeChanged:(id)sender {
     (void)sender;
+    if ([self currentItemIsImage] && [_viewModeSegment selectedSegment] != 2) {
+        // スタック済みの画像には、元のフレームも参照画像も無い。
+        [_viewModeSegment setSelectedSegment:2];
+        [_statusLabel setStringValue:LSLocalizedString(@"スタック済みの画像です（フレームと参照画像はありません）")];
+    }
     switch ([_viewModeSegment selectedSegment]) {
         case 1:
             if (_referenceImage) {
@@ -263,6 +268,21 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
     [self syncZoomControl];
 }
 
+// プレビューにファイルを落とした（入力キューに落としたのと同じ扱い）。
+- (BOOL)previewView:(PreviewView*)view canAcceptDrop:(NSPasteboard*)pasteboard {
+    (void)view;
+    return !_running && [self pasteboardHasUsableFiles:pasteboard];
+}
+
+- (void)previewView:(PreviewView*)view didReceiveDroppedPaths:(NSArray*)paths {
+    (void)view;
+    if (_running) return;
+    MainWindowController* controller = self;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [controller addPathsToQueue:paths];
+    });
+}
+
 // ---- 表示の切り替え -----------------------------------------------------------
 
 - (void)displayMenuChanged:(id)sender {
@@ -270,12 +290,13 @@ NSString* RejectReasonText(stackcore::RejectReason reason) {
     [item setState:[item state] == NSControlStateValueOn ? NSControlStateValueOff
                                                          : NSControlStateValueOn];
     [self apDisplayChanged:nil];
-    [_preview setDisplayStretch:[[_displayMenu itemAtIndex:3] state] == NSControlStateValueOn];
 }
 
 - (void)stretchToggled:(id)sender {
     (void)sender;
-    [_preview setDisplayStretch:[[_displayMenu itemAtIndex:3] state] == NSControlStateValueOn];
+    [_preview setDisplayStretch:[_stretchCheck state] == NSControlStateValueOn];
+    // 仕上げの表示は明るさの対応を自分で決めているので、切り替えたら当て直す。
+    if ([_viewModeSegment selectedSegment] == 2 && _stacked) [self showFinishedOrStacked];
 }
 
 - (void)apDisplayChanged:(id)sender {

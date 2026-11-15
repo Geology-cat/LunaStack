@@ -50,6 +50,10 @@ std::shared_ptr<LSPreviewImage> LSMakePreviewImage(const stackcore::FrameBuffer&
 - (void)previewView:(PreviewView*)view didFinishCropRect:(NSRect)rect;
 // ホイールやピンチで倍率が変わった（ツールバーの表示を合わせるため）。
 - (void)previewViewZoomDidChange:(PreviewView*)view;
+// ファイルをプレビューの上に落とそうとしている。受け取れるなら YES。
+- (BOOL)previewView:(PreviewView*)view canAcceptDrop:(NSPasteboard*)pasteboard;
+// ファイルが落とされた（パスの配列）。
+- (void)previewView:(PreviewView*)view didReceiveDroppedPaths:(NSArray*)paths;
 @end
 
 // スタック結果を表示するビュー。

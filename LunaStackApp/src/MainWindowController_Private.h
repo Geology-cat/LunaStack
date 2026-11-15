@@ -23,6 +23,7 @@
 #include "stackcore/calibration.hpp"
 #include "stackcore/finishing.hpp"
 #include "stackcore/map_pipeline.hpp"
+#include "stackcore/mosaic.hpp"
 #include "stackcore/video_source.hpp"
 #include "stackcore/wavelet.hpp"
 
@@ -49,6 +50,7 @@
     PreviewView* _preview;
     NSSegmentedControl* _zoomControl;
     NSPopUpButton* _displayMenu;     // 表示の切り替え（プルダウン）
+    NSButton* _stretchCheck;         // 表示を明るくする（保存には影響しない）
     NSButton* _apEditCheck;
     NSTextField* _apCountLabel;
     NSTextField* _frameInfoLabel;    // フレーム番号・上位何%・品質
@@ -180,6 +182,8 @@
     NSButton* _exportButton;
     NSButton* _cancelButton;
     NSButton* _saveButton;
+    NSButton* _runAllButton;        // 一括処理（品質評価からスタックまで）
+    NSPopUpButton* _mosaicMenu;     // モザイク合成（プルダウン）
 
     // セクションの開閉。key → その節に属するビュー。
     NSMutableDictionary* _sections;
@@ -269,6 +273,17 @@
     // 起動直後の設定一式（［クリア］で戻す初期値）。
     NSDictionary* _defaultSettings;
 
+    // --- 一括処理・モザイク ---
+    // 一括処理中（品質評価 → アライメント → スタックを続けて走らせる）。
+    BOOL _chainStages;
+    // キューの素材を順にスタックしてモザイクにする処理の途中。
+    BOOL _mosaicBatchActive;
+    NSMutableArray* _mosaicBatchItems;     // 処理する QueueItem（順番どおり）
+    NSUInteger _mosaicBatchPosition;       // いま処理している番号
+    NSDictionary* _mosaicBatchSettings;    // 始めたときの設定（どのパネルも同じ条件でスタックする）
+    // スタックし終えたパネル。
+    std::vector<std::shared_ptr<stackcore::FrameBuffer>> _mosaicPanels;
+
     // 残り時間の推定。フェーズが変わったら測り直す。
     NSString* _etaStage;
     NSTimeInterval _etaStart;
@@ -300,6 +315,7 @@
 // ---- キュー（+Queue） ----
 - (void)addPathsToQueue:(NSArray*)paths;
 - (void)openFileAtPath:(NSString*)path;
+- (void)selectQueueItemContainingPath:(NSString*)path;
 - (void)selectQueueIndex:(NSInteger)index;
 - (void)resetWorkspaceForNewProcessing;
 - (void)reloadQueueRow:(NSInteger)row;
@@ -383,6 +399,32 @@
 - (void)ensureCalibrationThen:(void (^)(void))next;
 - (BOOL)confirmStopForReason:(NSString*)reason;
 - (void)jobDidStop;
+
+// ---- 一括処理・画像・モザイク（+Mosaic） ----
+- (void)runAll:(id)sender;
+- (void)continueChainAfterStage:(int)finishedStage;
+- (void)stopChain;
+- (BOOL)currentItemIsImage;
+- (void)showImageItem:(QueueItem*)item;
+- (NSInteger)askHowToOpenImages:(NSArray*)paths;
+- (void)mosaicFromFiles:(id)sender;
+- (void)mosaicFromQueue:(id)sender;
+- (void)mosaicMenuChosen:(id)sender;
+- (void)startMosaicWithImagePaths:(NSArray*)paths;
+- (void)mosaicBatchStartNext;
+- (void)mosaicBatchCollect:(std::shared_ptr<stackcore::FrameBuffer>)panel;
+- (void)abortMosaicBatch;
+- (void)runMosaicWithPanels:(std::vector<std::shared_ptr<stackcore::FrameBuffer>>)panels
+                      paths:(NSArray*)paths
+                      names:(NSArray*)names
+                virtualPath:(NSString*)virtualPath;
+- (void)finishMosaic:(std::shared_ptr<stackcore::FrameBuffer>)image
+               placed:(std::vector<bool>)placed
+              summary:(NSString*)summary
+                names:(NSArray*)names
+          virtualPath:(NSString*)virtualPath
+                error:(const std::string&)error
+            cancelled:(bool)cancelled;
 
 // ---- プレビュー（+Preview） ----
 - (void)showSourceFrame:(int)index;
@@ -563,4 +605,7 @@
 @end
 
 @interface MainWindowController (Preview) <PreviewViewDelegate>
+@end
+
+@interface MainWindowController (Mosaic)
 @end

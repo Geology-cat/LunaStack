@@ -51,6 +51,11 @@
     _sections = [[NSMutableDictionary alloc] init];
     _sectionHeaders = [[NSMutableDictionary alloc] init];
     _etaStage = nil;
+    _chainStages = NO;
+    _mosaicBatchActive = NO;
+    _mosaicBatchItems = nil;
+    _mosaicBatchPosition = 0;
+    _mosaicBatchSettings = nil;
     _stackedInfo = nil;
     _darkPath = nil;
     _flatPath = nil;
@@ -79,6 +84,8 @@
     [_openedInputSignature release];
     [_defaultSettings release];
     [_onRunFinished release];
+    [_mosaicBatchItems release];
+    [_mosaicBatchSettings release];
     dispatch_release(_finishQueue);
     [super dealloc];
 }

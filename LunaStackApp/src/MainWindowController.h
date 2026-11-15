@@ -25,6 +25,8 @@
 // キューに追加して、いちばん最後に足したものを選択する。
 - (void)openFileAtPath:(NSString*)path;
 - (void)addPathsToQueue:(NSArray*)paths;
+// すでにキューにある項目（そのファイル自身、またはそれを含む連番）を選ぶ。キューには足さない。
+- (void)selectQueueItemContainingPath:(NSString*)path;
 
 // ---- 自己検証用 ----
 // GUIを人が操作しなくても「開く→品質評価→アライメント→スタック」の
@@ -76,6 +78,15 @@
 - (void)selectInspectorTabForTesting:(int)tab;
 // フレーム表示に切り替え、スライダーを指定の位置へ動かす（品質順ならその順位）。
 - (void)showFrameAtSliderPositionForTesting:(int)position;
+
+// いまの設定で、品質評価からスタックまでを続けて実行する。
+- (void)runAll:(id)sender;
+// スタック済みの画像（パネル）を選んでモザイク合成する。
+- (void)mosaicFromFiles:(id)sender;
+// キューの素材をすべてスタックして、モザイク合成まで続けて行う。
+- (void)mosaicFromQueue:(id)sender;
+// 自己検証用: 画像ファイルの一覧からモザイク合成を始める（確認のダイアログなし）。
+- (void)startMosaicWithImagePaths:(NSArray*)paths;
 
 // アプリの終了要求への答え（処理中なら確認して中断してから終わる）。
 - (NSApplicationTerminateReply)applicationShouldTerminate;

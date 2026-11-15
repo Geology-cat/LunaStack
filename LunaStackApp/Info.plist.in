@@ -47,6 +47,26 @@
                 <string>m4v</string>
             </array>
         </dict>
+        <dict>
+            <!-- スタック済みの画像（仕上げ・出力で開く）。ほかのアプリの既定を奪わないよう Alternate にする。 -->
+            <key>CFBundleTypeName</key>
+            <string>画像</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>tif</string>
+                <string>tiff</string>
+                <string>png</string>
+                <string>fit</string>
+                <string>fits</string>
+                <string>fts</string>
+                <string>jpg</string>
+                <string>jpeg</string>
+            </array>
+        </dict>
     </array>
 </dict>
 </plist>

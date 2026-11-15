@@ -2,7 +2,9 @@
 
 #import "Localization.h"
 
-@implementation QueueItem
+@implementation QueueItem {
+    std::shared_ptr<stackcore::FrameBuffer> _image;
+}
 
 @synthesize path = _path;
 @synthesize state = _state;
@@ -10,6 +12,32 @@
 @synthesize message = _message;
 @synthesize sequenceFiles = _sequenceFiles;
 @synthesize isSequence = _isSequence;
+@synthesize isImage = _isImage;
+@synthesize panelCount = _panelCount;
+
+- (std::shared_ptr<stackcore::FrameBuffer>)image {
+    return _image;
+}
+
+- (void)setImage:(std::shared_ptr<stackcore::FrameBuffer>)image {
+    _image = image;
+}
+
++ (instancetype)imageItemWithPath:(NSString*)path {
+    QueueItem* item = [self itemWithPath:path];
+    [item setIsImage:YES];
+    [item setState:QueueItemStateImage];
+    return item;
+}
+
++ (instancetype)mosaicItemWithPath:(NSString*)path
+                             image:(std::shared_ptr<stackcore::FrameBuffer>)image
+                        panelCount:(int)panelCount {
+    QueueItem* item = [self imageItemWithPath:path];
+    [item setImage:image];
+    [item setPanelCount:panelCount];
+    return item;
+}
 
 + (instancetype)itemWithPath:(NSString*)path {
     QueueItem* item = [[[QueueItem alloc] init] autorelease];
@@ -30,6 +58,10 @@
 }
 
 - (NSString*)displayName {
+    if (_isImage && _panelCount > 0) {
+        return [NSString stringWithFormat:LSLocalizedString(@"%@（%d枚）"), [_path lastPathComponent],
+                                          _panelCount];
+    }
     if (!_isSequence) return [_path lastPathComponent];
     if ([_sequenceFiles count] > 0) {
         return [NSString stringWithFormat:LSLocalizedString(@"%@ ほか（静止画 %lu枚）"),
@@ -41,6 +73,7 @@
 }
 
 - (BOOL)isSameInputAs:(QueueItem*)other {
+    if (_isImage != [other isImage]) return NO;
     if (_isSequence != [other isSequence]) return NO;
     if (![_path isEqualToString:[other path]]) return NO;
     return [_sequenceFiles isEqualToArray:[other sequenceFiles]];
@@ -64,6 +97,8 @@
             return LSLocalizedString(@"完了");
         case QueueItemStateError:
             return LSLocalizedString(@"失敗");
+        case QueueItemStateImage:
+            return LSLocalizedString(_panelCount > 0 ? @"モザイク" : @"画像");
         case QueueItemStatePending:
         default:
             return LSLocalizedString(@"未処理");
@@ -77,6 +112,7 @@
         case QueueItemStateAnalyzed:
             return [NSColor systemBlueColor];
         case QueueItemStateStacked:
+        case QueueItemStateImage:
             return [NSColor systemGreenColor];
         case QueueItemStateError:
             return [NSColor systemRedColor];

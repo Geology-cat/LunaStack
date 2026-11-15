@@ -2,12 +2,17 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
+#include "stackcore/frame_buffer.hpp"
+
 typedef NS_ENUM(NSInteger, QueueItemState) {
     QueueItemStatePending = 0,           // 未処理
     QueueItemStateQualityEvaluated = 1,  // フレーム品質の評価済み
     QueueItemStateAnalyzed = 2,          // アライメント済み（サイドカーあり）
     QueueItemStateStacked = 3,           // スタック完了（バッチ時は書き出しも完了）
     QueueItemStateError = 4,             // 失敗
+    QueueItemStateImage = 5,             // スタック済みの画像（仕上げ・出力だけを行う）
 };
 
 // 入力キューの1行（UI設計書 §3.1）。
@@ -25,7 +30,22 @@ typedef NS_ENUM(NSInteger, QueueItemState) {
 // エラー時の説明。
 @property(nonatomic, copy) NSString* message;
 
+// スタック済みの画像（動画ではなく、仕上げ・出力だけを行う項目）。
+// 画像ファイル1枚、またはモザイク合成の結果（ファイルは無く、画像をメモリに持つ）。
+@property(nonatomic) BOOL isImage;
+// モザイク合成の結果なら、つないだパネルの枚数（それ以外は 0）。
+@property(nonatomic) int panelCount;
+// モザイク合成の結果そのもの（画像ファイルの項目では空。選ぶたびにファイルから読む）。
+- (std::shared_ptr<stackcore::FrameBuffer>)image;
+- (void)setImage:(std::shared_ptr<stackcore::FrameBuffer>)image;
+
 + (instancetype)itemWithPath:(NSString*)path;
+// 画像ファイル1枚を仕上げ・出力で開く項目。
++ (instancetype)imageItemWithPath:(NSString*)path;
+// モザイク合成の結果。path は書き出し名と保存先を決めるための仮のパス（実在しない）。
++ (instancetype)mosaicItemWithPath:(NSString*)path
+                             image:(std::shared_ptr<stackcore::FrameBuffer>)image
+                        panelCount:(int)panelCount;
 // 静止画連番。files が空ならフォルダ直下のすべての画像を使う。
 + (instancetype)sequenceItemWithDirectory:(NSString*)directory files:(NSArray*)files;
 

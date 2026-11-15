@@ -148,6 +148,23 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [buttons addArrangedSubview:_clearButton];
     [pane addSubview:buttons];
 
+    // モザイク合成（プルダウン）。パネルの画像から／キューの素材をスタックしてから。
+    _mosaicMenu = [[[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES] autorelease];
+    [_mosaicMenu setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [_mosaicMenu setFont:[NSFont systemFontOfSize:11.0]];
+    [_mosaicMenu addItemWithTitle:@"モザイク合成"];
+    NSArray* mosaicTitles = @[ @"画像ファイル（パネル）をつなぐ…", @"キューの素材をすべてスタックしてつなぐ" ];
+    for (NSUInteger i = 0; i < [mosaicTitles count]; ++i) {
+        [_mosaicMenu addItemWithTitle:mosaicTitles[i]];
+        NSMenuItem* item = [_mosaicMenu lastItem];
+        [item setTag:static_cast<NSInteger>(i) + 1];
+        [item setTarget:self];
+        [item setAction:@selector(mosaicMenuChosen:)];
+    }
+    [_mosaicMenu setToolTip:LSLocalizedString(
+                                @"月面などのモザイク。スタック済みの画像をつなぐか、キューに入れたパネルごとの動画を順にスタックしてからつなぎます。結果は仕上げ・出力に送られます")];
+    [pane addSubview:_mosaicMenu];
+
     NSTextField* graphTitle = [self sectionTitle:@"品質グラフ"];
     [pane addSubview:graphTitle];
 
@@ -174,10 +191,10 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_graphHint setPreferredMaxLayoutWidth:218.0];
     [pane addSubview:_graphHint];
 
-    NSDictionary* views = NSDictionaryOfVariableBindings(queueTitle, scroll, buttons, graphTitle,
+    NSDictionary* views = NSDictionaryOfVariableBindings(queueTitle, scroll, buttons, _mosaicMenu, graphTitle,
                                                          _graphMode, _graph, _graphHint);
     for (NSString* format in @[
-             @"H:|[queueTitle]|", @"H:|[scroll]|", @"H:|[buttons]|", @"H:|[graphTitle]|",
+             @"H:|[queueTitle]|", @"H:|[scroll]|", @"H:|[buttons]|", @"H:|[_mosaicMenu]|", @"H:|[graphTitle]|",
              @"H:|[_graphMode]|", @"H:|[_graph]|", @"H:|[_graphHint]|"
          ]) {
         [pane addConstraints:[NSLayoutConstraint constraintsWithVisualFormat:format
@@ -188,7 +205,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     // キューは必要な分だけ、残りはグラフに回す（グラフは細部の読み取りに高さが要る）。
     [pane addConstraints:
               [NSLayoutConstraint
-                  constraintsWithVisualFormat:@"V:|[queueTitle]-4-[scroll(>=96)]-4-[buttons]-12-"
+                  constraintsWithVisualFormat:@"V:|[queueTitle]-4-[scroll(>=96)]-4-[buttons]-4-[_mosaicMenu]-12-"
                                               @"[graphTitle]-4-[_graphMode]-4-[_graph(>=140)]-4-"
                                               @"[_graphHint]|"
                                       options:0
@@ -251,7 +268,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     NSStackView* tools2 = [[[NSStackView alloc] init] autorelease];
     for (NSStackView* row in @[ tools, tools2 ]) {
         [row setOrientation:NSUserInterfaceLayoutOrientationHorizontal];
-        [row setSpacing:8.0];
+        [row setSpacing:row == tools2 ? 6.0 : 8.0];
         [row setTranslatesAutoresizingMaskIntoConstraints:NO];
         [row setClippingResistancePriority:NSLayoutPriorityDefaultLow
                             forOrientation:NSLayoutConstraintOrientationHorizontal];
@@ -324,6 +341,8 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     for (NSUInteger i = 0; i < [zoomLabels count]; ++i) {
         [_zoomControl setLabel:zoomLabels[i] forSegment:static_cast<NSInteger>(i)];
     }
+    // 幅を詰める（最小ウィンドウ幅でも、この段の部品がすべて収まるように）。
+    for (NSInteger i = 0; i < 4; ++i) [_zoomControl setWidth:42.0 forSegment:i];
     [_zoomControl setSelectedSegment:0];
     [_zoomControl setTarget:self];
     [_zoomControl setAction:@selector(zoomChanged:)];
@@ -335,15 +354,21 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     _displayMenu = [[[NSPopUpButton alloc] initWithFrame:NSZeroRect pullsDown:YES] autorelease];
     [_displayMenu setTranslatesAutoresizingMaskIntoConstraints:NO];
     [_displayMenu addItemWithTitle:@"表示"];
-    for (NSString* title in @[ @"位置合わせ領域を表示", @"品質で色分け", @"表示を明るくする（保存には影響しません）" ]) {
+    for (NSString* title in @[ @"位置合わせ領域を表示", @"品質で色分け" ]) {
         [_displayMenu addItemWithTitle:title];
         NSMenuItem* item = [_displayMenu lastItem];
         [item setTarget:self];
         [item setAction:@selector(displayMenuChanged:)];
     }
     [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOn];
-    [[_displayMenu itemAtIndex:3] setState:NSControlStateValueOn];
     [tools2 addArrangedSubview:_displayMenu];
+
+    // 「表示を明るくする」は独立したチェックボックスにする（よく切り替えるので、メニューを開かせない）。
+    _stretchCheck = [self checkboxWithTitle:@"表示を明るくする" state:YES];
+    [_stretchCheck setTarget:self];
+    [_stretchCheck setAction:@selector(stretchToggled:)];
+    [_stretchCheck setToolTip:LSLocalizedString(@"暗い画像を画面の上でだけ明るく見せます（保存には影響しません）")];
+    [tools2 addArrangedSubview:_stretchCheck];
 
     _apEditCheck = [self checkboxWithTitle:@"配置を編集" state:NO];
     [_apEditCheck setTarget:self];
@@ -889,6 +914,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_stackModePopup addItemWithTitle:@"単純平均"];
     [_stackModePopup addItemWithTitle:@"品質重み付き平均"];
     [_stackModePopup addItemWithTitle:@"σクリップ"];
+    [_stackModePopup selectItemAtIndex:1];  // 既定は品質重み付き平均
     [_stackModePopup setTarget:self];
     [_stackModePopup setAction:@selector(analysisSettingChanged:)];
     [_stackModePopup setTranslatesAutoresizingMaskIntoConstraints:NO];
@@ -1270,6 +1296,9 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     _stackButton = [self buttonWithTitle:@"スタック" action:@selector(run:)];
     [_stackButton setKeyEquivalent:@"\r"];
     _exportButton = [self buttonWithTitle:@"書き出し…" action:@selector(save:)];
+    _runAllButton = [self buttonWithTitle:@"一括処理" action:@selector(runAll:)];
+    [_runAllButton setToolTip:LSLocalizedString(
+                                  @"いまの設定で、品質評価・アライメント・スタックを続けて実行します（済んでいて設定も変わっていない工程は飛ばします）")];
     _cancelButton = [self buttonWithTitle:@"中断" action:@selector(cancel:)];
     [_cancelButton setEnabled:NO];
 
@@ -1286,18 +1315,19 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [_statusLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow
                                            forOrientation:NSLayoutConstraintOrientationHorizontal];
 
-    for (NSView* v in @[ _qualityButton, _alignButton, _stackButton, _exportButton, _cancelButton,
-                         _progress, _statusLabel ]) {
+    for (NSView* v in @[ _qualityButton, _alignButton, _stackButton, _exportButton, _runAllButton,
+                         _cancelButton, _progress, _statusLabel ]) {
         [bar addSubview:v];
     }
 
     NSDictionary* views = NSDictionaryOfVariableBindings(_qualityButton, _alignButton,
-                                                         _stackButton, _exportButton,
+                                                         _stackButton, _exportButton, _runAllButton,
                                                          _cancelButton, _progress, _statusLabel);
     [bar addConstraints:[NSLayoutConstraint
                             constraintsWithVisualFormat:
                                 @"H:|[_qualityButton(>=76)]-6-[_alignButton(>=96)]-6-[_stackButton(>=76)]-6-"
-                                @"[_exportButton(>=76)]-12-[_progress(>=100)]-10-[_statusLabel(>=120)]-8-"
+                                @"[_exportButton(>=76)]-6-[_runAllButton(>=76)]-12-[_progress(>=100)]-10-"
+                                @"[_statusLabel(>=120)]-8-"
                                 @"[_cancelButton(>=60)]|"
                                                 options:NSLayoutFormatAlignAllCenterY
                                                 metrics:nil

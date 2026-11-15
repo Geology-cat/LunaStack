@@ -96,6 +96,8 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
         return;
     }
     _bannerDismissed = NO;
+    // スタック済みの画像には、動画の読み方は関係しない（開き直すと仕上げの途中経過を失う）。
+    if ([self currentItemIsImage]) return;
     // 読み方が変われば1枚目の見え方も変わる。開き直して確かめられるようにする。
     if (_currentIndex >= 0) [self selectQueueIndex:_currentIndex];
     [self updateControlsEnabled];
@@ -626,6 +628,8 @@ static NSString* DrizzleScaleText(double s) {
     [_qualityButton setEnabled:hasFile && !_running];
     [_alignButton setEnabled:hasFile && qualityOk && !_running];
     [_stackButton setEnabled:hasFile && alignmentOk && !_running];
+    [_runAllButton setEnabled:hasFile && !_running];
+    [_mosaicMenu setEnabled:!_running];
     // ドリズルの診断はAPごとの変位を使うので、APを使う方式でアライメントした後だけ。
     if (_drizzleDiagnosisKey && !_drizzleDiagnosing &&
         !(alignmentOk && [_drizzleDiagnosisKey isEqualToString:[self drizzleDiagnosisKeyNow]])) {
@@ -668,7 +672,7 @@ static NSString* DrizzleScaleText(double s) {
     [_stackButton setTitle:LSLocalizedString(_stacked ? @"再スタック" : @"スタック")];
     if (_currentIndex >= 0 && _currentIndex < static_cast<NSInteger>([_items count]) && !_running) {
         QueueItem* item = _items[static_cast<NSUInteger>(_currentIndex)];
-        if ([item state] != QueueItemStateError && [item state] != QueueItemStateStacked) {
+        if (![item isImage] && [item state] != QueueItemStateError && [item state] != QueueItemStateStacked) {
             const QueueItemState next = alignmentOk ? QueueItemStateAnalyzed
                                                     : (qualityOk ? QueueItemStateQualityEvaluated
                                                                  : QueueItemStatePending);
@@ -916,7 +920,7 @@ static NSDictionary* SanitizedSettings(NSDictionary* d) {
     [_apEditCheck setState:NSControlStateValueOff];
     [[_displayMenu itemAtIndex:1] setState:NSControlStateValueOn];
     [[_displayMenu itemAtIndex:2] setState:NSControlStateValueOff];
-    [[_displayMenu itemAtIndex:3] setState:NSControlStateValueOn];
+    [_stretchCheck setState:NSControlStateValueOn];
     [_preview setDisplayStretch:YES];
     [self apDisplayChanged:nil];
     [_zoomControl setSelectedSegment:0];
