@@ -690,9 +690,14 @@ double HighFrequency(const stackcore::FrameBuffer& f) {
         NSString* value = kv[1];
         if ([key isEqualToString:@"channel"] && _stacked->channels() == 3) {
             [self applyChannelOffsets:stackcore::estimate_channel_offsets(*_stacked)];
+        } else if ([key isEqualToString:@"background"]) {
+            // 背景を黒にする（ボタンと同じ計算）。色より前に指定すると、自動の色も引いた画像で取る。
+            [self autoBackgroundForTesting];
         } else if ([key isEqualToString:@"wb"] && _stacked->channels() == 3) {
+            const stackcore::FinishingSettings now = [self currentFinishingSettings];
             stackcore::FrameBuffer aligned;
-            stackcore::shift_channels(*_stacked, [self currentFinishingSettings].channels, aligned);
+            stackcore::shift_channels(*_stacked, now.channels, aligned);
+            if (now.has_background()) stackcore::subtract_background(aligned, now.background, aligned);
             double gains[3];
             stackcore::estimate_white_balance(aligned, gains);
             [self applyGainsRed:gains[0] blue:gains[2]];
@@ -803,6 +808,7 @@ static NSString* LayoutText(NSView* v) {
         for (NSView* sub in [v subviews]) [stack addObject:sub];
         const BOOL control = [v isKindOfClass:[NSControl class]] || [v isKindOfClass:[PreviewView class]] ||
                              [v isKindOfClass:[LevelsView class]] || [v isKindOfClass:[QualityGraphView class]] ||
+                             [v isKindOfClass:[AdoptionGraphView class]] ||
                              [v isKindOfClass:[NSTableView class]];
         if (!control || v == root) continue;
         if ([[v superview] isKindOfClass:[NSControl class]]) continue;  // ボタンの中の文字など
@@ -864,7 +870,7 @@ static NSString* LayoutText(NSView* v) {
     [[self window] layoutIfNeeded];
     [doc setNeedsDisplay:YES];
     [doc displayIfNeeded];
-    NSBitmapImageRep* rep = [doc bitmapImageRepForCachingDisplayInRect:[doc bounds]];
+    NSBitmapImageRep* rep = LSSnapshotRepForView(doc);
     if (!rep) return;
     [doc cacheDisplayInRect:[doc bounds] toBitmapImageRep:rep];
     NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];

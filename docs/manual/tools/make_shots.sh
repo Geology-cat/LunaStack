@@ -10,6 +10,9 @@
 #   sample-data/2018-05-24-0250_6-JC-L-Sun_HAlpha_pipp.ser 太陽Hα（モノクロ16bit）
 #   sample-data/manual/cr2/                               カメラのRAW（CR2 8枚）
 #   sample-data/manual/jup.mp4                            木星（H.264）
+#   sample-data/20261115素材追加/モザイク/*.ser            月のモザイクのパネル2本（3864×2192）
+#   sample-data/20261115素材追加/土星/*.ser                土星（1032×484。背景を黒にする例）
+# 素材が無い場面は撮らずに、前に撮った画面（build/raw）を残す。
 # アプリは .build/local（なければ dist/）のものを使う。見出しの開閉は利用者の設定を書き換えず、
 # 起動引数（-section.<key> YES）で上書きする。
 set -u
@@ -25,6 +28,9 @@ MOON="$ROOT/sample-data/2024-01-19-0224_6-U-L-Moon.ser"
 SUN="$ROOT/sample-data/2018-05-24-0250_6-JC-L-Sun_HAlpha_pipp.ser"
 CR2="$ROOT/sample-data/manual/cr2"
 MP4="$ROOT/sample-data/manual/jup.mp4"
+PANEL_A="$ROOT/sample-data/20261115素材追加/モザイク/Video_20261031-014540_3864x2192_raw16.ser"
+PANEL_B="$ROOT/sample-data/20261115素材追加/モザイク/Video_20261031-014644_3864x2192_raw16.ser"
+SATURN="$ROOT/sample-data/20261115素材追加/土星/Video_20261113-231146_1032x484_raw16.ser"
 # 作例の仕上げ（木星）
 FIN="channel=1,wb=1,wavelet=12:7:3:1.5:1:1,denoise=0.45:0.25:0.05:0:0:0"
 
@@ -40,8 +46,9 @@ shot() {
     args+=(-NSRequiresAquaSystemAppearance YES)
     SECONDS=0
     rm -f "$OUT/$name".png "$OUT/$name".json "$OUT/${name}_insp".png "$OUT/${name}_insp".png.json
+    # 画面の倍率に関係なく2倍の細かさで描く（等倍の画面の Mac でも、印刷に耐える図にする）。
     env LUNASTACK_SNAPSHOT="$OUT/$name.png" LUNASTACK_LAYOUT="$OUT/$name.json" LUNASTACK_TAB_NORMAL=1 \
-        LUNASTACK_SIZE=1280x800 "$@" "$APP" "${args[@]}" >/dev/null 2>&1
+        LUNASTACK_SIZE=1280x800 LUNASTACK_SNAPSHOT_SCALE=2 "$@" "$APP" "${args[@]}" >/dev/null 2>&1
     if [ -f "$OUT/$name.png" ]; then echo "撮影: $name（$SECONDS 秒）"; else echo "失敗: $name" >&2; fi
 }
 
@@ -64,9 +71,21 @@ run() {
     fi
     shot "$@"
 }
+# need 場面名 素材... : 素材が1つでも無ければ、その場面は撮らない（前の画面を消さない）。
+need() {
+    local name=$1
+    shift
+    for f in "$@"; do
+        if [ ! -e "$f" ]; then
+            echo "省略: $name（素材が無い: ${f#$ROOT/}）" >&2
+            return 1
+        fi
+    done
+    return 0
+}
 
 J=(LUNASTACK_OPEN="$JUP")
-fresh "$JUP" "$MOON" "$SUN" "$MP4"
+fresh "$JUP" "$MOON" "$SUN" "$MP4" "$PANEL_A" "$PANEL_B" "$SATURN"
 rm -f "$CR2/cr2.lstk" "$CR2/cr2.lstk.json" "$CR2/cr2.lstkq" "$CR2/cr2.lstkq.json"
 
 # 1. 起動直後・追加直後（解析前）
@@ -86,7 +105,7 @@ run align_timeline "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment LUNAST
 run heatmap "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment LUNASTACK_HEATMAP=1
 # 4. スタックのあと
 run stacked "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged
-run stack_tab2 "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_TAB=2 LUNASTACK_DZDIAG=1 LUNASTACK_INSPECTOR_SHOT="$OUT/stack_tab2_insp.png"
+run stack_tab2 "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_TAB=2 LUNASTACK_DZDIAG=1 LUNASTACK_ADOPTION=1 LUNASTACK_INSPECTOR_SHOT="$OUT/stack_tab2_insp.png"
 # 5. 仕上げ
 run finished "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FINISH="$FIN" LUNASTACK_INSPECTOR_SHOT="$OUT/finished_insp.png"
 run finished_nowave "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FINISH="$FIN" LUNASTACK_WAVELET_OFF=1
@@ -95,6 +114,19 @@ run cropbox "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FINISH
 run export "${J[@]}" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged LUNASTACK_FINISH="$FIN" LUNASTACK_SECTION=export
 # 6. ほかの素材
 run moon "LUNASTACK_OPEN=$MOON" LUNASTACK_LIMIT=300 LUNASTACK_AUTORUN=1 LUNASTACK_MODE=alignment
-run sun "LUNASTACK_OPEN=$SUN" LUNASTACK_LIMIT=300 LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged
+need sun "$SUN" && run sun "LUNASTACK_OPEN=$SUN" LUNASTACK_LIMIT=300 LUNASTACK_AUTORUN=1 LUNASTACK_MODE=staged
 run cr2_roi "LUNASTACK_OPEN=$CR2" LUNASTACK_ROI=center LUNASTACK_TAB=0
 run mp4 "LUNASTACK_OPEN=$MP4" LUNASTACK_TAB=0
+# 7. モザイク合成（選んだところ・処理が終わったところ）と、背景を黒にする（土星）
+if need mosaic_ready "$PANEL_A" "$PANEL_B"; then
+    run mosaic_ready "LUNASTACK_OPEN=$PANEL_A:$PANEL_B" LUNASTACK_MOSAICMODE=1 LUNASTACK_TAB=2
+    run mosaic_done "LUNASTACK_OPEN=$PANEL_A:$PANEL_B" LUNASTACK_AUTORUN=1 LUNASTACK_MODE=mosaicqueue \
+        LUNASTACK_FINISH="background=1,wb=1" LUNASTACK_SECTION=tone
+fi
+if need saturn "$SATURN"; then
+    run saturn_raw "LUNASTACK_OPEN=$SATURN" LUNASTACK_LIMIT=1500 LUNASTACK_AUTORUN=1 LUNASTACK_MODE=batch LUNASTACK_SECTION=tone
+    run saturn_bg "LUNASTACK_OPEN=$SATURN" LUNASTACK_LIMIT=1500 LUNASTACK_AUTORUN=1 LUNASTACK_MODE=batch \
+        LUNASTACK_FINISH="background=1" LUNASTACK_SECTION=tone
+fi
+# 追加の素材のフォルダには、撮影で作った解析キャッシュを残さない。
+fresh "$PANEL_A" "$PANEL_B" "$SATURN"

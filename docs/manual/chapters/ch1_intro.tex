@@ -61,6 +61,7 @@
 
 \LS の処理は、次の6つの段階に分かれています。画面の下にある4つのボタン \ui{品質評価}\ui{アライメント}\ui{スタック}\ui{書き出し…}
 が、ちょうどこの流れに対応しています。\textbf{各段階が終わるとアプリはいったん止まり}、結果を確かめてから次へ進めます。
+慣れてきたら、その右の \ui{現在の設定で一括処理} で、品質評価からスタックまでを続けて実行することもできます（第\ref{sec:runall}節）。
 
 \begin{center}
 \begin{tikzpicture}[font=\sffamily\small, node distance=3mm,
@@ -98,6 +99,7 @@
         \LS は四角ごとに別々に位置を合わせ、四角ごとに写りのよいフレームを選びます。他のソフトでは「AP（Alignment Point）」とも呼ばれます。
   \item[スタック] 選んだフレームを重ねて平均すること。ノイズが減ります。
   \item[採用率] 重ねるために使うフレームの割合（上位何\%か）。
+  \item[モザイク合成] 月を何か所かに分けて撮ったもの（パネル）を、重なりを手がかりに1枚につなぐこと（第\ref{chap:mosaic}章）。
   \item[ウェーブレット] 画像を「細かい模様」から「大きな模様」まで6段階（レイヤー）に分け、段階ごとに強調やノイズ低減をする仕上げの方法です。
   \item[ドリズル] 位置のずれを利用して、元より細かい画素で画像を作り直す拡大の方法。条件がそろったときだけ効果があります。
   \item[Bayer（ベイヤー）・デバイヤー] カラーカメラのセンサーは、画素ごとに赤・緑・青のどれか1色しか測っていません。
@@ -115,6 +117,8 @@
 動画 & SER、AVI（非圧縮・MJPEG）、MOV・MP4・M4V（H.264・HEVC・ProRes など。HEVC は macOS 10.13 以降）\\
 静止画の連番 & TIFF、PNG、FITS、JPEG、カメラの RAW（CR2・CR3・NEF・ARW・RAF・ORF・RW2・PEF・DNG など）。
   フォルダごと、または複数の画像をまとめて追加すると、1本の「連番」として扱います。\\
+スタック済みの画像 & TIFF、PNG、FITS、JPEG を\textbf{1枚だけ}追加すると、スタックの結果と同じ扱いで「仕上げ・出力」タブで開きます
+  （第\ref{sec:open-image}節）。モザイクのパネルとしてつなぐこともできます（第\ref{chap:mosaic}章）。\\
 書き出し & 16bit TIFF、32bit 浮動小数点 TIFF、32bit 浮動小数点 FITS、16bit PNG\\
 \bottomrule
 \end{tabularx}
@@ -127,7 +131,7 @@
 
 \section{インストール}\label{sec:install}
 
-配布用の DMG（\texttt{LunaStack-1.0.1.dmg}）をダブルクリックして開くと、次の4つが入っています。
+配布用の DMG（\texttt{LunaStack-\version.dmg}）をダブルクリックして開くと、次の4つが入っています。
 
 \begin{center}\small
 \begin{tabularx}{0.92\linewidth}{@{}>{\sffamily\bfseries}l X@{}}

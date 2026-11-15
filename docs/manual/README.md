@@ -18,7 +18,8 @@
 ```bash
 ./scripts/build_app.sh                 # または cmake --build .build/local
 docs/manual/tools/make_shots.sh        # 画面を撮る（5分ほど。場面名を付けるとその場面だけ）
-python3 docs/manual/tools/figures.py   # 図を作る（図名を付けるとその図だけ）
+python3 docs/manual/tools/figures.py   # 図を作る（図名を付けるとその図だけ。Pillow が要る）
+# Pillow が入っていなければ: uv run --no-project --with pillow python docs/manual/tools/figures.py
 cd docs/manual && latexmk               # build/guide.pdf ができる
 cp build/guide.pdf LunaStack_使い方ガイド.pdf
 ```
@@ -28,7 +29,13 @@ cp build/guide.pdf LunaStack_使い方ガイド.pdf
 - 画面の撮影はアプリの自己検証用の環境変数（`LUNASTACK_SNAPSHOT` など）を使う。説明書のために次を足した:
   `LUNASTACK_LAYOUT`（部品の種類・文言・設定欄・位置を JSON に書く）、`LUNASTACK_INSPECTOR_SHOT`（設定パネルを縦に全部つないだ画像）、
   `LUNASTACK_TAB_NORMAL`（タブを選ぶとき見出しの開閉どおりに見せる）、`LUNASTACK_GRAPH`（品質グラフの時系列／品質順）、
-  `LUNASTACK_FINISH` の `wavelet=`・`denoise=`（レイヤーごとの値）。
+  `LUNASTACK_FINISH` の `wavelet=`・`denoise=`（レイヤーごとの値）・`background=`（背景を黒にする）、
+  `LUNASTACK_SNAPSHOT_SCALE`（画面の倍率に関係なく、その倍率で描く。等倍の画面の Mac でも2倍の図にする）、
+  `LUNASTACK_ADOPTION`（採用率の目安を測ってから撮る）、`LUNASTACK_MOSAICMODE`（モザイクの一括処理を選んだ状態）。
+- 素材が無い場面は撮らずに飛ばし、前に撮った画面（`build/raw/`）をそのまま使う（v1.1.0 では太陽の素材が無く、
+  バイトオーダーの注意の図は v1.0.1 の画面のまま）。
+- 新しい macOS ではセグメント（タブなど）の中の文字が部品として出てこないので、`figures.py` が文言の長さから
+  1つずつの位置を割り振っている。
 - 見出しの開閉は利用者の設定を書き換えず、起動引数 `-section.<key> YES` で上書きする。
 - 番号や枠の位置は `figures.py` が部品の位置から求めるので、画面が変わっても撮り直せば追従する。
   番号の置き場所（部品の左上・右など）は各章の `\mk[位置]{部品}{番号}` で決める。

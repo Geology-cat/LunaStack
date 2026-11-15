@@ -35,6 +35,24 @@ class Shot:
             doc = json.load(f)
         self.size = doc["size"]
         self.items = doc["items"]
+        # セグメント（タブ・表示の切り替えなど）の1つずつを、部品として扱えるようにする。
+        # 新しい macOS では中の文字が別の部品として出てこないので、文言の長さから幅を割り振る
+        # （全角1・半角0.55 に、両側の余白 1.6 を足した比。端から端までを囲む印は正確に合う）。
+        if not any(e["class"].endswith("NSSegmentItemLabelView") for e in self.items):
+            extra = []
+            for e in self.items:
+                labels = e.get("segments")
+                if not e["class"].endswith("NSSegmentedControl") or not labels:
+                    continue
+                weights = [sum(1.0 if ord(ch) > 0x2E7F else 0.55 for ch in t) + 1.6 for t in labels]
+                x, y, w, h = e["rect"]
+                left = x
+                for t, wt in zip(labels, weights):
+                    width = w * wt / sum(weights)
+                    extra.append({"class": "NSSegmentItemLabelView", "section": e["section"], "text": t,
+                                  "rect": [left, y, width, h]})
+                    left += width
+            self.items = self.items + extra
         img = Image.open(png).convert("RGBA")
         # 設定パネルだけを描いた画像は背景が透明なので、ウインドウの背景色（235）に重ねる。
         bg = Image.new("RGBA", img.size, (235, 235, 235, 255))
@@ -170,19 +188,24 @@ PREVIEW_ONLY = ("find", dict(cls="PreviewView"))
 # 工程タブ・ボタン行など、画面全体の図で使う部品
 WINDOW_PARTS = {
     "queue": uni(cls("NSTableView"), lbl("入力キュー", exact=True)),
-    "queuebuttons": uni(btn("追加…"), btn("クリア")),
+    "queuebuttons": uni(btn("追加…"), btn("クリア"), ("find", dict(cls="NSPopUpButton", section="", text="", exact=True, nth=0))),
     "graph": uni(cls("QualityGraphView"), lbl("品質グラフ", exact=True)),
     "preview": PREVIEW_ONLY,
     "viewmode": uni(seglabel("フレーム"), seglabel("結果")),
     "frameslider": cls("NSSlider", section=""),
     "stepbuttons": uni(btn("←"), btn("→")),
     "zoom": uni(seglabel("全体"), seglabel("400%")),
-    "display": ("find", dict(cls="NSPopUpButton", section="", text="", exact=True)),
+    # 文言の無いプルダウンは2つある（上が入力キューの下のモザイク合成、下がプレビューの下の表示メニュー）。
+    "display": ("find", dict(cls="NSPopUpButton", section="", text="", exact=True, nth=1)),
     "apedit": btn("配置を編集"),
     "tabs": uni(seglabel("品質評価"), seglabel("仕上げ・出力")),
     "presets": uni(("find", dict(text="プリセット…", cls="NSPopUpButton")), btn("プリセットを保存…")),
     "inspector": rect(966, 64, 306, 676),
 }
+
+
+# 入力キューの下のモザイク合成のメニュー（プルダウン。表示メニューより上にある）
+MOSAIC_MENU = ("find", dict(cls="NSPopUpButton", section="", text="", exact=True, nth=0))
 
 
 def process_buttons(first="品質評価"):
@@ -206,7 +229,7 @@ def fig(name, shot, crop=None, width=None, anchors=None, fmt="png", padding=0):
 fig("win_empty", "empty", width=1800, anchors={
     "queue": WINDOW_PARTS["queue"], "addbutton": WINDOW_PARTS["queuebuttons"], "graph": WINDOW_PARTS["graph"],
     "preview": WINDOW_PARTS["preview"], "tabs": WINDOW_PARTS["tabs"], "inspector": WINDOW_PARTS["inspector"],
-    "process": uni(btn("品質評価"), btn("書き出し…")), "status": lbl("動画または静止画を追加してください"),
+    "process": uni(btn("品質評価"), btn("現在の設定で一括処理")), "status": lbl("動画または静止画を追加してください"),
     "presets": WINDOW_PARTS["presets"],
 })
 fig("win_overview", "finished", width=1800, fmt="jpg", anchors={
@@ -214,14 +237,14 @@ fig("win_overview", "finished", width=1800, fmt="jpg", anchors={
     "viewmode": WINDOW_PARTS["viewmode"], "frameslider": uni(cls("NSSlider", section=""), btn("→")),
     "zoom": WINDOW_PARTS["zoom"], "display": uni(WINDOW_PARTS["display"], btn("配置を編集")),
     "tabs": WINDOW_PARTS["tabs"], "inspector": WINDOW_PARTS["inspector"], "presets": WINDOW_PARTS["presets"],
-    "process": uni(btn("品質を再評価"), btn("書き出し…")), "status": uni(("find", dict(text="RGBのずれ", cls="NSTextField"))),
+    "process": uni(btn("品質を再評価"), btn("現在の設定で一括処理")), "status": uni(("find", dict(text="RGBのずれ", cls="NSTextField"))),
     "banner": uni(lbl("枚を自動除外"), btn("×")),
 })
 fig("toolbar", "finished", crop=[232, 660, 736, 96], width=1472, fmt="jpg", anchors={
     "viewmode": WINDOW_PARTS["viewmode"], "order": uni(seglabel("時系列", 1), seglabel("品質順", 1)),
     "slider": cls("NSSlider", section=""), "step": uni(btn("←"), btn("→")),
     "info": lbl("スタック結果"), "zoom": WINDOW_PARTS["zoom"],
-    "display": WINDOW_PARTS["display"], "apedit": btn("配置を編集"),
+    "display": WINDOW_PARTS["display"], "stretch": btn("表示を明るくする"), "apedit": btn("配置を編集"),
     "apcount": lbl("位置合わせ領域 "),
 })
 
@@ -347,7 +370,7 @@ INSPECTOR_ANCHORS = {
     "insp_aadv": {
         "minscore": s_find("alignAdvanced", "0.5", "NSTextField", exact=True),
         "gradient": s_find("alignAdvanced", "0.6", "NSTextField", exact=True),
-        "level": s_find("alignAdvanced", "0.15", "NSTextField", exact=True),
+        "level": s_find("alignAdvanced", "0.05", "NSTextField", exact=True),
     },
     "insp_stack": {
         "selmode": s_find("stack", c="NSSegmentedControl", nth=0),
@@ -357,6 +380,8 @@ INSPECTOR_ANCHORS = {
         "sigma": s_find("stack", "2.0", "NSTextField", exact=True),
         "lowmem": s_find("stack", "低メモリモード（2GB上限）", "NSButton"),
         "rawcfa": s_find("stack", "Bayerのまま合成する（デバイヤーしない）", "NSButton"),
+        "adopt": s_find("stack", "採用率の目安を測る", "NSButton"),
+        "adoptgraph": uni(s_find("stack", c="AdoptionGraphView"), s_find("stack", "目安は", "NSTextField")),
     },
     "insp_drizzle": {
         "scale": s_find("drizzle", c="NSSegmentedControl", nth=0),
@@ -416,7 +441,8 @@ for name, shot, keys in INSPECTOR_FIGS:
 
 # 第5章 いろいろな素材
 fig("moon_ap", "moon", crop=[238, 36, 724, 648], width=1100, fmt="jpg")
-fig("sun_banner", "sun", crop=[232, 0, 736, 740], width=1100, fmt="jpg", anchors={
+# 太陽の素材が無いと撮り直せない（前の版の画面を使う）ので、作りの変わったプレビューの下の道具は入れない。
+fig("sun_banner", "sun", crop=[232, 0, 736, 656], width=1100, fmt="jpg", anchors={
     "banner": uni(lbl("ヘッダと異なるバイトオーダー"), btn("×")), "buttons": uni(btn("little"), btn("big")),
 })
 fig("mp4_banner", "mp4", crop=[232, 0, 736, 60], width=1472, anchors={
@@ -431,7 +457,8 @@ fig("cropbox", "cropbox", crop=[232, 0, 1048, 740], width=1600, fmt="jpg", ancho
     "apply": btn("切り抜く", section="geometry"), "clearbox": btn("枠を消す"), "undo": btn("元に戻す", section="geometry"),
     "rotate": uni(btn("↺ 左へ90°"), btn("右へ90° ↻")),
 })
-fig("levels", "levels", crop=[962, 60, 318, 300], width=636, anchors={
+fig("levels", "levels", crop=[962, 60, 318, 316], width=636, anchors={
+    "background": uni(btn("背景を黒にする", section="tone"), btn("戻す", section="tone")),
     "channel": popup("tone", 0), "histogram": cls("LevelsView"),
     "black": ("levelmark", 12 / 255), "white": ("levelmark", 240 / 255),
     "mid": ("levelmark", (12 + 0.5 ** 1.15 * (240 - 12)) / 255),
@@ -440,6 +467,23 @@ fig("levels", "levels", crop=[962, 60, 318, 300], width=636, anchors={
     "auto": btn("自動", section="tone"),
 })
 fig("drizzle_result", "stack_tab2", crop=[962, 60, 318, 420], width=636)
+
+# 第9章 月面のモザイク合成
+fig("mosaic_ready", "mosaic_ready", width=1800, fmt="jpg", anchors={
+    "queue": cls("NSTableView"), "mosaicmenu": MOSAIC_MENU,
+    "runall": btn("現在の設定でモザイク合成を含めた一括処理"),
+    "stages": uni(btn("品質評価"), btn("スタック", section="")), "tabs": WINDOW_PARTS["tabs"],
+    "status": lbl("設定を確かめてから実行してください"),
+})
+fig("mosaic_done", "mosaic_done", width=1800, fmt="jpg", anchors={
+    "queue": cls("NSTableView"), "preview": PREVIEW_ONLY,
+    "background": uni(btn("背景を黒にする", section="tone"), lbl("背景として")),
+    "export": btn("書き出し…"),
+})
+# 背景を黒にする（土星。プレビューに全体表示した 1032×484 の画像のうち、土星の周り）
+SATURN_BOX = ("imgrect", (1032, 484, 380, 228, 190, 124))
+fig("sat_before", "saturn_raw", crop=SATURN_BOX, width=None, fmt="png")
+fig("sat_after", "saturn_bg", crop=SATURN_BOX, width=None, fmt="png")
 
 
 # ---- 生成 ----------------------------------------------------------------------

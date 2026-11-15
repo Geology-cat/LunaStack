@@ -916,12 +916,17 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [[[_adoptionGraph widthAnchor] constraintEqualToConstant:270.0] setActive:YES];
     [[[_adoptionGraph heightAnchor] constraintEqualToConstant:104.0] setActive:YES];
     [_adoptionGraph setHidden:YES];
-    [self addToSection:key view:_adoptionGraph box:box];
     _adoptionLabel = [self noteLabel:@""];
     [_adoptionLabel setTextColor:[NSColor labelColor]];
     [_adoptionLabel setSelectable:YES];
     [_adoptionLabel setHidden:YES];
-    [self addToSection:key view:_adoptionLabel box:box];
+    // 見出しを閉じたときやタブを切り替えたときは、欄の部品ごと隠される（戻すときは全部出る）。
+    // 結果の有無で出し入れするグラフと説明は、それとぶつからないよう入れ物に包み、中身のほうを出し入れする。
+    NSStackView* adoptionHolder = [NSStackView stackViewWithViews:@[ _adoptionGraph, _adoptionLabel ]];
+    [adoptionHolder setOrientation:NSUserInterfaceLayoutOrientationVertical];
+    [adoptionHolder setAlignment:NSLayoutAttributeLeading];
+    [adoptionHolder setSpacing:4.0];
+    [self addToSection:key view:adoptionHolder box:box];
 
     _normalizeCheck = [self checkboxWithTitle:@"輝度正規化" state:YES];
     [_normalizeCheck setTarget:self];

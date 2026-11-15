@@ -109,3 +109,8 @@ JobResult run_job(const JobRequest& req, const stackcore::ProgressFn& progress);
 
 // AP別の平均品質（ヒートマップ用）。行列の並びは points 順 → analyzed_indices 順。
 std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis);
+
+// 画面を画像にするための入れ物（自己検証・説明書の撮影用）。
+// 環境変数 LUNASTACK_SNAPSHOT_SCALE（例 2）があれば、画面の倍率に関係なくその倍率で描く
+// （等倍の画面の Mac でも、Retina で撮ったのと同じ細かさの図を作るため）。
+NSBitmapImageRep* LSSnapshotRepForView(NSView* view);

@@ -195,3 +195,23 @@ std::vector<double> ap_mean_quality(const stackcore::AnalysisData& analysis) {
     return out;
 }
 
+NSBitmapImageRep* LSSnapshotRepForView(NSView* view) {
+    const NSRect bounds = [view bounds];
+    const char* text = getenv("LUNASTACK_SNAPSHOT_SCALE");
+    const double scale = text ? atof(text) : 0.0;
+    if (!(scale >= 1.0 && scale <= 4.0)) return [view bitmapImageRepForCachingDisplayInRect:bounds];
+    NSBitmapImageRep* rep =
+        [[[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+                                                 pixelsWide:static_cast<NSInteger>(NSWidth(bounds) * scale + 0.5)
+                                                 pixelsHigh:static_cast<NSInteger>(NSHeight(bounds) * scale + 0.5)
+                                              bitsPerSample:8
+                                            samplesPerPixel:4
+                                                   hasAlpha:YES
+                                                   isPlanar:NO
+                                             colorSpaceName:NSCalibratedRGBColorSpace
+                                                bytesPerRow:0
+                                               bitsPerPixel:0] autorelease];
+    // 大きさ（ポイント）を見た目の大きさのままにすると、描くときに画素の密度だけが上がる。
+    [rep setSize:bounds.size];
+    return rep;
+}

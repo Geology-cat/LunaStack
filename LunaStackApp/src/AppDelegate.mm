@@ -1,4 +1,5 @@
 #import "AppDelegate.h"
+#import "LSAppSupport.h"
 
 #import "Localization.h"
 #import "MainWindowController.h"
@@ -250,7 +251,7 @@
         [_controller writeInspectorShotForTestingTo:[NSString stringWithUTF8String:inspector]];
     }
 
-    NSBitmapImageRep* rep = [view bitmapImageRepForCachingDisplayInRect:[view bounds]];
+    NSBitmapImageRep* rep = LSSnapshotRepForView(view);
     if (!rep) {
         NSLog(@"スナップショットを作れませんでした");
         return;
