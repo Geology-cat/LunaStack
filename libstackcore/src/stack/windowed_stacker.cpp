@@ -82,6 +82,7 @@ void WindowedStacker::start_ap(Ap& ap, int center_x, int center_y) const {
     ap.oy = static_cast<int>(std::lround((center_y - ap_size_ / 2) * scale_));
     ap.frames = 0;
     ap.weight_sum = 0.0;
+    ap.partial = false;
     const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
     ap.accum.assign(ap_pixels * static_cast<std::size_t>(channels_), 0.0);
     if (drizzle_ || mode_ == StackMode::SigmaClip) ap.coverage.assign(ap_pixels, 0.0);
@@ -95,7 +96,8 @@ void WindowedStacker::start_ap(Ap& ap, int center_x, int center_y) const {
 std::size_t WindowedStacker::ap_bytes(int frames) const {
     const std::size_t ap_pixels = static_cast<std::size_t>(ap_out_) * ap_out_;
     std::size_t bytes = ap_pixels * static_cast<std::size_t>(channels_) * sizeof(double);
-    if (drizzle_ || mode_ == StackMode::SigmaClip) bytes += ap_pixels * sizeof(double);
+    // 等倍の平均でも、フレームの外にはみ出したAPは画素ごとの被覆量を持つ。
+    bytes += ap_pixels * sizeof(double);
     if (mode_ == StackMode::SigmaClip) {
         bytes += static_cast<std::size_t>(std::max(0, frames)) * channels_ * ap_pixels * sizeof(float);
     }
@@ -144,6 +146,25 @@ void WindowedStacker::add_frame_lanczos(Ap& ap, const FrameBuffer& frame, double
     const std::size_t n = static_cast<std::size_t>(ap_size_) * ap_size_;
     if (ap.patch.size() < n) ap.patch.assign(n, 0.0f);
 
+    // 切り出しのうち、フレームの中に標本点がある範囲 [vx0, vx1) × [vy0, vy1)。
+    // 平行移動だけなので矩形になる。外側は端の画素の複製でしかないので使わない。
+    const auto valid_range = [this](double origin, int extent, int& lo, int& hi) {
+        lo = std::max(0, static_cast<int>(std::ceil(-origin)));
+        hi = std::min(ap_size_, static_cast<int>(std::floor(extent - 1 - origin)) + 1);
+        if (hi < lo) hi = lo;
+    };
+    int vx0 = 0, vx1 = ap_size_, vy0 = 0, vy1 = ap_size_;
+    valid_range(x0, frame.width(), vx0, vx1);
+    valid_range(y0, frame.height(), vy0, vy1);
+    const bool whole = vx0 == 0 && vy0 == 0 && vx1 == ap_size_ && vy1 == ap_size_;
+
+    if (mode_ != StackMode::SigmaClip && !whole && !ap.partial) {
+        // はじめてはみ出した。ここまでのフレームは全画素に足してあるので、
+        // 被覆量をこれまでの重みの合計で始める。
+        ap.partial = true;
+        ap.coverage.assign(n, ap.weight_sum);
+    }
+
     for (int c = 0; c < channels_; ++c) {
         resample_lanczos3(frame.plane(c), frame.width(), frame.height(), frame.stride(), x0, y0,
                           ap.patch.data(), ap_size_, ap_size_,
@@ -153,14 +174,44 @@ void WindowedStacker::add_frame_lanczos(Ap& ap, const FrameBuffer& frame, double
             const std::size_t base =
                 (static_cast<std::size_t>(ap.frames) * channels_ + c) * n;
             if (ap.samples.size() < base + n) ap.samples.resize(base + n);
-            for (std::size_t i = 0; i < n; ++i) {
-                ap.samples[base + i] = static_cast<float>(ap.patch[i] * gain);
+            if (whole) {
+                for (std::size_t i = 0; i < n; ++i) {
+                    ap.samples[base + i] = static_cast<float>(ap.patch[i] * gain);
+                }
+            } else {
+                // フレームの外の画素は「値なし」にする（σクリップは NaN を数えない）。
+                const float missing = std::numeric_limits<float>::quiet_NaN();
+                for (int y = 0; y < ap_size_; ++y) {
+                    const bool row_in = y >= vy0 && y < vy1;
+                    const std::size_t row = static_cast<std::size_t>(y) * ap_size_;
+                    for (int x = 0; x < ap_size_; ++x) {
+                        ap.samples[base + row + x] =
+                            (row_in && x >= vx0 && x < vx1)
+                                ? static_cast<float>(ap.patch[row + x] * gain)
+                                : missing;
+                    }
+                }
             }
-        } else {
+        } else if (whole) {
             double* acc = ap.accum.data() + static_cast<std::size_t>(c) * n;
             for (std::size_t i = 0; i < n; ++i) {
                 acc[i] += static_cast<double>(ap.patch[i]) * gain * sample_weight;
             }
+        } else {
+            double* acc = ap.accum.data() + static_cast<std::size_t>(c) * n;
+            for (int y = vy0; y < vy1; ++y) {
+                const std::size_t row = static_cast<std::size_t>(y) * ap_size_;
+                for (int x = vx0; x < vx1; ++x) {
+                    acc[row + x] += static_cast<double>(ap.patch[row + x]) * gain * sample_weight;
+                }
+            }
+        }
+    }
+
+    if (mode_ != StackMode::SigmaClip && ap.partial) {
+        for (int y = vy0; y < vy1; ++y) {
+            double* cov = ap.coverage.data() + static_cast<std::size_t>(y) * ap_size_;
+            for (int x = vx0; x < vx1; ++x) cov[x] += sample_weight;
         }
     }
 }
@@ -347,7 +398,7 @@ void WindowedStacker::commit_ap(Ap& ap) {
             if (w <= 0.0f) continue;
 
             double norm;
-            if (drizzle_ || mode_ == StackMode::SigmaClip) {
+            if (drizzle_ || mode_ == StackMode::SigmaClip || ap.partial) {
                 const double coverage = ap.coverage[ap_index];
                 // 一度も落ちてこなかった出力画素。窓の重みも足さない
                 // （足すと分母だけ増えて暗くなる）。

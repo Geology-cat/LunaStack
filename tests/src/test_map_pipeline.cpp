@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
@@ -804,5 +805,97 @@ MT_TEST(map_窓合成をAPの組に分けても結果はビット単位で同じ
         }
         MT_CHECK(same);
         MT_CHECK_EQ(r1.stack.contributions, r2.stack.contributions);
+    }
+}
+
+namespace {
+
+// 中央で全体のずれと明るさを合わせたうえで、端の帯（境界から lo〜hi 画素）と中央の誤差を測る。
+void center_and_edge_rms(const FrameBuffer& img, const FrameBuffer& truth, int lo, int hi,
+                         double& center, double& edge) {
+    const int n = img.width();
+    const int margin = 40, search = 16;
+    double best = 1e30, bk = 1.0, bc = 0.0;
+    int bdx = 0, bdy = 0;
+    for (int dy = -search; dy <= search; ++dy) {
+        for (int dx = -search; dx <= search; ++dx) {
+            double sa = 0.0, sb = 0.0, saa = 0.0, sab = 0.0;
+            int count = 0;
+            for (int y = margin; y < n - margin; ++y) {
+                for (int x = margin; x < n - margin; ++x) {
+                    const double a = img.row(0, y + dy)[x + dx], b = truth.row(0, y)[x];
+                    sa += a;
+                    sb += b;
+                    saa += a * a;
+                    sab += a * b;
+                    ++count;
+                }
+            }
+            const double denom = count * saa - sa * sa;
+            if (std::fabs(denom) < 1e-12) continue;
+            const double k = (count * sab - sa * sb) / denom;
+            const double c = (sb - k * sa) / count;
+            double err = 0.0;
+            for (int y = margin; y < n - margin; ++y) {
+                for (int x = margin; x < n - margin; ++x) {
+                    const double d = k * img.row(0, y + dy)[x + dx] + c - truth.row(0, y)[x];
+                    err += d * d;
+                }
+            }
+            const double rms = std::sqrt(err / count);
+            if (rms < best) {
+                best = rms;
+                bdx = dx;
+                bdy = dy;
+                bk = k;
+                bc = c;
+            }
+        }
+    }
+    center = best;
+    double err = 0.0;
+    int count = 0;
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            const int sx = x + bdx, sy = y + bdy;
+            if (sx < 0 || sy < 0 || sx >= n || sy >= n) continue;
+            const int d = std::min(std::min(sx, n - 1 - sx), std::min(sy, n - 1 - sy));
+            if (d < lo || d >= hi) continue;
+            const double e = bk * img.row(0, sy)[sx] + bc - truth.row(0, y)[x];
+            err += e * e;
+            ++count;
+        }
+    }
+    edge = std::sqrt(err / std::max(1, count));
+}
+
+}  // namespace
+
+MT_TEST(map_視野が流れても画像の端がにじまない) {
+    // 追尾なしで視野が大きく流れる動画（±14px）。端のAPは一部のフレームで画面の外に出る。
+    // 外側を端の画素の複製で埋めて足すと、端の帯に引き伸ばした像が混ざる
+    // （修正前は端から4〜16pxの誤差が中央の5〜7倍だった）。
+    const int size = 192;
+    const SyntheticSource source(size, 80, 0.0, 14.0, 0.02, 777);
+    const FrameBuffer truth = source.truth();
+    for (int mode = 0; mode < 3; ++mode) {
+        MapStackSettings settings;
+        settings.reference_top_percent = 50.0;
+        settings.ap_top_percent = 50.0;
+        settings.ap.ap_size = 32;
+        settings.local.search_radius = 8;
+        settings.stack_mode = mode == 0 ? stackcore::StackMode::Mean
+                                        : (mode == 1 ? stackcore::StackMode::QualityWeighted
+                                                     : stackcore::StackMode::SigmaClip);
+        MapStackReport report;
+        const FrameBuffer out = stackcore::run_map_stack(source, settings, nullptr, report);
+        double center = 0.0, edge = 0.0;
+        center_and_edge_rms(out, truth, 4, 16, center, edge);
+        std::printf("           加算方式%d: 真値とのRMS 中央=%.5f 端(4〜16px)=%.5f (%.2f倍)\n", mode,
+                    center, edge, edge / center);
+        if (!(edge < center * 2.0)) {
+            microtest::fail("視野が流れた動画で端の誤差が中央の2倍を超えた: 中央=" +
+                            microtest::mt_str(center) + " 端=" + microtest::mt_str(edge));
+        }
     }
 }

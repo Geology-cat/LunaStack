@@ -361,6 +361,60 @@ MT_TEST(wstack_品質重み付き平均は指定した重みで平均する) {
     MT_CHECK_NEAR(out.row(0, 32)[32], 0.65f, 1e-5);
 }
 
+MT_TEST(wstack_フレームの外にはみ出した画素は足さない) {
+    // 視野が流れてAPの切り出しがフレームの外に出たとき、外側（端の画素の複製）を
+    // 足してはいけない。はみ出した列は、はみ出していないフレームだけの平均になる。
+    const int n = 64, ap = 32;
+    const FrameBuffer dark = constant_frame(n, n, 1, 0.2f);
+    const FrameBuffer bright = constant_frame(n, n, 1, 0.8f);
+    for (int mode = 0; mode < 2; ++mode) {
+        WindowedStacker st(n, n, 1, ap, 1.0, 0.9,
+                           mode == 0 ? stackcore::StackMode::Mean
+                                     : stackcore::StackMode::QualityWeighted);
+        // 右端のAP（x = 32..63）。2枚目は切り出しが右へ 20px ずれ、右の 20 列が外に出る。
+        st.begin_ap(48, 32);
+        st.add_frame(dark, 0.0, 0.0, 1.0);
+        st.add_frame(bright, 20.0, 0.0, 1.0);
+        st.end_ap();
+
+        FrameBuffer out;
+        WindowedStackStats stats;
+        st.finish(out, stats, nullptr);
+        MT_CHECK_NEAR(out.row(0, 32)[36], 0.5f, 1e-5);  // 両方のフレームが届く列
+        MT_CHECK_NEAR(out.row(0, 32)[43], 0.5f, 1e-5);  // 届く最後の列（32 + 11）
+        MT_CHECK_NEAR(out.row(0, 32)[44], 0.2f, 1e-5);  // ここから先は1枚目だけ
+        MT_CHECK_NEAR(out.row(0, 32)[60], 0.2f, 1e-5);
+    }
+
+    // σクリップでも同じ（外の画素は値なしとして数えない）。
+    WindowedStacker sigma(n, n, 1, ap, 1.0, 0.9, stackcore::StackMode::SigmaClip, 2.0);
+    sigma.begin_ap(48, 32);
+    sigma.add_frame(dark, 0.0, 0.0, 1.0);
+    sigma.add_frame(dark, 0.0, 0.0, 1.0);
+    sigma.add_frame(dark, 0.0, 0.0, 1.0);
+    sigma.add_frame(bright, 20.0, 0.0, 1.0);
+    sigma.end_ap();
+    FrameBuffer out;
+    WindowedStackStats stats;
+    sigma.finish(out, stats, nullptr);
+    MT_CHECK_NEAR(out.row(0, 32)[60], 0.2f, 1e-5);
+}
+
+MT_TEST(wstack_全フレームがはみ出した画素は代替画像で埋まる) {
+    const int n = 64, ap = 32;
+    WindowedStacker st(n, n, 1, ap);
+    const FrameBuffer bright = constant_frame(n, n, 1, 0.8f);
+    const FrameBuffer fallback = constant_frame(n, n, 1, 0.3f);
+    st.begin_ap(48, 32);
+    st.add_frame(bright, 20.0, 0.0, 1.0);
+    st.end_ap();
+    FrameBuffer out;
+    WindowedStackStats stats;
+    st.finish(out, stats, &fallback);
+    MT_CHECK_NEAR(out.row(0, 32)[60], 0.3f, 1e-5);  // どのフレームも届かない列
+    MT_CHECK(out.row(0, 32)[40] > 0.5f);            // 届く列は局所スタックが効く
+}
+
 MT_TEST(wstack_シグマクリップは単発の外れ値を除く) {
     const int n = 64, ap = 32;
     WindowedStacker st(n, n, 1, ap, 1.0, 0.9, stackcore::StackMode::SigmaClip, 2.0);

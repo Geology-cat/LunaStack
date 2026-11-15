@@ -75,7 +75,10 @@ public:
         int frames = 0;
         double weight_sum = 0.0;
         std::vector<double> accum;     // AP内のフレーム加算（float64）
-        std::vector<double> coverage;  // Drizzle・σクリップの被覆量
+        std::vector<double> coverage;  // Drizzle・σクリップ・フレーム外あり のときの被覆量
+        // 切り出しがフレームの外にはみ出したフレームが1枚でもあった（等倍の平均・重み付き平均）。
+        // はみ出した画素は足さず、画素ごとの被覆量（coverage）で割る。
+        bool partial = false;
         std::vector<float> samples;    // σクリップのときだけ、各フレームを保持
         // 作業領域（AP ごとに持つので、並列に足してもぶつからない）
         std::vector<float> patch;
@@ -95,6 +98,12 @@ public:
     // 現在のAPに1フレームぶんを加算する。
     // frame から (center - half + dx, center - half + dy) を左上として
     // ap_size 角をLanczos3で切り出す。gain は輝度正規化の係数。
+    //
+    // **切り出しがフレームの外にはみ出した画素は足さない。** 視野が流れる動画
+    // （追尾なし・手動追尾）では、端のAPが一部のフレームで画面の外に出る。
+    // 外側を端の画素の複製で埋めて足すと、端の帯に引き伸ばした像が混ざってにじむ
+    // （合成データ・流れ±14pxで、端から4〜16pxの誤差が中央の5〜7倍になった）。
+    // はみ出したフレームが無いAPは従来どおり枚数で割るので、出力はビット単位で変わらない。
     //
     // **呼び出し順はAP番号昇順・その中でフレーム番号昇順に固定すること**
     // （決定論性の要件。実装計画書 §4.2）。
