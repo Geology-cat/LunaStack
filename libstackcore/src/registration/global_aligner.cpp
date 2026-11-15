@@ -1,5 +1,6 @@
 #include "stackcore/global_aligner.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -17,6 +18,45 @@ constexpr double kCentroidThresholdRatio = 0.25;
 constexpr float kDarkLevel = 0.10f;
 // 暗い画素がこの割合を超えたら惑星モードとみなす。
 constexpr double kDarkFractionForPlanet = 0.5;
+
+// 惑星モードで、位相相関を対象の周りの窓だけで取るときの窓の最小の大きさ。
+constexpr int kMinPlanetWindow = 64;
+
+int next_pow2(int v) {
+    int n = 1;
+    while (n < v) n <<= 1;
+    return n;
+}
+
+// 重心と同じ閾値を超える画素の広がり（縦横の長いほう）。対象が無ければ0。
+int bright_extent(const FrameBuffer& frame) {
+    const int w = frame.width(), h = frame.height();
+    const std::size_t stride = frame.stride();
+    const float* luma = frame.luma();
+    float lo = luma[0], hi = luma[0];
+    for (int y = 0; y < h; ++y) {
+        const float* row = luma + static_cast<std::size_t>(y) * stride;
+        for (int x = 0; x < w; ++x) {
+            if (row[x] < lo) lo = row[x];
+            if (row[x] > hi) hi = row[x];
+        }
+    }
+    if (!(hi > lo)) return 0;
+    const float threshold = lo + static_cast<float>(kCentroidThresholdRatio) * (hi - lo);
+    int min_x = w, max_x = -1, min_y = h, max_y = -1;
+    for (int y = 0; y < h; ++y) {
+        const float* row = luma + static_cast<std::size_t>(y) * stride;
+        for (int x = 0; x < w; ++x) {
+            if (row[x] <= threshold) continue;
+            if (x < min_x) min_x = x;
+            if (x > max_x) max_x = x;
+            if (y < min_y) min_y = y;
+            if (y > max_y) max_y = y;
+        }
+    }
+    if (max_x < min_x) return 0;
+    return std::max(max_x - min_x + 1, max_y - min_y + 1);
+}
 
 }  // namespace
 
@@ -119,6 +159,19 @@ struct GlobalAligner::Impl {
     bool ref_has_centroid = false;
     PhaseCorrelator correlator;
     AlignedFloats shifted;   // 粗補正後の画像を作る作業バッファ
+
+    // 惑星モードで対象が画面に比べて小さいとき、位相相関は対象の周りの窓だけで取る。
+    //
+    // 位相相関は画面全体を2の冪の正方へ詰めてFFTする。1032x484 の画面に 100px の
+    // 土星が写っている動画では 2048x2048 になり、全体位置合わせだけで処理時間の
+    // 約3/4を占めていた（中身のほとんどは空のノイズ）。重心で粗く合わせたあとなら
+    // 残りのずれは小さいので、対象の2倍以上の窓があれば足りる。
+    // 窓が画面全体のFFTと同じ大きさになる場合（木星が画面いっぱい、月面など）は
+    // 使わず、従来どおり画面全体で取る。
+    std::unique_ptr<PhaseCorrelator> window_correlator;
+    int window_size = 0;
+    int window_x = 0, window_y = 0;  // 参照の座標での窓の左上
+    AlignedFloats window_buffer;
     AlignedFloats ref_luma;  // ZNCC計算のために参照の輝度を保持する
     std::size_t stride = 0;
 
@@ -145,6 +198,39 @@ struct GlobalAligner::Impl {
         if (max_shift > correlator.max_shift()) max_shift = correlator.max_shift();
 
         shifted.reset(stride * static_cast<std::size_t>(height));
+
+        if (mode == AlignMode::Planet) {
+            const int extent = bright_extent(reference);
+            const int wanted = next_pow2(std::max(kMinPlanetWindow, 2 * extent));
+            if (extent > 0 && wanted < correlator.padded_size()) {
+                window_size = wanted;
+                window_x = static_cast<int>(std::lround(ref_cx)) - window_size / 2;
+                window_y = static_cast<int>(std::lround(ref_cy)) - window_size / 2;
+                window_buffer.reset(static_cast<std::size_t>(window_size) * window_size);
+                window_correlator.reset(new PhaseCorrelator(window_size, window_size));
+                copy_window(reference.luma(), window_x, window_y);
+                window_correlator->set_reference(window_buffer.data(), window_size, window_size,
+                                                 static_cast<std::size_t>(window_size));
+            }
+        }
+    }
+
+    // src の (x0, y0) から窓の大きさぶんを window_buffer へ写す。画面の外は0で埋める
+    // （shift_into が範囲外を0にするのと同じ扱い）。
+    void copy_window(const float* src, int x0, int y0) {
+        float* dst = window_buffer.data();
+        const std::size_t n = static_cast<std::size_t>(window_size);
+        std::memset(dst, 0, n * n * sizeof(float));
+        const int xa = std::max(0, -x0);
+        const int xb = std::min(window_size, width - x0);
+        if (xb <= xa) return;
+        for (int y = 0; y < window_size; ++y) {
+            const int sy = y0 + y;
+            if (sy < 0 || sy >= height) continue;
+            std::memcpy(dst + static_cast<std::size_t>(y) * n + xa,
+                        src + static_cast<std::size_t>(sy) * stride + (x0 + xa),
+                        static_cast<std::size_t>(xb - xa) * sizeof(float));
+        }
     }
 
     // 変位 (dx, dy) で重ねたときの正規化相互相関。
@@ -232,13 +318,14 @@ GlobalAlignResult GlobalAligner::align(const FrameBuffer& frame) {
 
     int coarse_dx = 0, coarse_dy = 0;
     const float* target = luma;
+    const bool windowed = impl_->window_correlator != nullptr;
 
     if (impl_->mode == AlignMode::Planet) {
         double cx = 0.0, cy = 0.0;
         if (luma_centroid(frame, cx, cy)) {
             coarse_dx = static_cast<int>(std::lround(impl_->ref_cx - cx));
             coarse_dy = static_cast<int>(std::lround(impl_->ref_cy - cy));
-            if (coarse_dx != 0 || coarse_dy != 0) {
+            if (!windowed && (coarse_dx != 0 || coarse_dy != 0)) {
                 impl_->shift_into(luma, coarse_dx, coarse_dy);
                 target = impl_->shifted.data();
             }
@@ -246,8 +333,17 @@ GlobalAlignResult GlobalAligner::align(const FrameBuffer& frame) {
         // 重心が取れない場合は粗補正なしで位相相関だけに任せる。
     }
 
-    const CorrelationPeak peak =
-        impl_->correlator.correlate(target, impl_->width, impl_->height, impl_->stride);
+    CorrelationPeak peak;
+    if (windowed) {
+        // 粗補正後の画像 shifted(x, y) = frame(x - dx, y - dy) の窓を、ずらした位置から
+        // 直接切り出す（画面全体をずらした画像は作らない）。
+        const int n = impl_->window_size;
+        impl_->copy_window(luma, impl_->window_x - coarse_dx, impl_->window_y - coarse_dy);
+        peak = impl_->window_correlator->correlate(impl_->window_buffer.data(), n, n,
+                                                   static_cast<std::size_t>(n));
+    } else {
+        peak = impl_->correlator.correlate(target, impl_->width, impl_->height, impl_->stride);
+    }
 
     out.dx = coarse_dx + peak.dx;
     out.dy = coarse_dy + peak.dy;

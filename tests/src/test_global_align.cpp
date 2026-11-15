@@ -199,3 +199,35 @@ MT_TEST(align_モードは手動で上書きできる) {
     GlobalAligner aligner(planet(128, 64, 64, 20, 1), s);
     MT_CHECK(aligner.mode() == AlignMode::Lunar);
 }
+
+// 広い画面の中の小さな惑星（1032x484 に 100px の土星、のような動画）では、
+// 位相相関を対象の周りの窓だけで取る。変位の復元は画面全体で取るときと変わらない。
+MT_TEST(align_広い画面の小さな惑星でも既知の変位を復元する) {
+    const int n = 600;
+    // 円盤の半径20px。窓は 2×直径 を2の冪に切り上げた 128px になり、画面全体（1024）より小さい。
+    const FrameBuffer reference = planet(n, 300.0, 300.0, 20.0, 71);
+    GlobalAligner aligner(reference, GlobalAlignSettings());
+    MT_CHECK(aligner.mode() == AlignMode::Planet);
+
+    const int shifts[][2] = {{0, 0}, {3, -2}, {-7, 5}, {40, -31}, {-120, 90}, {140, 140}};
+    for (const auto& s : shifts) {
+        // 対象が (dx, dy) だけ動いたフレーム。参照へ重ねるには逆へ動かす。
+        const FrameBuffer frame = planet(n, 300.0 + s[0], 300.0 + s[1], 20.0, 72);
+        const GlobalAlignResult r = aligner.align(frame);
+        MT_CHECK(r.accepted);
+        MT_CHECK_EQ(r.dx, -s[0]);
+        MT_CHECK_EQ(r.dy, -s[1]);
+    }
+}
+
+// 対象が画面の端にかかって窓が画面の外へはみ出しても、落ちずに位置を返す。
+MT_TEST(align_小さな惑星が画面の端に寄っても位置を返す) {
+    const int n = 600;
+    const FrameBuffer reference = planet(n, 30.0, 570.0, 20.0, 81);
+    GlobalAligner aligner(reference, GlobalAlignSettings());
+    const FrameBuffer frame = planet(n, 36.0, 560.0, 20.0, 82);
+    const GlobalAlignResult r = aligner.align(frame);
+    MT_CHECK(r.accepted);
+    MT_CHECK_EQ(r.dx, -6);
+    MT_CHECK_EQ(r.dy, 10);
+}
