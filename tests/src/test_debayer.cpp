@@ -1,3 +1,6 @@
+#include <algorithm>
+#include <cstring>
+
 #include "microtest.hpp"
 #include "stackcore/debayer.hpp"
 #include "stackcore/frame_buffer.hpp"
@@ -92,4 +95,72 @@ MT_TEST(debayer_入力が1chでなければ例外になる) {
     FrameBuffer rgb_input(8, 8, 3);
     FrameBuffer out;
     MT_CHECK_THROWS(stackcore::debayer_bilinear(rgb_input, SerColorId::BayerRGGB, out));
+}
+
+namespace {
+
+// 4パターンぶんの色の表（テスト側で独立に持つ）。
+int pattern_color(SerColorId pattern, int x, int y) {
+    const int px = x & 1, py = y & 1;
+    const int rggb[2][2] = {{0, 1}, {1, 2}};
+    const int grbg[2][2] = {{1, 0}, {2, 1}};
+    const int gbrg[2][2] = {{1, 2}, {0, 1}};
+    const int bggr[2][2] = {{2, 1}, {1, 0}};
+    switch (pattern) {
+        case SerColorId::BayerRGGB: return rggb[py][px];
+        case SerColorId::BayerGRBG: return grbg[py][px];
+        case SerColorId::BayerGBRG: return gbrg[py][px];
+        default: return bggr[py][px];
+    }
+}
+
+// 定義どおりの bilinear（3x3近傍の同色サンプルを行→列の順に足して平均する）。
+float reference_bilinear(const FrameBuffer& cfa, SerColorId pattern, int c, int x, int y) {
+    if (pattern_color(pattern, x, y) == c) return cfa.row(0, y)[x];
+    float sum = 0.0f;
+    int count = 0;
+    for (int ny = std::max(0, y - 1); ny <= std::min(cfa.height() - 1, y + 1); ++ny) {
+        for (int nx = std::max(0, x - 1); nx <= std::min(cfa.width() - 1, x + 1); ++nx) {
+            if (nx == x && ny == y) continue;
+            if (pattern_color(pattern, nx, ny) != c) continue;
+            sum += cfa.row(0, ny)[nx];
+            ++count;
+        }
+    }
+    return count > 0 ? sum / static_cast<float>(count) : cfa.row(0, y)[x];
+}
+
+}  // namespace
+
+MT_TEST(debayer_内側の高速処理は定義どおりの補間とビット単位で一致する) {
+    const SerColorId patterns[] = {SerColorId::BayerRGGB, SerColorId::BayerGRBG,
+                                   SerColorId::BayerGBRG, SerColorId::BayerBGGR};
+    const int sizes[][2] = {{37, 22}, {22, 37}, {8, 8}, {3, 3}, {2, 5}, {5, 2}, {1, 1}};
+    for (const SerColorId pattern : patterns) {
+        for (const auto& size : sizes) {
+            const int w = size[0], h = size[1];
+            FrameBuffer cfa(w, h, 1);
+            unsigned seed = 20261115u + static_cast<unsigned>(w * 131 + h);
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    seed = seed * 1664525u + 1013904223u;
+                    cfa.row(0, y)[x] = static_cast<float>((seed >> 8) & 0xFFFF) / 65535.0f;
+                }
+            }
+            FrameBuffer rgb;
+            stackcore::debayer_bilinear(cfa, pattern, rgb);
+            int mismatches = 0;
+            for (int c = 0; c < 3; ++c) {
+                for (int y = 0; y < h; ++y) {
+                    for (int x = 0; x < w; ++x) {
+                        const float expected = reference_bilinear(cfa, pattern, c, x, y);
+                        if (std::memcmp(&expected, &rgb.row(c, y)[x], sizeof(float)) != 0) {
+                            ++mismatches;
+                        }
+                    }
+                }
+            }
+            MT_CHECK_EQ(mismatches, 0);
+        }
+    }
 }
