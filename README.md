@@ -116,7 +116,7 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 
 | オプション | 説明 |
 |---|---|
-| `--ap-size <px>` | APサイズ 32/48/64/96/128/200（既定 自動提案） |
+| `--ap-size <px>` | APサイズ 32/48/64/96/128/200（既定 自動提案。月面のように広い対象は 64px） |
 | `--ap-top <割合>` | AP別に採用するフレームの割合（既定 10） |
 | `--ap-count <枚数>` | AP別の採用枚数を直接指定 |
 | `--quality gradient\|frequency` | 勾配エネルギー／FFT周波数帯パワー比 |
@@ -124,7 +124,7 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 | `--no-normalize` | 輝度正規化を無効にする |
 | `--search-radius <px>` | 局所探索の半径（既定 16） |
 | `--min-score <値>` | ZNCCの下限。下回るAPは近傍から補間（既定 0.5） |
-| `--ap-gradient <比>` / `--ap-level <比>` | AP採用の勾配・輝度しきい値 |
+| `--ap-gradient <比>` / `--ap-level <比>` | AP採用の勾配・輝度しきい値（既定 0.6・0.05） |
 | `--ref-passes <N>` | 参照の反復精密化の回数（既定 2。1で精密化なし） |
 | `--sidecar <path.lstk>` | 解析結果をサイドカーに保存する |
 | `--reuse-sidecar` | サイドカーから解析結果を読み、加算だけやり直す |
