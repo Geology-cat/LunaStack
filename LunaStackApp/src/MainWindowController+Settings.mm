@@ -134,7 +134,7 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
     settings.ap.use_manual_points = _manualPointsActive ? true : false;
     settings.ap.manual_points = _manualPoints;
     settings.ap.gradient_ratio = FieldDouble(_apGradientField, 0.6, 0.0, 10.0);
-    settings.ap.level_ratio = FieldDouble(_apLevelField, 0.15, 0.0, 1.0);
+    settings.ap.level_ratio = FieldDouble(_apLevelField, 0.05, 0.0, 1.0);
     settings.local.search_radius = static_cast<int>([_searchRadiusSlider doubleValue] + 0.5);
     settings.local.min_score = FieldDouble(_minScoreField, 0.5, -1.0, 1.0);
 
@@ -372,7 +372,7 @@ int FieldInt(NSTextField* field, int fallback, int lo, int hi) {
                                  : field == _minSimilarityField ? @"0.5"
                                  : field == _minScoreField ? @"0.5"
                                  : field == _apGradientField ? @"0.6"
-                                 : field == _apLevelField ? @"0.15"
+                                 : field == _apLevelField ? @"0.05"
                                  : field == _sigmaField ? @"2.0" : @"";
             [field setStringValue:fallback];
             NSBeep();

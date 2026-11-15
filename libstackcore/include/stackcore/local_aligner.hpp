@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "stackcore/ap_placer.hpp"
@@ -56,6 +58,19 @@ struct LocalFieldRepairStats {
     double median_deviation = 0.0;
 };
 
+// APごとの近傍の一覧（番号の昇順）と、補間に使う距離の重み。
+//
+// 変位場の修復はフレームごとに、全APについて近傍を調べる。素朴に全APどうしの
+// 距離を見ると AP数の2乗×フレーム数 の手間になり、APが数千になる広い月面で効いてくる。
+// APはフレームによらず動かないので、1回だけ作って使い回す。
+struct ApNeighborTable {
+    std::vector<std::size_t> begin;      // AP i の近傍は [begin[i], begin[i+1])
+    std::vector<std::uint32_t> index;    // 近傍のAP番号（昇順。自分自身は含まない）
+    std::vector<double> weight;          // 1 / (距離 + 1)
+};
+
+ApNeighborTable build_ap_neighbors(const std::vector<AlignmentPoint>& points, int ap_grid_step);
+
 // 1フレームぶんのAP変位場に対して外れ値処理を行う（仕様書 §4.6）。
 //
 //   1. AP変位場全体の空間的一貫性を検査する
@@ -68,6 +83,7 @@ struct LocalFieldRepairStats {
 LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint>& points,
                                                 std::vector<LocalMatch>& matches,
                                                 int ap_grid_step,
-                                                const LocalAlignSettings& settings);
+                                                const LocalAlignSettings& settings,
+                                                const ApNeighborTable* neighbors = nullptr);
 
 }  // namespace stackcore

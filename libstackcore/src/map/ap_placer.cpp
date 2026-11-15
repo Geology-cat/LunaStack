@@ -12,6 +12,11 @@ namespace {
 // 仕様書 §4.5 のAPサイズ選択肢。
 const int kApSizes[] = {32, 48, 64, 96, 128, 200};
 
+// 自動提案で 64px より大きくするのは、AP がこの数を超えそうなときだけ。
+// AP×フレームの結果を全部持つので（1組20バイト）、4K全面の月面で 64px にすると
+// 8000 AP を超え、1万フレームで 1.6GB になる。
+const int kAutoApCountLimit = 6000;
+
 // 画素ごとの勾配の大きさ |∇I| を作る。
 // 品質評価（勾配エネルギー Σ|∇I|²）と違い、AP採否はエネルギーではなく
 // 平均勾配 T = (1/N)Σ|∇I| で判断する（仕様書 §4.5）。
@@ -116,6 +121,21 @@ int suggest_ap_size(const FrameBuffer& reference) {
             best_diff = d;
             best = s;
         }
+    }
+    if (best <= 64) return best;
+
+    // 月面のように対象が広いと、1/6 では 128〜200px になる。シーイングの歪みは
+    // それより細かいので、AP の中で像がずれたまま足されて細部が鈍る。
+    // 実写の月3本を半分ずつスタックして再現性（0.14〜0.28 cycle/px の相関）を
+    // 比べると、どれも AP が小さいほど高く、64px までは無効な相関も増えなかった
+    // （3864x2192 の月: 200px 0.38 → 96px 0.46 → 64px 0.48。処理時間は約2割増）。
+    // 64px を基本にし、AP が多くなりすぎる大きな画面だけ一段ずつ大きくする。
+    for (int s : kApSizes) {
+        if (s < 64) continue;
+        if (s >= best) break;
+        const long long count =
+            static_cast<long long>(span_x / (s / 2)) * static_cast<long long>(span_y / (s / 2));
+        if (count <= kAutoApCountLimit) return s;
     }
     return best;
 }

@@ -30,15 +30,43 @@ double median(std::vector<double> values) {
 
 }  // namespace
 
+ApNeighborTable build_ap_neighbors(const std::vector<AlignmentPoint>& points, int ap_grid_step) {
+    ApNeighborTable table;
+    const double range_sq =
+        (kNeighborRange * ap_grid_step) * (kNeighborRange * ap_grid_step);
+    table.begin.reserve(points.size() + 1);
+    table.begin.push_back(0);
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        for (std::size_t j = 0; j < points.size(); ++j) {
+            if (i == j) continue;
+            const double d2 = distance_sq(points[i], points[j]);
+            if (d2 > range_sq) continue;
+            table.index.push_back(static_cast<std::uint32_t>(j));
+            // 距離の逆数で重み付け。近いAPほど強く効かせる。
+            table.weight.push_back(1.0 / (std::sqrt(d2) + 1.0));
+        }
+        table.begin.push_back(table.index.size());
+    }
+    return table;
+}
+
 LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint>& points,
                                                 std::vector<LocalMatch>& matches,
                                                 int ap_grid_step,
-                                                const LocalAlignSettings& settings) {
+                                                const LocalAlignSettings& settings,
+                                                const ApNeighborTable* neighbors) {
     if (points.size() != matches.size()) {
         throw std::invalid_argument("外れ値処理: AP数と結果数が一致しません");
     }
     LocalFieldRepairStats stats;
     if (points.empty()) return stats;
+
+    // 近傍の一覧が渡されなければここで作る（単発の呼び出し・テスト用）。
+    ApNeighborTable local_table;
+    if (neighbors == nullptr || neighbors->begin.size() != points.size() + 1) {
+        local_table = build_ap_neighbors(points, ap_grid_step);
+        neighbors = &local_table;
+    }
 
     // --- 1. フレーム全体で変位場の一貫性を調べる -------------------------
     //
@@ -94,9 +122,6 @@ LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint
         }
     }
 
-    const double range_sq =
-        (kNeighborRange * ap_grid_step) * (kNeighborRange * ap_grid_step);
-
     // --- 2. 無効なAPを近傍の有効APから補間する ----------------------------
     //
     // 無効なAPをそのまま使うと、そのAP領域だけ全く違う場所を切り出して加算し、
@@ -110,13 +135,12 @@ LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint
     for (std::size_t i = 0; i < points.size(); ++i) {
         if (original[i].valid) continue;
 
+        // 近傍は番号の昇順に並んでいるので、足す順序は全APを順に調べるのと同じになる。
         double wsum = 0.0, sx = 0.0, sy = 0.0;
-        for (std::size_t j = 0; j < points.size(); ++j) {
-            if (i == j || !original[j].valid) continue;
-            const double d2 = distance_sq(points[i], points[j]);
-            if (d2 > range_sq) continue;
-            // 距離の逆数で重み付け。近いAPほど強く効かせる。
-            const double w = 1.0 / (std::sqrt(d2) + 1.0);
+        for (std::size_t k = neighbors->begin[i]; k < neighbors->begin[i + 1]; ++k) {
+            const std::size_t j = neighbors->index[k];
+            if (!original[j].valid) continue;
+            const double w = neighbors->weight[k];
             wsum += w;
             sx += w * original[j].dx;
             sy += w * original[j].dy;
@@ -143,11 +167,9 @@ LocalFieldRepairStats repair_displacement_field(const std::vector<AlignmentPoint
 
     for (std::size_t i = 0; i < points.size(); ++i) {
         double wsum = 0.0, sx = 0.0, sy = 0.0;
-        for (std::size_t j = 0; j < points.size(); ++j) {
-            if (i == j) continue;
-            const double d2 = distance_sq(points[i], points[j]);
-            if (d2 > range_sq) continue;
-            const double w = 1.0 / (std::sqrt(d2) + 1.0);
+        for (std::size_t k = neighbors->begin[i]; k < neighbors->begin[i + 1]; ++k) {
+            const std::size_t j = neighbors->index[k];
+            const double w = neighbors->weight[k];
             wsum += w;
             sx += w * before_clip[j].dx;
             sy += w * before_clip[j].dy;

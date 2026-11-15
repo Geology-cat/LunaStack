@@ -281,6 +281,8 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
     FrameBuffer cfa, rgb;
     QualityWorkspace ws;
     std::vector<LocalMatch> per_frame(ap_count);
+    // APの近傍はフレームによらないので、1回だけ作って全フレームの修復で使い回す。
+    const ApNeighborTable neighbors = build_ap_neighbors(points, report.ap_grid_step);
 
     const char* align_stage = pass_index == 0 ? "局所アライメント" : "局所アライメント(2回目)";
 
@@ -359,7 +361,8 @@ void map_analyze_pass(const VideoSource& source, const MapStackSettings& setting
         }
         const std::vector<LocalMatch> before = per_frame;
         const LocalFieldRepairStats repair =
-            repair_displacement_field(points, per_frame, report.ap_grid_step, settings.local);
+            repair_displacement_field(points, per_frame, report.ap_grid_step, settings.local,
+                                      &neighbors);
         if (repair.used_global_consensus) {
             ++report.consensus_fallback_frames;
         }

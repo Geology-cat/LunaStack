@@ -79,7 +79,7 @@ struct Options {
     double ap_top_percent = 10.0;
     int ap_top_count = 0;
     double ap_gradient_ratio = 0.6;
-    double ap_level_ratio = 0.15;
+    double ap_level_ratio = 0.05;
     double min_score = 0.5;
     int reference_passes = 2;
     std::string sidecar;      // 保存/読み込み先（空で使わない）
@@ -474,7 +474,7 @@ void print_usage() {
         "                            選択率(--ap-top)を変えて何度も試すときに使う\n"
         "  --ref-passes <N>          参照の反復精密化の回数 (既定: 2)\n"
         "                            1=精密化なし。2以上でMAPの結果を新しい参照にして通し直す\n"
-        "  --ap-level <比>           AP採用の輝度しきい値。最大輝度に対する比 (既定: 0.15)\n"
+        "  --ap-level <比>           AP採用の輝度しきい値。最大輝度に対する比 (既定: 0.05)\n"
         "\n"
         "Drizzle のオプション (stack / mapstack 共通、仕様書 §4.9):\n"
         "  --drizzle <倍率>          1.0(無効) / 1.5 / 2.0 / 3.0 (既定: 1.0)\n"

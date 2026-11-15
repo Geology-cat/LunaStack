@@ -682,3 +682,45 @@ MT_TEST(repair_空間的に不整合な変位場は共通変位へ安全退避�
         MT_CHECK(match.valid);  // 元の相関判定は診断用に保持する
     }
 }
+
+MT_TEST(repair_近傍の一覧を使い回しても結果はビット単位で同じになる) {
+    // 修復はフレームごとに呼ばれる。APの近傍を1回だけ作って渡す経路と、
+    // 呼び出しのたびに作る経路で、補間・クリップの結果が変わらないこと。
+    const int step = 16;
+    std::vector<AlignmentPoint> pts;
+    std::vector<LocalMatch> m;
+    unsigned seed = 4242u;
+    for (int y = 0; y < 9; ++y) {
+        for (int x = 0; x < 11; ++x) {
+            if ((x * 7 + y * 3) % 13 == 0) continue;  // 格子に穴を空ける
+            AlignmentPoint p;
+            p.cx = 32 + x * step;
+            p.cy = 32 + y * step;
+            pts.push_back(p);
+            LocalMatch match;
+            seed = seed * 1664525u + 1013904223u;
+            match.dx = 0.3f + 0.01f * static_cast<float>(x) + 0.4f * (static_cast<float>((seed >> 8) & 0xFF) / 255.0f - 0.5f);
+            seed = seed * 1664525u + 1013904223u;
+            match.dy = -0.2f + 0.02f * static_cast<float>(y) + 0.4f * (static_cast<float>((seed >> 8) & 0xFF) / 255.0f - 0.5f);
+            match.valid = ((seed >> 20) % 5) != 0;   // 2割は無効（近傍から補間される）
+            if (((seed >> 24) % 17) == 0) match.dx += 9.0f;  // 孤立した外れ値
+            m.push_back(match);
+        }
+    }
+    std::vector<LocalMatch> with_table = m, without_table = m;
+    const stackcore::ApNeighborTable table = stackcore::build_ap_neighbors(pts, step);
+    const stackcore::LocalFieldRepairStats a =
+        stackcore::repair_displacement_field(pts, with_table, step, LocalAlignSettings{}, &table);
+    const stackcore::LocalFieldRepairStats b =
+        stackcore::repair_displacement_field(pts, without_table, step, LocalAlignSettings{});
+    MT_CHECK(!a.used_global_consensus);
+    MT_CHECK_EQ(a.consensus_outliers, b.consensus_outliers);
+    int differing = 0;
+    for (std::size_t i = 0; i < m.size(); ++i) {
+        if (with_table[i].dx != without_table[i].dx || with_table[i].dy != without_table[i].dy ||
+            with_table[i].valid != without_table[i].valid) {
+            ++differing;
+        }
+    }
+    MT_CHECK_EQ(differing, 0);
+}

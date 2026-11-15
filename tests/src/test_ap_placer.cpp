@@ -260,3 +260,33 @@ MT_TEST(ap_すべて消去したら自動配置に戻さない) {
     const std::vector<AlignmentPoint> got = place_alignment_points(ref, settings, used);
     MT_CHECK(got.empty());
 }
+
+namespace {
+
+// 画面いっぱいに模様がある画像（月面の代用）。
+FrameBuffer full_field(int w, int h) {
+    FrameBuffer fb(w, h, 1);
+    for (int y = 0; y < h; ++y) {
+        float* row = fb.row(0, y);
+        for (int x = 0; x < w; ++x) {
+            row[x] = static_cast<float>(0.5 + 0.2 * std::sin(x * 0.05) * std::cos(y * 0.07));
+        }
+    }
+    fb.invalidate_luma();
+    return fb;
+}
+
+}  // namespace
+
+MT_TEST(ap_サイズ自動提案は広い対象でも64pxを基本にする) {
+    // 短辺の1/6なら 128〜200px になる大きさ。シーイングの歪みを追うには粗いので 64px に抑える。
+    MT_CHECK_EQ(stackcore::suggest_ap_size(full_field(1280, 720)), 64);
+    MT_CHECK_EQ(stackcore::suggest_ap_size(full_field(1920, 1200)), 64);
+    // 小さな対象は従来どおり対象の大きさで決まる（短辺の1/6 = 30px）。
+    MT_CHECK_EQ(stackcore::suggest_ap_size(planet(400, 90.0)), 32);
+}
+
+MT_TEST(ap_サイズ自動提案はAPが多くなりすぎる大きな画面では一段大きくする) {
+    // 3840x2160 を 64px で敷くと 120x67 = 8040 個になる。96px なら 80x45 = 3600 個。
+    MT_CHECK_EQ(stackcore::suggest_ap_size(full_field(3840, 2160)), 96);
+}

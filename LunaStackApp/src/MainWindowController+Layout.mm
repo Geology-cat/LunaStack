@@ -872,7 +872,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     [self addToSection:key view:[self labeledField:@"一致度の下限（下回ると補間）" field:_minScoreField] box:box];
     _apGradientField = [self numberFieldWithValue:@"0.6" action:@selector(advancedFieldChanged:)];
     [self addToSection:key view:[self labeledField:@"配置する模様の強さ（比）" field:_apGradientField] box:box];
-    _apLevelField = [self numberFieldWithValue:@"0.15" action:@selector(advancedFieldChanged:)];
+    _apLevelField = [self numberFieldWithValue:@"0.05" action:@selector(advancedFieldChanged:)];
     [self addToSection:key view:[self labeledField:@"配置する明るさ（比）" field:_apLevelField] box:box];
     [self addToSection:key
                   view:[self noteLabel:@"模様の強さ・明るさを下げると、暗い所や模様の乏しい所にも位置合わせ領域を置きます。"]
