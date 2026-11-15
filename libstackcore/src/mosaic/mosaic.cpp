@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "../common/parallel_rows.hpp"
+#include "stackcore/finishing.hpp"
 #include "stackcore/resample.hpp"
 #include "stackcore/zncc_matcher.hpp"
 
@@ -838,64 +839,13 @@ inline float sample_bilinear(const float* plane, int w, int h, std::size_t strid
     return top + (bottom - top) * ay;
 }
 
-// パネルの暗い背景（空）の明るさ。カメラの下駄（オフセット）に空の明るさが乗ったもの。
-//
 // 明るさ合わせの倍率は「背景より上」にだけ掛けなければならない。透明度や露出の差で
 // 変わるのは月の光で、カメラの下駄は変わらないからである。下駄ごと倍率を掛けると、
 // 月は合っても空の明るさがパネルごとに変わり、黒レベルを詰めて見たときに
 // 空の段差と、重みの折れ目（パネルの角から伸びる斜めの筋）が見えてしまう
 // （実写の2パネルで、下駄 0.016・倍率 0.95 と 1.05 のとき空が 0.0155 と 0.0172）。
-//
-// 背景があると認めるのは、暗い側の1割がほぼ同じ明るさ（平らな空）で、かつ
-// パネルの明るい部分よりずっと暗いときだけ。月面の内側だけを写したパネルでは
-// 暗部は影や海であって背景ではないので、認めない。
-struct Background {
-    bool found = false;
-    double luma = 0.0;
-    double channel[3] = {0.0, 0.0, 0.0};
-};
-
-Background estimate_background(const FrameBuffer& frame, const Plane& luma) {
-    Background out;
-    const int step = std::max(1, std::min(luma.w, luma.h) / 400);
-    std::vector<float> values;
-    for (int y = 0; y < luma.h; y += step) {
-        const float* row = luma.row(y);
-        for (int x = 0; x < luma.w; x += step) {
-            if (row[x] > 0.0f) values.push_back(row[x]);  // 値のない縁（真っ黒）は数えない
-        }
-    }
-    if (values.size() < 1024) return out;
-    std::sort(values.begin(), values.end());
-    const double p1 = values[values.size() / 100];
-    const double p10 = values[values.size() / 10];
-    const double p99 = values[values.size() - 1 - values.size() / 100];
-    if (p10 - p1 > 0.15 * p10 + 0.0005) return out;  // 暗部が平らでない
-    if (p10 > 0.25 * p99) return out;                // 明るい部分との差が小さい
-
-    // 暗い側1割の画素の中央値を、輝度とチャンネルごとに取る。
-    std::vector<float> dark_luma;
-    std::vector<float> dark[3];
-    const int channels = frame.channels() >= 3 ? 3 : 1;
-    for (int y = 0; y < luma.h; y += step) {
-        const float* row = luma.row(y);
-        for (int x = 0; x < luma.w; x += step) {
-            if (!(row[x] > 0.0f) || row[x] > p10) continue;
-            dark_luma.push_back(row[x]);
-            for (int c = 0; c < channels; ++c) dark[c].push_back(frame.row(c, y)[x]);
-        }
-    }
-    if (dark_luma.empty()) return out;
-    const auto middle = [](std::vector<float>& v) {
-        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
-        return static_cast<double>(v[v.size() / 2]);
-    };
-    out.luma = middle(dark_luma);
-    for (int c = 0; c < 3; ++c) out.channel[c] = channels == 3 ? middle(dark[c]) : 0.0;
-    if (channels == 1) out.channel[0] = out.channel[1] = out.channel[2] = middle(dark[0]);
-    out.found = true;
-    return out;
-}
+// 背景の明るさは estimate_sky_background（finishing.hpp）で測る。
+typedef SkyBackground Background;
 
 // 対応の取れた重なりから、パネル i と j の平均輝度を測る。
 bool overlap_means(const Panel& pi, const Plane& li, const Similarity& ti, const Panel& pj,
@@ -1138,8 +1088,7 @@ FrameBuffer build_mosaic(const std::vector<const FrameBuffer*>& inputs,
         for (int i = 0; i < count; ++i) {
             if (!member[static_cast<std::size_t>(i)]) continue;
             Background& b = backgrounds[static_cast<std::size_t>(i)];
-            b = estimate_background(*panels[static_cast<std::size_t>(i)].frame,
-                                    lumas[static_cast<std::size_t>(i)]);
+            b = estimate_sky_background(*panels[static_cast<std::size_t>(i)].frame);
             if (!b.found) continue;
             ++found;
             common.luma += b.luma;

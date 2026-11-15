@@ -634,6 +634,12 @@ static NSString* DrizzleScaleText(double s) {
     [_runAllButton setEnabled:!_running && (_mosaicQueueMode ? [self mosaicQueueSourceCount] >= 2 : hasFile)];
     [_mosaicMenu setEnabled:!_running];
     [self updateRunAllTitle];
+    // 採用率の目安は、解析結果か加算方式が変わったら消す（古い結果を黙って見せない）。
+    if (_adoptionKey && !(alignmentOk && [_adoptionKey isEqualToString:[self adoptionKeyNow]])) {
+        [self clearAdoptionDiagnosis];
+    }
+    [_adoptionButton setEnabled:hasFile && alignmentOk && !globalOnly && _analysis && !_running];
+    [self refreshAdoptionDisplay];
     // ドリズルの診断はAPごとの変位を使うので、APを使う方式でアライメントした後だけ。
     if (_drizzleDiagnosisKey && !_drizzleDiagnosing &&
         !(alignmentOk && [_drizzleDiagnosisKey isEqualToString:[self drizzleDiagnosisKeyNow]])) {
@@ -729,6 +735,7 @@ static NSString* DrizzleScaleText(double s) {
         @"channelOffsets" : channels,
         @"gains" : gains,
         @"saturation" : @([_saturationSlider doubleValue]),
+        @"background" : @[ @(_background[0]), @(_background[1]), @(_background[2]) ],
         @"levels" : [self levelsArray],
         @"rotation" : @(_rotationTurns),
         @"flipH" : @([_flipHCheck state] == NSControlStateValueOn),
@@ -883,6 +890,13 @@ static NSDictionary* SanitizedSettings(NSDictionary* d) {
             }
         }
         if (d[@"saturation"]) [_saturationSlider setDoubleValue:[d[@"saturation"] doubleValue]];
+        NSArray* background = d[@"background"];
+        for (int c = 0; c < 3; ++c) {
+            // 以前の版のプリセットには無い。無ければ引かない。
+            _background[c] = [background isKindOfClass:[NSArray class]] && static_cast<NSUInteger>(c) < [background count]
+                                 ? std::max(0.0, std::min(1.0, [background[static_cast<NSUInteger>(c)] doubleValue]))
+                                 : 0.0;
+        }
         [self setLevelsFromDictionary:d];
         if (d[@"rotation"]) _rotationTurns = (([d[@"rotation"] intValue] % 4) + 4) % 4;
         SetCheck(_flipHCheck, d[@"flipH"]);

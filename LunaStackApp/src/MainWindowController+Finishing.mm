@@ -40,6 +40,7 @@ double ParseField(NSTextField* field) {
     s.channels.blue_dy = ParseField(_channelFields[3]);
     s.wavelet = [self waveletParams];
     s.dering = [_deringSlider doubleValue];
+    for (int c = 0; c < 3; ++c) s.background[c] = _background[c];
     for (int c = 0; c < 3; ++c) s.color.gain[c] = [_gainSliders[c] doubleValue];
     s.color.saturation = [_saturationSlider doubleValue];
     s.levels.master = _levels[0];
@@ -327,6 +328,7 @@ double ParseField(NSTextField* field) {
         [_gainValues[c] setStringValue:[NSString stringWithFormat:@"%.3f", [_gainSliders[c] doubleValue]]];
     }
     [_saturationValue setStringValue:[NSString stringWithFormat:@"%.2f", [_saturationSlider doubleValue]]];
+    [self updateBackgroundLabel];
     [self updateLevelsControls];
     NSString* rotation = _rotationTurns == 0 ? LSLocalizedString(@"回転なし")
                                              : [NSString stringWithFormat:LSLocalizedString(@"右へ %d°"),
@@ -518,12 +520,15 @@ double ParseField(NSTextField* field) {
         return;
     }
     std::shared_ptr<stackcore::FrameBuffer> input = _stacked;
-    const stackcore::ChannelOffsets offsets = [self currentFinishingSettings].channels;
+    const stackcore::FinishingSettings now = [self currentFinishingSettings];
+    const stackcore::ChannelOffsets offsets = now.channels;
     MainWindowController* controller = self;
     dispatch_async(_finishQueue, ^{
         // チャンネル合わせの後の画像で推定する（ずれた縁の色に引きずられない）。
+        // 背景を引く設定なら引いてから（下駄の色に引きずられない）。
         stackcore::FrameBuffer aligned;
         stackcore::shift_channels(*input, offsets, aligned);
+        if (now.has_background()) stackcore::subtract_background(aligned, now.background, aligned);
         double gains[3];
         stackcore::estimate_white_balance(aligned, gains);
         const double r = gains[0], b = gains[2];
@@ -538,6 +543,65 @@ double ParseField(NSTextField* field) {
     [_gainSliders[1] setDoubleValue:1.0];
     [_gainSliders[2] setDoubleValue:b];
     [self finishingChanged:nil];
+}
+
+// 背景（空）の明るさを測って引く。空が見つからなければ何もしない。
+- (void)autoBackground:(id)sender {
+    (void)sender;
+    if (!_stacked) return;
+    std::shared_ptr<stackcore::FrameBuffer> input = _stacked;
+    const stackcore::ChannelOffsets offsets = [self currentFinishingSettings].channels;
+    MainWindowController* controller = self;
+    dispatch_async(_finishQueue, ^{
+        // チャンネル合わせの後の画像で測る（仕上げで引くのと同じ画像）。
+        stackcore::FrameBuffer aligned;
+        stackcore::shift_channels(*input, offsets, aligned);
+        const stackcore::SkyBackground sky = stackcore::estimate_sky_background(aligned);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [controller applyBackground:sky];
+        });
+    });
+}
+
+- (void)applyBackground:(const stackcore::SkyBackground&)sky {
+    if (!sky.found) {
+        [_statusLabel setStringValue:LSLocalizedString(
+                                         @"背景の空が見つかりませんでした（対象が画面いっぱいに写っているか、背景がすでに黒くなっています）")];
+        return;
+    }
+    // 0.0001 刻みに丸める（保存・表示で値が揺れないように）。
+    for (int c = 0; c < 3; ++c) _background[c] = std::round(sky.channel[c] * 10000.0) / 10000.0;
+    [self finishingChanged:nil];
+    [_statusLabel setStringValue:LSLocalizedString(@"背景の明るさを引きました")];
+}
+
+// 自己検証・スナップショット用: その場で測って引く。
+- (void)autoBackgroundForTesting {
+    if (!_stacked) return;
+    stackcore::FrameBuffer aligned;
+    stackcore::shift_channels(*_stacked, [self currentFinishingSettings].channels, aligned);
+    [self applyBackground:stackcore::estimate_sky_background(aligned)];
+}
+
+- (void)resetBackground:(id)sender {
+    (void)sender;
+    for (int c = 0; c < 3; ++c) _background[c] = 0.0;
+    [self finishingChanged:nil];
+}
+
+- (void)updateBackgroundLabel {
+    const BOOL on = _background[0] != 0.0 || _background[1] != 0.0 || _background[2] != 0.0;
+    [_backgroundResetButton setEnabled:on];
+    if (!on) {
+        [_backgroundLabel setStringValue:LSLocalizedString(@"背景は引いていません")];
+    } else if (_sourceChannels == 3) {
+        [_backgroundLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"背景として R %.1f・G %.1f・B %.1f を引いています（0〜255）"),
+                                                                    _background[0] * 255.0, _background[1] * 255.0,
+                                                                    _background[2] * 255.0]];
+    } else {
+        [_backgroundLabel setStringValue:[NSString stringWithFormat:LSLocalizedString(@"背景として %.1f を引いています（0〜255）"),
+                                                                    _background[0] * 255.0]];
+    }
 }
 
 - (void)resetColor:(id)sender {
@@ -1019,6 +1083,11 @@ double ParseField(NSTextField* field) {
     if (f.channels.any()) {
         std::snprintf(buf, sizeof(buf), "channel align R %.2f,%.2f B %.2f,%.2f", f.channels.red_dx,
                       f.channels.red_dy, f.channels.blue_dx, f.channels.blue_dy);
+        m.history.push_back(buf);
+    }
+    if (f.has_background()) {
+        std::snprintf(buf, sizeof(buf), "background subtracted %.4f %.4f %.4f", f.background[0], f.background[1],
+                      f.background[2]);
         m.history.push_back(buf);
     }
     if (!f.color.identity()) {

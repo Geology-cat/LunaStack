@@ -10,6 +10,7 @@
 
 #import "Localization.h"
 #import "LSAppSupport.h"
+#import "AdoptionGraphView.h"
 #import "LevelsView.h"
 #import "Presets.h"
 #import "QueueItem.h"
@@ -20,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "stackcore/adoption_diagnosis.hpp"
 #include "stackcore/calibration.hpp"
 #include "stackcore/finishing.hpp"
 #include "stackcore/map_pipeline.hpp"
@@ -118,6 +120,21 @@
     NSSlider* _pixfracSlider;
     NSTextField* _pixfracValue;
     NSTextField* _drizzleEstimate;
+    // 採用率の目安（フレームを2組に分けてスタックし、再現する細部の量を採用率ごとに比べる）。
+    NSButton* _adoptionButton;
+    NSButton* _adoptionApplyButton;      // 目安の採用率に合わせる
+    AdoptionGraphView* _adoptionGraph;
+    NSTextField* _adoptionLabel;
+    NSString* _adoptionKey;              // 表示中の結果が、どの解析結果・加算方式に対するものか
+    double _adoptionSuggested;
+    double _adoptionBest;
+    std::vector<double> _adoptionPercents;
+    std::vector<double> _adoptionScores;
+    int _adoptionFrames;
+    // 仕上げで引く背景の明るさ（R・G・B）。0 なら引かない。
+    double _background[3];
+    NSTextField* _backgroundLabel;
+    NSButton* _backgroundResetButton;
     NSButton* _drizzleDiagnoseButton;
     NSButton* _drizzleApplyButton;       // 診断で見積もった倍率に合わせる
     NSTextField* _drizzleDiagnosisLabel;
@@ -343,6 +360,14 @@
 - (BOOL)alignmentUsable;
 - (void)updateControlsEnabled;
 - (void)diagnoseDrizzle:(id)sender;
+- (void)diagnoseAdoption:(id)sender;
+- (void)applyAdoptionSuggestion:(id)sender;
+- (void)clearAdoptionDiagnosis;
+- (NSString*)adoptionKeyNow;
+- (void)refreshAdoptionDisplay;
+- (void)autoBackground:(id)sender;
+- (void)resetBackground:(id)sender;
+- (void)updateBackgroundLabel;
 - (void)applyDrizzleSuggestion:(id)sender;
 - (void)runDrizzleDiagnosisSynchronously:(BOOL)sync;
 - (void)updateNamePreview;

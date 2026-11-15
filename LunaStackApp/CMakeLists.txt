@@ -55,6 +55,8 @@ add_executable(LunaStackApp MACOSX_BUNDLE
     src/PreviewView.mm
     src/LevelsView.mm
     src/QualityGraphView.mm
+    src/AdoptionGraphView.mm
+    src/MainWindowController+Adoption.mm
     src/QueueItem.mm
     src/Presets.mm
     ${LUNASTACK_APP_ICON}

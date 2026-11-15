@@ -67,6 +67,8 @@
 - (BOOL)selfCheckFrameStepButtons;
 - (BOOL)selfCheckDrizzleDiagnosis;
 - (void)diagnoseDrizzleForTesting;
+- (void)diagnoseAdoption:(id)sender;
+- (void)autoBackgroundForTesting;
 - (void)setGraphModeForTesting:(int)mode;
 - (void)writeLayoutForTestingTo:(NSString*)path;
 - (void)writeInspectorShotForTestingTo:(NSString*)path;

@@ -474,3 +474,25 @@
 "撮影したコマなら連番としてスタックします。スタック済みの画像なら、仕上げ・出力で開くか、モザイクのパネルとしてつなぎます。" = "Captured frames are stacked as a sequence. Already-stacked images can be opened in Finish & Export or stitched as mosaic panels.";
 "連番としてスタック" = "Stack as a Sequence";
 "それぞれ仕上げで開く" = "Open Each for Finishing";
+
+/* Adoption-rate guide and background subtraction */
+"採用率の目安を測る" = "Measure Adoption Rate";
+"この採用率にする" = "Use This Rate";
+"%.0f %% にする" = "Use %.0f %%";
+"フレームを2組に分けて別々にスタックし、両方に再現する細部の量を採用率ごとに比べます。多く使うほど良い動画か、絞ったほうが良い動画かが分かります" = "Splits the frames into two sets, stacks each separately, and compares how much detail is reproduced in both at each adoption rate. Shows whether this video benefits from using more frames or fewer";
+"採用率の目安を測っています…" = "Measuring the adoption rate…";
+"採用率の目安を測れませんでした" = "Could not measure the adoption rate";
+"採用率の目安は %.0f %% です" = "Suggested adoption rate: %.0f %%";
+"採用率の目安" = "Adoption rate";
+"目安は %.0f %% です。" = "Suggested rate: %.0f %%. ";
+"再現性が最も高いのは %.0f %% ですが、%.0f %% でもほぼ同じです。" = "Reproducibility peaks at %.0f %%, but %.0f %% is nearly the same.";
+"いまの採用率（%.0f %%、オレンジの線）の再現性は、最も高い値の %.0f %% です。" = "The current rate (%.0f %%, orange line) reaches %.0f %% of the peak reproducibility.";
+"フレームを2組に分けて別々にスタックし、両方に再現する細部の量を比べた目安です。見た目の鋭さの好みとは別です。" = "A guide based on stacking two halves of the frames separately and comparing the detail reproduced in both. It is not a judgment of how sharp you prefer the image to look.";
+"測れませんでした（フレームが少ないか、位置合わせ領域に覆われた範囲が狭すぎます）" = "Could not measure (too few frames, or the area covered by alignment points is too small)";
+"背景を黒にする" = "Black Background";
+"暗い空の明るさ（カメラの下駄）を測って引きます。ホワイトバランスより前に掛かるので、暗部に色が付きにくくなります。空が写っていない画像には使えません" = "Measures the dark sky level (the camera offset) and subtracts it. It is applied before white balance, so shadows pick up less color. Not available for images with no sky";
+"背景は引いていません" = "No background subtracted";
+"背景として R %.1f・G %.1f・B %.1f を引いています（0〜255）" = "Subtracting background R %.1f, G %.1f, B %.1f (0–255)";
+"背景として %.1f を引いています（0〜255）" = "Subtracting background %.1f (0–255)";
+"背景の空が見つかりませんでした（対象が画面いっぱいに写っているか、背景がすでに黒くなっています）" = "No background sky found (the target fills the frame, or the background is already black)";
+"背景の明るさを引きました" = "Background level subtracted";

@@ -904,6 +904,25 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
     [self addToSection:key view:[self noteLabel:@"これだけを変えた再スタックは解析をやり直しません"] box:box];
 
+    // 採用率の目安（アライメントのあとで使える）。
+    _adoptionButton = [self buttonWithTitle:@"採用率の目安を測る" action:@selector(diagnoseAdoption:)];
+    [_adoptionButton setToolTip:LSLocalizedString(
+                                    @"フレームを2組に分けて別々にスタックし、両方に再現する細部の量を採用率ごとに比べます。多く使うほど良い動画か、絞ったほうが良い動画かが分かります")];
+    _adoptionApplyButton = [self buttonWithTitle:@"この採用率にする" action:@selector(applyAdoptionSuggestion:)];
+    [_adoptionApplyButton setHidden:YES];
+    [self addToSection:key view:[self buttonRow:@[ _adoptionButton, _adoptionApplyButton ]] box:box];
+    _adoptionGraph = [[[AdoptionGraphView alloc] initWithFrame:NSMakeRect(0, 0, 270, 104)] autorelease];
+    [_adoptionGraph setTranslatesAutoresizingMaskIntoConstraints:NO];
+    [[[_adoptionGraph widthAnchor] constraintEqualToConstant:270.0] setActive:YES];
+    [[[_adoptionGraph heightAnchor] constraintEqualToConstant:104.0] setActive:YES];
+    [_adoptionGraph setHidden:YES];
+    [self addToSection:key view:_adoptionGraph box:box];
+    _adoptionLabel = [self noteLabel:@""];
+    [_adoptionLabel setTextColor:[NSColor labelColor]];
+    [_adoptionLabel setSelectable:YES];
+    [_adoptionLabel setHidden:YES];
+    [self addToSection:key view:_adoptionLabel box:box];
+
     _normalizeCheck = [self checkboxWithTitle:@"輝度正規化" state:YES];
     [_normalizeCheck setTarget:self];
     [_normalizeCheck setAction:@selector(analysisSettingChanged:)];
@@ -1127,6 +1146,14 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 - (void)buildToneSection:(NSStackView*)box {
     NSString* key = @"tone";
     [self beginSection:@"明るさ（レベル補正）" key:key inBox:box];
+    // 背景（空）を黒にする。カメラの下駄を引く。色の調整より前に掛かる。
+    NSButton* backgroundButton = [self buttonWithTitle:@"背景を黒にする" action:@selector(autoBackground:)];
+    [backgroundButton setToolTip:LSLocalizedString(
+                                     @"暗い空の明るさ（カメラの下駄）を測って引きます。ホワイトバランスより前に掛かるので、暗部に色が付きにくくなります。空が写っていない画像には使えません")];
+    _backgroundResetButton = [self buttonWithTitle:@"戻す" action:@selector(resetBackground:)];
+    [self addToSection:key view:[self buttonRow:@[ backgroundButton, _backgroundResetButton ]] box:box];
+    _backgroundLabel = [self noteLabel:@"背景は引いていません"];
+    [self addToSection:key view:_backgroundLabel box:box];
     _levelsChannelPopup = [[[NSPopUpButton alloc] init] autorelease];
     for (NSString* t in @[ @"RGB", @"R", @"G", @"B" ]) [_levelsChannelPopup addItemWithTitle:t];
     [_levelsChannelPopup setTarget:self];

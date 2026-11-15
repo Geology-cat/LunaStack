@@ -346,3 +346,101 @@ MT_TEST(finishing_レベル補正に入る画像のヒストグラム) {
     MT_CHECK(a.counts[0] == b.counts[0]);
     MT_CHECK_NEAR(out.row(0, 0)[3], 0.6f, 1e-6);
 }
+
+namespace {
+
+// 暗い空（下駄つき）に浮かぶ円盤。object は円盤の色、pedestal は R・G・B 別の下駄。
+FrameBuffer disk_on_sky(int w, int h, double radius, const double object[3], const double pedestal[3]) {
+    FrameBuffer f(w, h, 3);
+    unsigned seed = 9001u;
+    for (int c = 0; c < 3; ++c) {
+        for (int y = 0; y < h; ++y) {
+            float* row = f.row(c, y);
+            for (int x = 0; x < w; ++x) {
+                const double r = std::hypot(x - w / 2.0, y - h / 2.0);
+                // 円盤の中は中心から縁へなだらかに暗くなる（一様だと暗部と区別できない画像にならない）。
+                const double disk = r < radius ? 1.0 - 0.4 * r / radius : 0.0;
+                seed = seed * 1664525u + 1013904223u;
+                const double noise = 0.0004 * (static_cast<double>((seed >> 8) & 0xFFFF) / 65535.0 - 0.5);
+                row[x] = static_cast<float>(pedestal[c] + object[c] * disk + noise);
+            }
+        }
+    }
+    f.invalidate_luma();
+    return f;
+}
+
+}  // namespace
+
+MT_TEST(finishing_背景の空の明るさをチャンネルごとに測る) {
+    const double object[3] = {0.30, 0.40, 0.20};
+    const double pedestal[3] = {0.016, 0.015, 0.022};
+    const FrameBuffer image = disk_on_sky(240, 160, 40.0, object, pedestal);
+    const stackcore::SkyBackground sky = stackcore::estimate_sky_background(image);
+    MT_CHECK(sky.found);
+    for (int c = 0; c < 3; ++c) MT_CHECK_NEAR(sky.channel[c], pedestal[c], 0.0003);
+
+    // 広い画面の小さな惑星（明るい部分が全体の0.2%しかない）でも、背景と認める。
+    const FrameBuffer small = disk_on_sky(600, 300, 11.0, object, pedestal);
+    MT_CHECK(stackcore::estimate_sky_background(small).found);
+}
+
+MT_TEST(finishing_空が写っていない画像や黒く切ってある画像では背景を認めない) {
+    // 画面いっぱいに模様がある（月面の内側）。暗部は影であって背景ではない。
+    FrameBuffer full(200, 150, 1);
+    for (int y = 0; y < 150; ++y) {
+        for (int x = 0; x < 200; ++x) {
+            full.row(0, y)[x] = static_cast<float>(0.3 + 0.2 * std::sin(x * 0.11) * std::cos(y * 0.07));
+        }
+    }
+    full.invalidate_luma();
+    MT_CHECK(!stackcore::estimate_sky_background(full).found);
+
+    // 背景がすでに0（黒く切ってある）。0 の画素は数えないので、背景は見つからない。
+    const double object[3] = {0.30, 0.40, 0.20};
+    const double none[3] = {0.0, 0.0, 0.0};
+    FrameBuffer clipped = disk_on_sky(240, 160, 40.0, object, none);
+    for (int c = 0; c < 3; ++c) {
+        for (int y = 0; y < 160; ++y) {
+            for (int x = 0; x < 240; ++x) {
+                if (std::hypot(x - 120.0, y - 80.0) >= 40.0) clipped.row(c, y)[x] = 0.0f;
+            }
+        }
+    }
+    clipped.invalidate_luma();
+    MT_CHECK(!stackcore::estimate_sky_background(clipped).found);
+}
+
+MT_TEST(finishing_背景は色の調整より前に引かれホワイトバランスを狂わせない) {
+    // 対象は灰色（R=G=B）だが、下駄は青が高い。引かずにホワイトバランスを取ると、
+    // 下駄の色に引きずられて青を下げてしまう（実写の土星で B 0.91 と出た。引いた後は 1.21）。
+    const double object[3] = {0.08, 0.08, 0.08};
+    const double pedestal[3] = {0.016, 0.015, 0.022};
+    auto image = std::make_shared<FrameBuffer>(disk_on_sky(240, 160, 40.0, object, pedestal));
+
+    double biased[3];
+    stackcore::estimate_white_balance(*image, biased);
+    MT_CHECK(biased[2] < 0.95);  // 引かないと青を下げる
+
+    const stackcore::SkyBackground sky = stackcore::estimate_sky_background(*image);
+    FrameBuffer subtracted;
+    stackcore::subtract_background(*image, sky.channel, subtracted);
+    double gains[3];
+    stackcore::estimate_white_balance(subtracted, gains);
+    MT_CHECK_NEAR(gains[0], 1.0, 0.01);
+    MT_CHECK_NEAR(gains[2], 1.0, 0.01);
+
+    // 処理系を通すと、空は0、円盤の中心は下駄ぶんだけ下がり、そのあとで倍率が掛かる。
+    FinishingPipeline pipeline;
+    pipeline.set_input(image);
+    FinishingSettings settings;
+    for (int c = 0; c < 3; ++c) settings.background[c] = sky.channel[c];
+    settings.color.gain[0] = 2.0;
+    MT_CHECK(!settings.identity());
+    FrameBuffer out;
+    pipeline.render(settings, out);
+    MT_CHECK(out.row(0, 5)[5] < 0.001f);
+    MT_CHECK(out.row(2, 5)[5] < 0.001f);
+    MT_CHECK_NEAR(out.row(0, 80)[120], 2.0 * 0.08, 0.002);  // (下駄を引いた 0.08) × 2
+    MT_CHECK_NEAR(out.row(1, 80)[120], 0.08, 0.002);
+}

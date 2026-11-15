@@ -116,6 +116,7 @@ struct Options {
     // 仕上げ（追加分）
     std::string channel_align;     // "auto" または "rdx,rdy,bdx,bdy"
     std::string white_balance;     // "auto" または "r,g,b"
+    std::string background;        // "auto" または "r,g,b"（引く背景の明るさ）
     double saturation = 1.0;
     double dering = 0.0;
     int rotate = 0;                // 0/90/180/270（時計回り）
@@ -334,11 +335,34 @@ bool apply_post_processing(const Options& opts, FrameBuffer& image,
                     fs.channels.red_dx, fs.channels.red_dy, fs.channels.blue_dx,
                     fs.channels.blue_dy);
     }
+    if (!opts.background.empty()) {
+        if (opts.background == "auto") {
+            const stackcore::SkyBackground sky = stackcore::estimate_sky_background(image);
+            if (!sky.found) {
+                std::printf("\n[背景] 背景の空が見つからなかったので、引きません\n");
+            } else {
+                // 0.0001 刻みに丸める（GUIと同じ）。
+                for (int c = 0; c < 3; ++c) fs.background[c] = std::round(sky.channel[c] * 10000.0) / 10000.0;
+            }
+        } else {
+            std::vector<double> v;
+            if (!parse_numbers(opts.background, 3, v)) {
+                std::fprintf(stderr, "エラー: --background は auto か r,g,b です\n");
+                return false;
+            }
+            for (int c = 0; c < 3; ++c) fs.background[c] = v[static_cast<std::size_t>(c)];
+        }
+        if (fs.has_background()) {
+            std::printf("\n[背景] R %.4f / G %.4f / B %.4f を引きます\n", fs.background[0],
+                        fs.background[1], fs.background[2]);
+        }
+    }
     if (!opts.white_balance.empty() && image.channels() == 3) {
         if (opts.white_balance == "auto") {
-            // 自動推定はチャンネル合わせの後の画像で行う（GUIと同じ）。
+            // 自動推定はチャンネル合わせの後、背景を引いた画像で行う（GUIと同じ）。
             FrameBuffer aligned;
             stackcore::shift_channels(image, fs.channels, aligned);
+            if (fs.has_background()) stackcore::subtract_background(aligned, fs.background, aligned);
             stackcore::estimate_white_balance(aligned, fs.color.gain);
         } else {
             std::vector<double> v;
@@ -509,6 +533,8 @@ void print_usage() {
         "仕上げの追加オプション (stack / mapstack 共通):\n"
         "  --channel-align auto|rdx,rdy,bdx,bdy\n"
         "                            RGBチャンネルのずれ（大気分散）を補正する\n"
+        "  --background auto|r,g,b   背景（空）の明るさを引いて黒にする（autoは暗い空から測る。\n"
+        "                            カメラの下駄を消す。ホワイトバランスより前に掛かる）\n"
         "  --wb auto|r,g,b           ホワイトバランス（autoは対象の灰色仮説）\n"
         "  --saturation <値>         彩度（1.0で変化なし）\n"
         "  --dering <0〜1>           ウェーブレット強調の輪郭の外の暗い輪を抑える\n"
@@ -1674,6 +1700,8 @@ int main(int argc, char** argv) {
             opts.flat = argv[++i];
         } else if (arg == "--channel-align" && has_next) {
             opts.channel_align = argv[++i];
+        } else if (arg == "--background" && has_next) {
+            opts.background = argv[++i];
         } else if (arg == "--wb" && has_next) {
             opts.white_balance = argv[++i];
         } else if (arg == "--saturation" && has_next) {

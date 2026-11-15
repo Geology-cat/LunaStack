@@ -54,6 +54,11 @@
     _chainStages = NO;
     _mosaicBatchActive = NO;
     _mosaicQueueMode = NO;
+    _adoptionKey = nil;
+    _adoptionSuggested = 0.0;
+    _adoptionBest = 0.0;
+    _adoptionFrames = 0;
+    for (int c = 0; c < 3; ++c) _background[c] = 0.0;
     _mosaicBatchItems = nil;
     _mosaicBatchPosition = 0;
     _mosaicBatchSettings = nil;
@@ -78,6 +83,7 @@
     [_globalSignature release];
     [_analysisSignature release];
     [_drizzleDiagnosisKey release];
+    [_adoptionKey release];
     [_etaStage release];
     [_stackedInfo release];
     [_darkPath release];

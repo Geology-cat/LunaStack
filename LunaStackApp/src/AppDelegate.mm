@@ -126,6 +126,7 @@
         const BOOL mosaicQueueMode = mode && strcmp(mode, "mosaicqueue") == 0;
         const char* mosaicFiles = getenv("LUNASTACK_MOSAIC");
         __block int stagedStep = 0;
+        __block BOOL adoptionStarted = NO;
         MainWindowController* controller = _controller;
         [_controller setOnRunFinished:^{
             if (selfTest && stagedStep == 0) {
@@ -142,6 +143,12 @@
                 ++stagedStep;
                 if (stagedStep == 1) [controller startAlignmentOnly];
                 else [controller startStackOnly];
+                return;
+            }
+            // 採用率の目安は、ボタンと同じ経路で測る。終わるとここへもう一度来る。
+            if (getenv("LUNASTACK_ADOPTION") && !adoptionStarted) {
+                adoptionStarted = YES;
+                [controller diagnoseAdoption:nil];
                 return;
             }
             if (selfTest) [self check:[controller selfCheckApHiddenAfterStack]];
@@ -181,6 +188,8 @@
             }
             // スナップショットに診断の結果を写す。
             if (getenv("LUNASTACK_DZDIAG")) [controller diagnoseDrizzleForTesting];
+            // 背景を黒にする、の結果を写す。
+            if (getenv("LUNASTACK_BACKGROUND")) [controller autoBackgroundForTesting];
             [controller waitForFinishingForTesting];
             if (const char* tab = getenv("LUNASTACK_TAB")) [controller selectInspectorTabForTesting:atoi(tab)];
             if (const char* graph = getenv("LUNASTACK_GRAPH")) [controller setGraphModeForTesting:atoi(graph)];

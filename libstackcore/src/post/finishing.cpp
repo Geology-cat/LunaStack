@@ -235,6 +235,72 @@ void shift_channels(const FrameBuffer& src, const ChannelOffsets& offsets, Frame
 
 // ---- 色 --------------------------------------------------------------------
 
+SkyBackground estimate_sky_background(const FrameBuffer& image) {
+    SkyBackground out;
+    if (image.empty()) return out;
+    const int w = image.width(), h = image.height();
+    const std::size_t stride = image.stride();
+    const float* luma = image.luma();
+    const int step = std::max(1, std::min(w, h) / 400);
+    std::vector<float> values;
+    for (int y = 0; y < h; y += step) {
+        const float* row = luma + static_cast<std::size_t>(y) * stride;
+        for (int x = 0; x < w; x += step) {
+            if (row[x] > 0.0f) values.push_back(row[x]);  // 値のない画素（真っ黒）は数えない
+        }
+    }
+    if (values.size() < 1024) return out;
+    std::sort(values.begin(), values.end());
+    const double p1 = values[values.size() / 100];
+    const double p10 = values[values.size() / 10];
+    // 明るい部分。広い画面の小さな惑星でも対象に届くよう、上位 0.05% の値を使う。
+    const double bright = values[values.size() - 1 - values.size() / 2000];
+    if (p10 - p1 > 0.15 * p10 + 0.0005) return out;  // 暗部が平らでない
+    if (p10 > 0.25 * bright) return out;             // 明るい部分との差が小さい
+
+    // 暗い側1割の画素の中央値を、輝度とチャンネルごとに取る。
+    std::vector<float> dark_luma;
+    std::vector<float> dark[3];
+    const int channels = image.channels() >= 3 ? 3 : 1;
+    for (int y = 0; y < h; y += step) {
+        const float* row = luma + static_cast<std::size_t>(y) * stride;
+        for (int x = 0; x < w; x += step) {
+            if (!(row[x] > 0.0f) || row[x] > p10) continue;
+            dark_luma.push_back(row[x]);
+            for (int c = 0; c < channels; ++c) dark[c].push_back(image.row(c, y)[x]);
+        }
+    }
+    if (dark_luma.empty()) return out;
+    const auto middle = [](std::vector<float>& v) {
+        std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
+        return static_cast<double>(v[v.size() / 2]);
+    };
+    out.luma = middle(dark_luma);
+    for (int c = 0; c < channels; ++c) out.channel[c] = middle(dark[c]);
+    if (channels == 1) out.channel[1] = out.channel[2] = out.channel[0];
+    out.found = true;
+    return out;
+}
+
+void subtract_background(const FrameBuffer& src, const double background[3], FrameBuffer& out) {
+    if (&src != &out) copy_frame(src, out);
+    const int width = out.width(), channels = out.channels();
+    detail::parallel_rows(out.height(), [&](int y0, int y1) {
+        for (int c = 0; c < channels; ++c) {
+            const float level = static_cast<float>(background[channels == 1 ? 0 : std::min(c, 2)]);
+            if (level == 0.0f) continue;
+            for (int y = y0; y < y1; ++y) {
+                float* row = out.row(c, y);
+                for (int x = 0; x < width; ++x) {
+                    const float v = row[x] - level;
+                    row[x] = v > 0.0f ? v : 0.0f;
+                }
+            }
+        }
+    });
+    out.invalidate_luma();
+}
+
 void estimate_white_balance(const FrameBuffer& rgb, double gains[3]) {
     gains[0] = gains[1] = gains[2] = 1.0;
     if (rgb.channels() != 3 || rgb.empty()) return;
@@ -587,7 +653,7 @@ void compute_levels_histogram(const FrameBuffer& image, LevelsHistogram& out) {
 // ---- 全体 ------------------------------------------------------------------
 
 bool FinishingSettings::identity() const {
-    if (channels.any() || dering > 0.0 || !color.identity() || !geometry.identity()) return false;
+    if (channels.any() || dering > 0.0 || has_background() || !color.identity() || !geometry.identity()) return false;
     if (!levels.identity()) return false;
     for (const WaveletLayerParams& p : wavelet) {
         if (p.sharpen != 1.0 || p.denoise != 0.0) return false;
@@ -630,6 +696,7 @@ bool same_before_levels(const FinishingSettings& a, const FinishingSettings& b) 
     }
     for (int c = 0; c < 3; ++c) {
         if (a.color.gain[c] != b.color.gain[c]) return false;
+        if (a.background[c] != b.background[c]) return false;
     }
     return a.color.saturation == b.color.saturation;
 }
@@ -675,7 +742,9 @@ void FinishingPipeline::render(const FinishingSettings& s, FrameBuffer& out, Lev
         copy_frame(aligned_, work);
     }
 
-    // 色と階調は画素ごとの処理なので、その場で書き換える。
+    // 背景・色・階調は画素ごとの処理なので、その場で書き換える。
+    // 背景は色より前に引く（ホワイトバランスの倍率を、下駄ではなく対象の光にだけ掛けるため）。
+    if (s.has_background()) subtract_background(work, s.background, work);
     if (!s.color.identity() && work.channels() == 3) apply_color(work, s.color, work);
     if (histogram) {
         if (!histogram_valid_ || !same_before_levels(histogram_settings_, s)) {

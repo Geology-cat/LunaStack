@@ -14,6 +14,7 @@ namespace stackcore {
 // スタック結果に対する非破壊の後処理（UI設計書 §1.5）。掛ける順序は固定:
 //   1. RGBチャンネルの位置合わせ（大気分散の補正）
 //   2. ウェーブレット（細部強調・ノイズ低減）＋デリンギング
+//   2'. 背景を引く（空の明るさ＝カメラの下駄を0にする）
 //   3. 色（ホワイトバランス・彩度）
 //   4. レベル補正（黒・中間（ガンマ）・白。R・G・B 別 → 全体の順）
 //   5. 形（クロップ → 回転 → 反転）
@@ -48,6 +49,26 @@ ChannelOffsets estimate_channel_offsets(const FrameBuffer& rgb, int max_shift = 
 // R・Bを指定の変位だけ動かす（Lanczos3）。
 // 「dx だけずれているのを戻す」向きに動かす: 出力(x) = 入力(x + dx)。
 void shift_channels(const FrameBuffer& src, const ChannelOffsets& offsets, FrameBuffer& out);
+
+// 暗い背景（空）の明るさ。カメラの下駄（オフセット）に空の明るさが乗ったもの。
+//
+// 天体用カメラは信号が0でも画素値が0にならないよう下駄を履かせてあり、空は真っ黒にならない
+// （ASI715MC の実写で 0.016 前後、しかも R・G・B で違う）。これを引かないと、
+// ホワイトバランスの倍率が下駄にも掛かって暗部に色が付き、黒レベルも毎回詰めることになる。
+struct SkyBackground {
+    bool found = false;
+    double luma = 0.0;                    // 輝度での値
+    double channel[3] = {0.0, 0.0, 0.0};  // R・G・B（モノクロは3つとも同じ値）
+};
+
+// 背景の明るさを測る。背景があると認めるのは、暗い側の1割がほぼ同じ明るさ（平らな空）で、
+// かつ画像の明るい部分よりずっと暗いときだけ。月面が画面いっぱいに写った画像では、暗部は
+// 影や海であって背景ではないので、認めない（found が false）。値が0の画素（黒く切ってある
+// 背景・モザイクの届かない隅）は数えない。
+SkyBackground estimate_sky_background(const FrameBuffer& image);
+
+// 背景を引く（0 未満は 0 にする）。src と out に同じ画像を渡すと、その場で書き換える。
+void subtract_background(const FrameBuffer& src, const double background[3], FrameBuffer& out);
 
 // 色の調整。
 struct ColorAdjust {
@@ -153,6 +174,11 @@ struct FinishingSettings {
     ChannelOffsets channels;
     std::vector<WaveletLayerParams> wavelet;  // 空ならウェーブレットを掛けない
     double dering = 0.0;                      // 0〜1
+    // 引く背景の明るさ（R・G・B。モノクロは [0] を使う）。0 なら引かない。
+    double background[3] = {0.0, 0.0, 0.0};
+    bool has_background() const {
+        return background[0] != 0.0 || background[1] != 0.0 || background[2] != 0.0;
+    }
     ColorAdjust color;
     LevelsSettings levels;
     Geometry geometry;
