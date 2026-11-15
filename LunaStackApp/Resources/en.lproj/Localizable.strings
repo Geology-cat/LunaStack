@@ -496,3 +496,12 @@
 "背景として %.1f を引いています（0〜255）" = "Subtracting background %.1f (0–255)";
 "背景の空が見つかりませんでした（対象が画面いっぱいに写っているか、背景がすでに黒くなっています）" = "No background sky found (the target fills the frame, or the background is already black)";
 "背景の明るさを引きました" = "Background level subtracted";
+
+/* Preferences */
+"環境設定…" = "Preferences…";
+"環境設定" = "Preferences";
+"表示言語:" = "Language:";
+"システムの設定に合わせる" = "Match System";
+"今すぐ再起動" = "Relaunch Now";
+"表示言語の変更は、LunaStack を次に起動したときから反映されます。" = "The language change takes effect the next time LunaStack is launched.";
+"表示言語を変えると、LunaStack を次に起動したときから反映されます。" = "A language change takes effect the next time LunaStack is launched.";

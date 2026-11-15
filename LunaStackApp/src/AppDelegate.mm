@@ -3,6 +3,7 @@
 
 #import "Localization.h"
 #import "MainWindowController.h"
+#import "PreferencesWindowController.h"
 
 @interface AppDelegate () <NSMenuDelegate>
 @end
@@ -12,6 +13,7 @@
     // ウインドウができる前に Finder から渡されたファイル（ダブルクリックでの起動など）。
     NSMutableArray* _pendingPaths;
     NSMenu* _recentMenu;
+    PreferencesWindowController* _preferences;
     BOOL _selfTestFailed;
 }
 
@@ -26,6 +28,7 @@
 
 - (void)dealloc {
     [_pendingPaths release];
+    [_preferences release];
     [_controller release];
     [super dealloc];
 }
@@ -231,6 +234,8 @@
         if (const char* tab = getenv("LUNASTACK_TAB")) [_controller selectInspectorTabForTesting:atoi(tab)];
         // モザイク合成を含めた一括処理を選んだ状態（まだ実行していない）を撮る。
         if (getenv("LUNASTACK_MOSAICMODE")) [_controller toggleMosaicQueueMode:nil];
+        // 環境設定のウインドウを撮る。
+        if (getenv("LUNASTACK_PREFS")) [self showPreferences:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
                            [self writeSnapshotTo:path];
@@ -240,7 +245,9 @@
 }
 
 - (void)writeSnapshotTo:(NSString*)path {
-    NSView* view = [[_controller window] contentView];
+    NSView* view = (getenv("LUNASTACK_PREFS") && _preferences)
+                       ? [[_preferences window] contentView]
+                       : [[_controller window] contentView];
     [view setNeedsDisplay:YES];
     [view displayIfNeeded];
     // 説明書用: 部品の位置（LUNASTACK_LAYOUT）と、設定パネルの縦に全部つないだ画像（LUNASTACK_INSPECTOR_SHOT）。
@@ -300,6 +307,15 @@
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
+// ---- 環境設定 --------------------------------------------------------------
+
+- (void)showPreferences:(id)sender {
+    (void)sender;
+    if (!_preferences) _preferences = [[PreferencesWindowController alloc] init];
+    [_preferences showWindow:nil];
+    [[_preferences window] makeKeyAndOrderFront:nil];
+}
+
 // ---- メニュー --------------------------------------------------------------
 
 - (NSMenuItem*)addItem:(NSMenu*)menu title:(NSString*)title action:(SEL)action key:(NSString*)key {
@@ -338,6 +354,8 @@
     [mainMenu addItem:appItem];
     NSMenu* appMenu = [[[NSMenu alloc] init] autorelease];
     [self addItem:appMenu title:@"LunaStack について" action:@selector(orderFrontStandardAboutPanel:) key:@""];
+    [appMenu addItem:[NSMenuItem separatorItem]];
+    [self addItem:appMenu title:@"環境設定…" action:@selector(showPreferences:) key:@","];
     [appMenu addItem:[NSMenuItem separatorItem]];
     [self addItem:appMenu title:@"LunaStack を隠す" action:@selector(hide:) key:@"h"];
     NSMenuItem* hideOthers = [self addItem:appMenu title:@"ほかを隠す" action:@selector(hideOtherApplications:) key:@"h"];

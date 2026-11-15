@@ -59,6 +59,7 @@ add_executable(LunaStackApp MACOSX_BUNDLE
     src/MainWindowController+Adoption.mm
     src/QueueItem.mm
     src/Presets.mm
+    src/PreferencesWindowController.mm
     ${LUNASTACK_APP_ICON}
     ${LUNASTACK_JA_LOCALIZATIONS}
     ${LUNASTACK_EN_LOCALIZATIONS}

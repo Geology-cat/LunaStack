@@ -31,7 +31,8 @@ cp build/guide.pdf LunaStack_使い方ガイド.pdf
   `LUNASTACK_TAB_NORMAL`（タブを選ぶとき見出しの開閉どおりに見せる）、`LUNASTACK_GRAPH`（品質グラフの時系列／品質順）、
   `LUNASTACK_FINISH` の `wavelet=`・`denoise=`（レイヤーごとの値）・`background=`（背景を黒にする）、
   `LUNASTACK_SNAPSHOT_SCALE`（画面の倍率に関係なく、その倍率で描く。等倍の画面の Mac でも2倍の図にする）、
-  `LUNASTACK_ADOPTION`（採用率の目安を測ってから撮る）、`LUNASTACK_MOSAICMODE`（モザイクの一括処理を選んだ状態）。
+  `LUNASTACK_ADOPTION`（採用率の目安を測ってから撮る）、`LUNASTACK_MOSAICMODE`（モザイクの一括処理を選んだ状態）、
+  `LUNASTACK_PREFS`（環境設定のウインドウを撮る。`figures/prefs.png` はこれで撮ったものをそのまま置いている）。
 - 素材が無い場面は撮らずに飛ばし、前に撮った画面（`build/raw/`）をそのまま使う（v1.1.0 では太陽の素材が無く、
   バイトオーダーの注意の図は v1.0.1 の画面のまま）。
 - 新しい macOS ではセグメント（タブなど）の中の文字が部品として出てこないので、`figures.py` が文言の長さから
