@@ -8,7 +8,7 @@ and wavelet sharpening in the style of RegiStax in a single app.
 
 - **Download: [latest release](https://github.com/Geology-cat/LunaStack/releases/latest)** (the DMG contains the app, the user guide and an easy installer)
 - Requirements: **macOS 10.12.6 (Sierra) or later / Intel and Apple Silicon** (HEVC video cannot be read on 10.12)
-- Current version: **v1.1.0** (not yet tested on real 10.12 / 10.13 machines)
+- Current version: **v1.1.1** (not yet tested on real 10.12 / 10.13 machines)
 - How to use: [User guide (PDF, Japanese)](docs/manual/LunaStack_使い方ガイド.pdf)
 - Design documents (Japanese): [Specification](docs/仕様書.md) / [Implementation plan](docs/実装計画書.md) / [UI design](docs/UI設計書.md) / [Development notes](docs/開発記録_2026-09-25.md) / [Development history](docs/開発履歴.md)
 
