@@ -88,7 +88,7 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 ./.build/local/stackcli/stackcli stack capture.ser -o stacked.tif --top 25
 
 # 位置合わせ領域ごとの局所アライメントでスタックする（GUI の既定と同じにするには --stack-mode weighted）
-./.build/local/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 10 --stack-mode weighted
+./.build/local/stackcli/stackcli mapstack capture.ser -o stacked.tif --top 25 --ap-top 25 --stack-mode weighted
 
 # スタック済みの画像（パネル）をつないでモザイクにする（並び順は問わない）
 ./.build/local/stackcli/stackcli mosaic panel1.tif panel2.tif panel3.tif -o mosaic.tif
@@ -118,7 +118,7 @@ x86_64 は `LC_VERSION_MIN_MACOSX version 10.12`、arm64 は `minos 11.0` にな
 | オプション | 説明 |
 |---|---|
 | `--ap-size <px>` | APサイズ 32/48/64/96/128/200（既定 自動提案。月面のように広い対象は 64px） |
-| `--ap-top <割合>` | AP別に採用するフレームの割合（既定 10） |
+| `--ap-top <割合>` | AP別に採用するフレームの割合（既定 25） |
 | `--ap-count <枚数>` | AP別の採用枚数を直接指定 |
 | `--quality gradient\|frequency` | 勾配エネルギー／FFT周波数帯パワー比 |
 | `--stack-mode mean\|weighted\|sigma` | 単純平均（CLIの既定）／品質重み付き平均（GUIの既定）／σクリップ |
