@@ -625,11 +625,15 @@ static NSString* DrizzleScaleText(double s) {
     // 「今選んでいる別のファイル」のサイドカーとして書き出されてしまう。
     [_queueTable setEnabled:!_running];
 
-    [_qualityButton setEnabled:hasFile && !_running];
-    [_alignButton setEnabled:hasFile && qualityOk && !_running];
-    [_stackButton setEnabled:hasFile && alignmentOk && !_running];
-    [_runAllButton setEnabled:hasFile && !_running];
+    // モザイク合成を含めた一括処理を選んでいるあいだは、どのパネルも同じ設定で通して処理する。
+    // 工程ごとのボタンは押せず、一括処理だけを受け付ける。
+    const BOOL stepwise = !_mosaicQueueMode;
+    [_qualityButton setEnabled:hasFile && !_running && stepwise];
+    [_alignButton setEnabled:hasFile && qualityOk && !_running && stepwise];
+    [_stackButton setEnabled:hasFile && alignmentOk && !_running && stepwise];
+    [_runAllButton setEnabled:!_running && (_mosaicQueueMode ? [self mosaicQueueSourceCount] >= 2 : hasFile)];
     [_mosaicMenu setEnabled:!_running];
+    [self updateRunAllTitle];
     // ドリズルの診断はAPごとの変位を使うので、APを使う方式でアライメントした後だけ。
     if (_drizzleDiagnosisKey && !_drizzleDiagnosing &&
         !(alignmentOk && [_drizzleDiagnosisKey isEqualToString:[self drizzleDiagnosisKeyNow]])) {

@@ -45,9 +45,29 @@ NSString* MosaicVirtualPath(NSString* firstPath, BOOL firstIsDirectory) {
 
 - (void)runAll:(id)sender {
     (void)sender;
-    if (_running || _inputPath.empty() || !_previewSource || [self currentItemIsImage]) return;
+    if (_running) return;
+    if (_mosaicQueueMode) {
+        [self startMosaicFromQueue];
+        return;
+    }
+    if (_inputPath.empty() || !_previewSource || [self currentItemIsImage]) return;
     _chainStages = YES;
     [self continueChainAfterStage:-1];
+}
+
+// 一括処理のボタン（とその説明）を、いまの状態に合わせる。
+- (void)updateRunAllTitle {
+    [_runAllButton setTitle:LSLocalizedString(_mosaicQueueMode ? @"現在の設定でモザイク合成を含めた一括処理"
+                                                               : @"現在の設定で一括処理")];
+    [_runAllButton
+        setToolTip:LSLocalizedString(
+                       _mosaicQueueMode
+                           ? @"いまの設定で、キューの素材を1本ずつ順にスタックし、終わったら自動でつないで、結果を仕上げ・出力に送ります。フレーム範囲と処理範囲は素材ごとのものを使います"
+                           : @"いまの設定で、品質評価・アライメント・スタックを続けて実行します（済んでいて設定も変わっていない工程は飛ばします）")];
+    // プルダウンの項目に、選んである印を付ける。
+    for (NSMenuItem* item in [_mosaicMenu itemArray]) {
+        if ([item tag] == 2) [item setState:_mosaicQueueMode ? NSControlStateValueOn : NSControlStateValueOff];
+    }
 }
 
 // finishedStage は終えたばかりの工程（JobStage の番号。始めるときは -1）。
@@ -164,7 +184,7 @@ NSString* MosaicVirtualPath(NSString* firstPath, BOOL firstIsDirectory) {
 - (void)mosaicMenuChosen:(id)sender {
     const NSInteger tag = [(NSMenuItem*)sender tag];
     if (tag == 1) [self mosaicFromFiles:nil];
-    else if (tag == 2) [self mosaicFromQueue:nil];
+    else if (tag == 2) [self toggleMosaicQueueMode:nil];
 }
 
 // スタック済みの画像（パネル）を選んでつなぐ。
@@ -201,9 +221,40 @@ NSString* MosaicVirtualPath(NSString* firstPath, BOOL firstIsDirectory) {
                   virtualPath:MosaicVirtualPath([paths firstObject], NO)];
 }
 
-// キューの素材（パネルごとの動画・静止画連番）を、いまの設定で順にスタックしてからつなぐ。
-- (void)mosaicFromQueue:(id)sender {
+// キューにある、スタックできる素材（動画・静止画連番）の数。
+- (int)mosaicQueueSourceCount {
+    int sources = 0;
+    for (QueueItem* item in _items) {
+        if (![item isImage] && [item state] != QueueItemStateError) ++sources;
+    }
+    return sources;
+}
+
+// 「キューの素材をすべてスタックしてつなぐ」を選んだ・もう一度選んで戻した。
+//
+// 選んだだけでは処理を始めない。一括処理のボタンが「現在の設定でモザイク合成を含めた一括処理」に
+// 替わるので、各タブで設定を確かめてから押す。この状態では、どのパネルも同じ設定で
+// 通して処理するので、工程ごとのボタン（品質評価・アライメント・スタック）は押せない。
+- (void)toggleMosaicQueueMode:(id)sender {
     (void)sender;
+    if (_running) return;
+    if (!_mosaicQueueMode && [self mosaicQueueSourceCount] < 2) {
+        [self showError:LSLocalizedString(
+                            @"パネルごとの動画（または静止画連番）を、入力キューに2本以上入れてから選んでください")
+                  title:LSLocalizedString(@"モザイク合成できません")];
+        return;
+    }
+    _mosaicQueueMode = !_mosaicQueueMode;
+    [self updateControlsEnabled];
+    [_statusLabel
+        setStringValue:LSLocalizedString(
+                           _mosaicQueueMode
+                               ? @"設定を確かめてから実行してください"
+                               : @"通常の一括処理に戻しました")];
+}
+
+// キューの素材（パネルごとの動画・静止画連番）を、いまの設定で順にスタックしてからつなぐ。
+- (void)startMosaicFromQueue {
     if (_running) return;
     NSMutableArray* sources = [NSMutableArray array];
     for (QueueItem* item in _items) {
@@ -214,16 +265,6 @@ NSString* MosaicVirtualPath(NSString* firstPath, BOOL firstIsDirectory) {
                             @"パネルごとの動画（または静止画連番）を、入力キューに2本以上入れてから実行してください")
                   title:LSLocalizedString(@"モザイク合成できません")];
         return;
-    }
-    if (!getenv("LUNASTACK_SNAPSHOT")) {
-        NSAlert* alert = [[[NSAlert alloc] init] autorelease];
-        [alert setMessageText:[NSString stringWithFormat:LSLocalizedString(@"キューの %lu 本をスタックしてモザイク合成します"),
-                                                         (unsigned long)[sources count]]];
-        [alert setInformativeText:LSLocalizedString(
-                                      @"いまの設定（アライメント・スタック）で1本ずつ順にスタックし、終わったら自動でつないで、結果を仕上げ・出力に送ります。フレーム範囲と処理範囲は素材ごとのものを使います。")];
-        [alert addButtonWithTitle:LSLocalizedString(@"開始")];
-        [alert addButtonWithTitle:LSLocalizedString(@"やめる")];
-        if ([alert runModal] != NSAlertFirstButtonReturn) return;
     }
 
     // どのパネルも同じ条件でスタックする。フレーム範囲は素材ごとのものなので持ち込まない。

@@ -431,14 +431,15 @@
 "ざっくりの目安です。確かめるには、倍率を変えてスタックし比べてください。" = "This is a rough guide. To confirm, stack at different scales and compare.";
 
 /* Run All, images, and mosaic */
-"一括処理" = "Run All";
+"現在の設定で一括処理" = "Run All with Current Settings";
+"現在の設定でモザイク合成を含めた一括処理" = "Run All + Mosaic with Current Settings";
 "いまの設定で、品質評価・アライメント・スタックを続けて実行します（済んでいて設定も変わっていない工程は飛ばします）" = "Runs quality evaluation, alignment, and stacking in one go with the current settings (finished stages whose settings are unchanged are skipped)";
-"一括処理（品質評価からスタックまで）" = "Run All (Quality Evaluation to Stacking)";
+"いまの設定で、キューの素材を1本ずつ順にスタックし、終わったら自動でつないで、結果を仕上げ・出力に送ります。フレーム範囲と処理範囲は素材ごとのものを使います" = "Stacks each queue item in turn with the current settings, then stitches the results automatically and sends the mosaic to Finish & Export. Frame ranges and processing regions are kept per item";
 "処理中に設定が変わったため、一括処理を止めました。もう一度実行してください" = "Settings changed during processing, so Run All was stopped. Please run it again";
 "モザイク合成" = "Mosaic";
 "画像ファイル（パネル）をつなぐ…" = "Stitch Image Files (Panels)…";
 "キューの素材をすべてスタックしてつなぐ" = "Stack Everything in the Queue and Stitch";
-"月面などのモザイク。スタック済みの画像をつなぐか、キューに入れたパネルごとの動画を順にスタックしてからつなぎます。結果は仕上げ・出力に送られます" = "Lunar and other mosaics. Stitch already-stacked images, or stack each panel video in the queue and then stitch them. The result is sent to Finish & Export";
+"月面などのモザイク。スタック済みの画像をつなぐか、キューに入れたパネルごとの動画を順にスタックしてからつなぎます。後者は選ぶと一括処理のボタンが替わるので、設定を確かめてから押します（もう一度選ぶと元に戻ります）。結果は仕上げ・出力に送られます" = "Lunar and other mosaics. Stitch already-stacked images, or stack each panel video in the queue and then stitch them. Choosing the latter changes the Run All button; check the settings, then press it (choose it again to switch back). The result is sent to Finish & Export";
 "モザイク合成（画像ファイルから）…" = "Mosaic from Image Files…";
 "キューの素材をすべてスタックしてモザイク合成" = "Stack Everything in the Queue and Build a Mosaic";
 "モザイクにするパネル（スタック済みの画像）を2枚以上選んでください。並び順は問いません" = "Choose two or more panels (stacked images) for the mosaic. The order does not matter";
@@ -446,9 +447,9 @@
 "モザイク合成できません" = "Cannot Build the Mosaic";
 "モザイク合成できませんでした" = "Could Not Build the Mosaic";
 "パネルごとの動画（または静止画連番）を、入力キューに2本以上入れてから実行してください" = "Add two or more panel videos (or image sequences) to the input queue first";
-"キューの %lu 本をスタックしてモザイク合成します" = "Stack %lu Queue Items and Build a Mosaic";
-"いまの設定（アライメント・スタック）で1本ずつ順にスタックし、終わったら自動でつないで、結果を仕上げ・出力に送ります。フレーム範囲と処理範囲は素材ごとのものを使います。" = "Each item is stacked in turn with the current alignment and stacking settings, then the results are stitched automatically and sent to Finish & Export. Frame ranges and processing regions are kept per item.";
-"開始" = "Start";
+"パネルごとの動画（または静止画連番）を、入力キューに2本以上入れてから選んでください" = "Add two or more panel videos (or image sequences) to the input queue before choosing this";
+"設定を確かめてから実行してください" = "Check the settings, then run";
+"通常の一括処理に戻しました" = "Switched back to the normal Run All";
 "モザイク合成を止めました（素材がキューから外れました）" = "Mosaic stopped (an item was removed from the queue)";
 "開けませんでした: %@" = "Could not open: %@";
 "モザイク合成を始めます…" = "Starting the mosaic…";

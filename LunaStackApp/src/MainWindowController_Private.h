@@ -278,6 +278,9 @@
     BOOL _chainStages;
     // キューの素材を順にスタックしてモザイクにする処理の途中。
     BOOL _mosaicBatchActive;
+    // 「キューの素材をすべてスタックしてつなぐ」を選んだ状態。一括処理のボタンがモザイク合成まで
+    // 含めた処理に替わり、工程ごとのボタンは押せなくなる（もう一度選ぶと戻る）。
+    BOOL _mosaicQueueMode;
     NSMutableArray* _mosaicBatchItems;     // 処理する QueueItem（順番どおり）
     NSUInteger _mosaicBatchPosition;       // いま処理している番号
     NSDictionary* _mosaicBatchSettings;    // 始めたときの設定（どのパネルも同じ条件でスタックする）
@@ -408,7 +411,10 @@
 - (void)showImageItem:(QueueItem*)item;
 - (NSInteger)askHowToOpenImages:(NSArray*)paths;
 - (void)mosaicFromFiles:(id)sender;
-- (void)mosaicFromQueue:(id)sender;
+- (void)toggleMosaicQueueMode:(id)sender;
+- (void)startMosaicFromQueue;
+- (int)mosaicQueueSourceCount;
+- (void)updateRunAllTitle;
 - (void)mosaicMenuChosen:(id)sender;
 - (void)startMosaicWithImagePaths:(NSArray*)paths;
 - (void)mosaicBatchStartNext;

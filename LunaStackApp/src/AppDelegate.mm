@@ -203,7 +203,9 @@
                                                [[NSString stringWithUTF8String:mosaicFiles]
                                                    componentsSeparatedByString:@":"]];
                            } else if (mosaicQueueMode) {
-                               [controller mosaicFromQueue:nil];
+                               // 実際の操作と同じ経路: メニューで選んでから、一括処理のボタンを押す。
+                               [controller toggleMosaicQueueMode:nil];
+                               [controller runAll:nil];
                            } else if (batchMode) {
                                [controller runAll:nil];
                            } else if (stagedMode || alignmentMode ||
@@ -217,6 +219,8 @@
         NSString* path = [NSString stringWithUTF8String:snapshotPath];
         // レイアウトと描画が済むのを待ってから撮る。
         if (const char* tab = getenv("LUNASTACK_TAB")) [_controller selectInspectorTabForTesting:atoi(tab)];
+        // モザイク合成を含めた一括処理を選んだ状態（まだ実行していない）を撮る。
+        if (getenv("LUNASTACK_MOSAICMODE")) [_controller toggleMosaicQueueMode:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
                            [self writeSnapshotTo:path];
@@ -389,9 +393,9 @@
     [align setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
     [self addItem:processMenu title:@"スタック" action:@selector(run:) key:@"r"];
     [processMenu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem* all = [self addItem:processMenu title:@"一括処理（品質評価からスタックまで）" action:@selector(runAll:) key:@"r"];
+    NSMenuItem* all = [self addItem:processMenu title:@"現在の設定で一括処理" action:@selector(runAll:) key:@"r"];
     [all setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagShift];
-    [self addItem:processMenu title:@"キューの素材をすべてスタックしてモザイク合成" action:@selector(mosaicFromQueue:) key:@""];
+    [self addItem:processMenu title:@"キューの素材をすべてスタックしてモザイク合成" action:@selector(toggleMosaicQueueMode:) key:@""];
     [processMenu addItem:[NSMenuItem separatorItem]];
     [self addItem:processMenu title:@"中断" action:@selector(cancel:) key:@"."];
     [processItem setSubmenu:processMenu];

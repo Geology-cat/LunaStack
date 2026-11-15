@@ -26,7 +26,7 @@
     _closeAfterCancel = NO;
     _frameLimit = 0;
     _selectionUsesCount = NO;
-    _apTopPercentSetting = 10.0;
+    _apTopPercentSetting = 25.0;
     _apTopCountSetting = 100;
     _currentIndex = -1;
     _manualPointsActive = NO;
@@ -53,6 +53,7 @@
     _etaStage = nil;
     _chainStages = NO;
     _mosaicBatchActive = NO;
+    _mosaicQueueMode = NO;
     _mosaicBatchItems = nil;
     _mosaicBatchPosition = 0;
     _mosaicBatchSettings = nil;

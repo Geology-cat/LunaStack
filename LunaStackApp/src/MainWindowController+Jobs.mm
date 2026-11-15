@@ -32,16 +32,19 @@
 
 - (void)analyze:(id)sender {
     (void)sender;
+    if (_mosaicQueueMode) return;  // モザイク合成を含めた一括処理だけを受け付ける
     [self beginJobStage:JobStage::Quality];
 }
 
 - (void)align:(id)sender {
     (void)sender;
+    if (_mosaicQueueMode) return;  // モザイク合成を含めた一括処理だけを受け付ける
     [self beginJobStage:JobStage::Alignment];
 }
 
 - (void)run:(id)sender {
     (void)sender;
+    if (_mosaicQueueMode) return;  // モザイク合成を含めた一括処理だけを受け付ける
     [self beginJobStage:JobStage::Stack];
 }
 

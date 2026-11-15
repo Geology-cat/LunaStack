@@ -84,7 +84,7 @@
 // スタック済みの画像（パネル）を選んでモザイク合成する。
 - (void)mosaicFromFiles:(id)sender;
 // キューの素材をすべてスタックして、モザイク合成まで続けて行う。
-- (void)mosaicFromQueue:(id)sender;
+- (void)toggleMosaicQueueMode:(id)sender;
 // 自己検証用: 画像ファイルの一覧からモザイク合成を始める（確認のダイアログなし）。
 - (void)startMosaicWithImagePaths:(NSArray*)paths;
 

@@ -162,7 +162,7 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
         [item setAction:@selector(mosaicMenuChosen:)];
     }
     [_mosaicMenu setToolTip:LSLocalizedString(
-                                @"月面などのモザイク。スタック済みの画像をつなぐか、キューに入れたパネルごとの動画を順にスタックしてからつなぎます。結果は仕上げ・出力に送られます")];
+                                @"月面などのモザイク。スタック済みの画像をつなぐか、キューに入れたパネルごとの動画を順にスタックしてからつなぎます。後者は選ぶと一括処理のボタンが替わるので、設定を確かめてから押します（もう一度選ぶと元に戻ります）。結果は仕上げ・出力に送られます")];
     [pane addSubview:_mosaicMenu];
 
     NSTextField* graphTitle = [self sectionTitle:@"品質グラフ"];
@@ -898,8 +898,8 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
 
     _apTopCaption = MakeLabel(@"位置合わせ領域ごとに採用するフレーム（%）");
     [self addToSection:key view:_apTopCaption box:box];
-    _apTopSlider = [self sliderMin:1.0 max:100.0 value:10.0 action:@selector(apTopChanged:)];
-    _apTopValue = MakeLabel(@"10 %");
+    _apTopSlider = [self sliderMin:1.0 max:100.0 value:25.0 action:@selector(apTopChanged:)];
+    _apTopValue = MakeLabel(@"25 %");
     [self addToSection:key view:[self row:_apTopSlider trailing:_apTopValue] box:box];
 
     [self addToSection:key view:[self noteLabel:@"これだけを変えた再スタックは解析をやり直しません"] box:box];
@@ -1296,9 +1296,9 @@ static BOOL LSSectionClosedByDefault(NSString* key) {
     _stackButton = [self buttonWithTitle:@"スタック" action:@selector(run:)];
     [_stackButton setKeyEquivalent:@"\r"];
     _exportButton = [self buttonWithTitle:@"書き出し…" action:@selector(save:)];
-    _runAllButton = [self buttonWithTitle:@"一括処理" action:@selector(runAll:)];
-    [_runAllButton setToolTip:LSLocalizedString(
-                                  @"いまの設定で、品質評価・アライメント・スタックを続けて実行します（済んでいて設定も変わっていない工程は飛ばします）")];
+    // 一括処理はほかの工程ボタンより少し大きくする（文言と説明は updateRunAllTitle が状態に合わせる）。
+    _runAllButton = [self buttonWithTitle:@"現在の設定で一括処理" action:@selector(runAll:)];
+    [_runAllButton setFont:[NSFont systemFontOfSize:13.0 weight:NSFontWeightMedium]];
     _cancelButton = [self buttonWithTitle:@"中断" action:@selector(cancel:)];
     [_cancelButton setEnabled:NO];
 

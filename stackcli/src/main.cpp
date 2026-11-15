@@ -76,7 +76,7 @@ struct Options {
     // mapstack コマンド用
     int ap_size = 0;               // 0で自動提案
     int search_radius = 16;
-    double ap_top_percent = 10.0;
+    double ap_top_percent = 25.0;
     int ap_top_count = 0;
     double ap_gradient_ratio = 0.6;
     double ap_level_ratio = 0.05;
@@ -456,7 +456,7 @@ void print_usage() {
         "\n"
         "mapstack のオプション (stack のオプションも使える):\n"
         "  --ap-size <px>            APサイズ 32|48|64|96|128|200 (既定: 自動提案)\n"
-        "  --ap-top <割合>           AP別に採用するフレームの割合 (既定: 10)\n"
+        "  --ap-top <割合>           AP別に採用するフレームの割合 (既定: 25)\n"
         "  --ap-count <枚数>         割合ではなくAP別の採用枚数を直接指定\n"
         "  --quality gradient|frequency\n"
         "                            品質指標（既定: gradient）\n"

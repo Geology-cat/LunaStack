@@ -23,8 +23,10 @@ struct MapStackSettings {
 
     ApPlacementSettings ap;
     LocalAlignSettings local;
-    // AP別に採用するフレームの割合（仕様書 §4.7、既定10%）。
-    double ap_top_percent = 10.0;
+    // AP別に採用するフレームの割合（仕様書 §4.7 は10%）。
+    // 既定は25%にしてある。実写5素材（月3・木星・土星）を半分ずつスタックして再現性を比べると、
+    // どれも10%より25%のほうが高かった（100〜170フレームの動画では10%はAPあたり10〜17枚しかない）。
+    double ap_top_percent = 25.0;
     // 1以上なら割合ではなく枚数を直接指定する。0で割合指定。
     int ap_top_count = 0;
 

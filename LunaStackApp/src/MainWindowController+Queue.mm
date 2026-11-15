@@ -596,6 +596,7 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
 - (void)clearWorkspace:(id)sender {
     (void)sender;
     if (_running) return;
+    _mosaicQueueMode = NO;
     [_items removeAllObjects];
     [_queueTable reloadData];
     [self resetWorkspaceForNewProcessing];
@@ -639,16 +640,18 @@ NSComparisonResult NaturalCompare(NSString* a, NSString* b) {
         return hasRow && !_running;
     }
     // メニューバーの項目。押しても何も起きない状態では灰色にする。
-    if (action == @selector(runAll:)) return [_runAllButton isEnabled];
+    if (action == @selector(runAll:)) {
+        // メニューバーの項目も、ボタンと同じ文言にする。
+        [menuItem setTitle:[_runAllButton title]];
+        return [_runAllButton isEnabled];
+    }
     if (action == @selector(mosaicFromFiles:)) return !_running;
-    if (action == @selector(mosaicFromQueue:) || action == @selector(mosaicMenuChosen:)) {
+    if (action == @selector(toggleMosaicQueueMode:) || action == @selector(mosaicMenuChosen:)) {
         if (_running) return NO;
         if (action == @selector(mosaicMenuChosen:) && [menuItem tag] != 2) return YES;
-        int sources = 0;
-        for (QueueItem* item in _items) {
-            if (![item isImage] && [item state] != QueueItemStateError) ++sources;
-        }
-        return sources >= 2;
+        [menuItem setState:_mosaicQueueMode ? NSControlStateValueOn : NSControlStateValueOff];
+        // 選んだあとは、素材が減っていても戻せるようにしておく。
+        return _mosaicQueueMode || [self mosaicQueueSourceCount] >= 2;
     }
     if (action == @selector(analyze:)) return [_qualityButton isEnabled];
     if (action == @selector(align:)) return [_alignButton isEnabled];
